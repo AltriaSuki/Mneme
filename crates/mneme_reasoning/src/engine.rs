@@ -44,9 +44,15 @@ impl Reasoning for ReasoningEngine {
                 // 3. Generate
                 let response = self.client.complete(&prompt).await?;
 
-                // 4. Update History (Naive)
+                // 4. Update History (Naive with cap)
                 history.push(format!("User: {}", content.body));
                 history.push(format!("Assistant: {}", response));
+                
+                // Keep only last 20 messages to prevent unbounded growth
+                if history.len() > 20 {
+                    let overflow = history.len() - 20;
+                    history.drain(0..overflow);
+                }
 
                 // 5. Memorize (Fire and forget, or await)
                 self.memory.memorize(&content).await?;

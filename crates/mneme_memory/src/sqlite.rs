@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use mneme_core::{Content, Memory};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 use std::path::Path;
-use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct SqliteMemory {
@@ -34,7 +33,14 @@ impl SqliteMemory {
                 timestamp INTEGER NOT NULL,
                 modality TEXT NOT NULL
             );
-            
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create episodes table")?;
+
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject TEXT NOT NULL,
@@ -46,7 +52,7 @@ impl SqliteMemory {
         )
         .execute(&self.pool)
         .await
-        .context("Failed to run migrations")?;
+        .context("Failed to create facts table")?;
 
         Ok(())
     }

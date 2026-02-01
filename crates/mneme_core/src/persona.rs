@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
-use anyhow::Context;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Psyche {
