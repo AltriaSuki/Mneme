@@ -32,7 +32,7 @@ impl SourceManager {
     }
 
     pub async fn collect_all(&self) -> Vec<Content> {
-        let sources = self.sources.lock().await;
+        let sources = self.sources.lock().await.clone();
         let mut all_content = Vec::new();
 
         for source in sources.iter() {

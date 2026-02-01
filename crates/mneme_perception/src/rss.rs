@@ -12,11 +12,16 @@ pub struct RssSource {
 }
 
 impl RssSource {
-    pub fn new(url: &str, name: &str) -> Self {
-        Self {
+    pub fn new(url: &str, name: &str) -> Result<Self> {
+        let parsed = url::Url::parse(url).context("Invalid URL")?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            anyhow::bail!("Only HTTP/HTTPS schemes are allowed");
+        }
+
+        Ok(Self {
             url: url.to_string(),
             name: name.to_string(),
-        }
+        })
     }
 }
 
@@ -60,5 +65,44 @@ impl Source for RssSource {
         }
 
         Ok(items)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::{method};
+
+    #[tokio::test]
+    async fn test_rss_fetch() {
+        let mock_server = MockServer::start().await;
+
+        let rss_body = r#"
+        <?xml version="1.0" encoding="UTF-8" ?>
+        <rss version="2.0">
+        <channel>
+            <title>Test Feed</title>
+            <item>
+                <title>Test Item 1</title>
+                <link>http://example.com/1</link>
+                <description>Description 1</description>
+            </item>
+        </channel>
+        </rss>
+        "#;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(rss_body))
+            .mount(&mock_server)
+            .await;
+
+        // Use the mock server URL
+        let source = RssSource::new(&mock_server.uri(), "test-rss").expect("Valid URL");
+        let content = source.fetch().await.expect("Failed to fetch");
+
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0].author, "Test Feed");
+        assert!(content[0].body.contains("Test Item 1"));
     }
 }

@@ -8,21 +8,35 @@ use mneme_core::{Content, Modality};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use std::io::Cursor;
+use url::Url;
 
 pub struct WebSource {
     url: String,
+    name: String,
 }
 
 impl WebSource {
-    pub fn new(url: &str) -> Self {
-        Self { url: url.to_string() }
+    pub fn new(url: &str) -> Result<Self> {
+        let parsed = Url::parse(url).context("Invalid URL")?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            anyhow::bail!("Only HTTP/HTTPS schemes are allowed");
+        }
+        
+        // Simple name derivation from domain
+        let domain = parsed.host_str().unwrap_or("unknown");
+        let name = format!("web:{}", domain);
+
+        Ok(Self { 
+            url: url.to_string(),
+            name,
+        })
     }
 }
 
 #[async_trait]
 impl Source for WebSource {
     fn name(&self) -> &str {
-        "web"
+        &self.name
     }
     
     fn interval(&self) -> u64 { 0 }
@@ -35,7 +49,7 @@ impl Source for WebSource {
             .await?;
 
         let mut cursor = Cursor::new(html);
-        let extractor = readability::extractor::extract(&mut cursor, &reqwest::Url::parse(&self.url)?)
+        let extractor = readability::extractor::extract(&mut cursor, &Url::parse(&self.url)?)
             .context("Failed to extract content")?;
 
         let body = format!("Title: {}\nLink: {}\nContent: {}", extractor.title, self.url, extractor.text);
