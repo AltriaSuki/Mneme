@@ -8,6 +8,8 @@ use tracing::{info, error};
 use uuid::Uuid;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use mneme_perception::{SourceManager, rss::RssSource, Source};
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -22,6 +24,10 @@ struct Args {
     /// Model to use
     #[arg(short, long, default_value = "claude-3-opus-20240229")]
     model: String,
+
+    /// Add an RSS feed URL to monitor (temporary for testing)
+    #[arg(long)]
+    rss: Option<String>,
 }
 
 #[tokio::main]
@@ -39,13 +45,21 @@ async fn main() -> anyhow::Result<()> {
     info!("Connecting to Memory at {}...", args.db);
     let memory = Arc::new(SqliteMemory::new(&args.db).await?);
 
+    // 3. Initialize Source Manager
+    let source_manager = Arc::new(SourceManager::new());
+    if let Some(rss_url) = args.rss {
+        info!("Adding RSS source: {}", rss_url);
+        let rss_source = Arc::new(RssSource::new(&rss_url, "cli-rss"));
+        source_manager.add_source(rss_source).await;
+    }
+
     // 3. Initialize Reasoning
     info!("Starting Reasoning Engine with model {}...", args.model);
     // Note: This will fail if ANTHROPIC_API_KEY is not set. 
     // For now, let's allow it to crash if key is missing to fail fast.
     let engine = ReasoningEngine::new(psyche, memory, &args.model)?;
 
-    println!("Mneme System Online. Type 'quit' to exit.");
+    println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources.");
     print!("> ");
     io::stdout().flush()?;
 
@@ -61,7 +75,23 @@ async fn main() -> anyhow::Result<()> {
             break;
         }
 
+        if trimmed == "sync" {
+            info!("Syncing sources...");
+            let content = source_manager.collect_all().await;
+            println!("Fetched {} items.", content.len());
+            for item in content {
+                println!("- [{}] {}", item.source, item.body.lines().next().unwrap_or(""));
+                // Feed into reasoning/memory? For now just print.
+                 let event = Event::SystemSignal(format!("New content from {}: {}", item.source, item.body));
+                 engine.think(event).await?;
+            }
+            print!("> ");
+            io::stdout().flush()?;
+            continue;
+        }
+
         if trimmed.is_empty() {
+
             print!("> ");
             io::stdout().flush()?;
             continue;
