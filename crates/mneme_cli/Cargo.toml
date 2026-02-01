@@ -1,0 +1,15 @@
+[package]
+name = "mneme_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mneme_core = { path = "../mneme_core" }
+mneme_memory = { path = "../mneme_memory" }
+mneme_reasoning = { path = "../mneme_reasoning" }
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
