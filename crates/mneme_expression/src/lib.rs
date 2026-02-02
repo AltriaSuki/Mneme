@@ -54,9 +54,12 @@ impl Humanizer {
             }
             
             // If adding this line would exceed limit, push current and start new
-            if !current_part.is_empty() && current_part.len() + line.len() > self.max_chunk_chars {
+            // Use chars().count() for proper Unicode support (Chinese chars are 3 bytes)
+            let current_chars = current_part.chars().count();
+            let line_chars = line.chars().count();
+            if !current_part.is_empty() && current_chars + line_chars > self.max_chunk_chars {
                 // Try to split the current_part at sentence boundaries if it's too long
-                if current_part.len() > self.max_chunk_chars {
+                if current_chars > self.max_chunk_chars {
                     parts.extend(self.split_at_sentences(&current_part, &sentence_enders));
                 } else {
                     parts.push(current_part);
@@ -72,7 +75,7 @@ impl Humanizer {
         
         // Handle remaining content
         if !current_part.is_empty() {
-            if current_part.len() > self.max_chunk_chars {
+            if current_part.chars().count() > self.max_chunk_chars {
                 parts.extend(self.split_at_sentences(&current_part, &sentence_enders));
             } else {
                 parts.push(current_part);
@@ -83,20 +86,25 @@ impl Humanizer {
     }
     
     /// Split text at sentence boundaries
+    /// Thresholds: min_sentence_len (30 chars) ensures we don't split mid-thought,
+    /// target_split_point (max_chunk_chars/2 = 75 chars) balances chunk sizes
     fn split_at_sentences(&self, text: &str, enders: &[char]) -> Vec<String> {
+        // target_split_point (max_chunk_chars/2 = 75 chars) balances chunk sizes
+        let target_split_point = self.max_chunk_chars / 2;
+        
         let mut result = Vec::new();
         let mut current = String::new();
+        let mut current_char_count = 0;
         
         for ch in text.chars() {
             current.push(ch);
+            current_char_count += 1;
             
-            // If we hit a sentence ender and have enough content, consider splitting
-            if enders.contains(&ch) && current.len() >= 30 {
-                // Add a small buffer before actually splitting
-                if current.len() > self.max_chunk_chars / 2 {
-                    result.push(current.trim().to_string());
-                    current = String::new();
-                }
+            // Split at sentence ender when we've accumulated enough content
+            if enders.contains(&ch) && current_char_count > target_split_point {
+                result.push(current.trim().to_string());
+                current = String::new();
+                current_char_count = 0;
             }
         }
         
@@ -137,8 +145,8 @@ mod tests {
         let text = "This is sentence one. This is sentence two. This is sentence three. This is sentence four. And this is sentence five which makes this paragraph quite long indeed.";
         
         let parts = humanizer.split_response(text);
-        // Should split at sentence boundaries
-        assert!(parts.len() >= 1);
+        // Should split at sentence boundaries since 163 chars > max_chunk_chars (150)
+        assert!(parts.len() >= 2, "Expected at least 2 parts for long paragraph, got {}", parts.len());
     }
     
     #[test]
