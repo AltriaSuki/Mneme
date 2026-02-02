@@ -28,8 +28,13 @@ impl AnthropicClient {
             return Ok(format!("(Mock Response) I received your prompt of length {}.", prompt.len()));
         }
 
+        let base_url = env::var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+        // Handle trailing slash just in case
+        let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+
         let response = self.client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&json!({

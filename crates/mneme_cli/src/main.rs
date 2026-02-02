@@ -30,7 +30,7 @@ struct Args {
     persona: String,
 
     /// Model to use
-    #[arg(short, long, default_value = "claude-3-opus-20240229")]
+    #[arg(short, long, default_value = "claude-4-5-sonnet-20250929")]
     model: String,
 
 
