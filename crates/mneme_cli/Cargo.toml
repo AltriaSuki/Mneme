@@ -7,6 +7,7 @@ edition = "2021"
 mneme_core = { path = "../mneme_core" }
 mneme_memory = { path = "../mneme_memory" }
 mneme_reasoning = { path = "../mneme_reasoning" }
+mneme_perception = { path = "../mneme_perception" }
 clap = { version = "4.4", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
