@@ -1337,8 +1337,10 @@ name = "mneme_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "mneme_core",
+ "mneme_expression",
  "mneme_memory",
  "mneme_perception",
  "mneme_reasoning",
