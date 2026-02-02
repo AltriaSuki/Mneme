@@ -9,4 +9,5 @@ members = [
     "crates/mneme_cli",
     "crates/mneme_expression",
     "crates/mneme_onebot",
+    "crates/mneme_voice",
 ]

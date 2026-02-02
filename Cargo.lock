@@ -1435,6 +1435,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mneme_voice"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "mneme_core",
+]
+
+[[package]]
 name = "native-tls"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

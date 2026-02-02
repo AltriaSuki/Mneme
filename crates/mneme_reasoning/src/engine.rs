@@ -1,4 +1,4 @@
-use mneme_core::{Event, Reasoning, Psyche, Memory};
+use mneme_core::{Event, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory};
 use crate::{prompts::ContextAssembler, anthropic::AnthropicClient};
 use anyhow::Result;
 use std::sync::Arc;
@@ -24,7 +24,7 @@ impl ReasoningEngine {
 
 #[async_trait::async_trait]
 impl Reasoning for ReasoningEngine {
-    async fn think(&self, event: Event) -> Result<String> {
+    async fn think(&self, event: Event) -> Result<ReasoningOutput> {
         match event {
             Event::UserMessage(content) => {
                 // 1. Recall
@@ -58,9 +58,15 @@ impl Reasoning for ReasoningEngine {
                 self.memory.memorize(&content).await?;
                 // In a real system, we'd also extract facts here.
 
-                Ok(response)
+                Ok(ReasoningOutput {
+                    content: response,
+                    modality: ResponseModality::Text,
+                })
             }
-            _ => Ok("Event not handled yet".to_string()),
+            _ => Ok(ReasoningOutput {
+                content: "Event not handled yet".to_string(),
+                modality: ResponseModality::Text,
+            }),
         }
     }
 }

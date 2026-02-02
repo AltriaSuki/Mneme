@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
 
         match engine.think(event).await {
             Ok(response) => {
-                println!("\nMneme: {}\n", response);
+                println!("\nMneme: {}\n", response.content);
             }
             Err(e) => {
                 error!("Error thinking: {}", e);
