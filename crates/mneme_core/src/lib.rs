@@ -77,3 +77,21 @@ pub trait SocialGraph: Send + Sync {
 pub trait Expression: Send + Sync {
     async fn speak(&self, message: &str) -> anyhow::Result<()>;
 }
+
+/// Modality hint for how reasoning output should be expressed
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum ResponseModality {
+    #[default]
+    Text,
+    /// Voice output with optional emotional tone
+    Voice(Option<String>), // emotion name
+    /// Platform-specific sticker/emoji
+    Sticker(String),
+}
+
+/// Output from the reasoning engine with modality hints
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningOutput {
+    pub content: String,
+    pub modality: ResponseModality,
+}

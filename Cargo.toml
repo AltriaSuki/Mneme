@@ -8,5 +8,5 @@ members = [
     "crates/mneme_perception",
     "crates/mneme_cli",
     "crates/mneme_expression",
-    "crates/mneme_onebot",
+    "crates/mneme_onebot", "crates/mneme_voice",
 ]
