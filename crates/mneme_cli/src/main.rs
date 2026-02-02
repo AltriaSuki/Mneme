@@ -7,12 +7,17 @@ use std::io::{self, Write};
 use tracing::{info, error};
 use uuid::Uuid;
 use std::time::{SystemTime, UNIX_EPOCH};
+use mneme_perception::{SourceManager, rss::RssSource};
 
 use mneme_perception::{SourceManager, rss::RssSource};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Add RSS feed URLs to monitor (can be used multiple times)
+    #[arg(long)]
+    rss: Vec<String>,
+
     /// Path to the memory database
     #[arg(short, long, default_value = "mneme.db")]
     db: String,
@@ -63,6 +68,14 @@ async fn main() -> anyhow::Result<()> {
     print!("> ");
     io::stdout().flush()?;
 
+    // 3. Initialize Source Manager
+    let source_manager = Arc::new(SourceManager::new());
+    for rss_url in args.rss {
+        info!("Adding RSS source: {}", rss_url);
+        // We use the URL as the name suffix for now to distinguish them
+        let rss_source = Arc::new(RssSource::new(&rss_url, &rss_url)?);
+        source_manager.add_source(rss_source).await;
+    }
     let stdin = io::stdin();
     let mut input = String::new();
 

@@ -95,7 +95,7 @@ impl Memory for SqliteMemory {
         
         sqlx::query(
             r#"
-            INSERT INTO episodes (id, source, author, body, timestamp, modality)
+            INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality)
             VALUES (?, ?, ?, ?, ?, ?)
             "#
         )

@@ -1,9 +1,9 @@
-use crate::source::Source;
+use crate::source::{Source, validate_url};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mneme_core::{Content, Modality};
 use rss::Channel;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use uuid::Uuid;
 use chrono::DateTime;
 
@@ -16,20 +16,7 @@ pub struct RssSource {
 
 impl RssSource {
     pub fn new(url: &str, name: &str) -> Result<Self> {
-        let parsed = url::Url::parse(url).context("Invalid URL")?;
-        if parsed.scheme() != "http" && parsed.scheme() != "https" {
-            anyhow::bail!("Only HTTP/HTTPS schemes are allowed");
-        }
-
-        if let Some(host) = parsed.host_str() {
-            let is_test = cfg!(test);
-            if !is_test && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
-                anyhow::bail!("Localhost is not allowed");
-            }
-            if host.starts_with("192.168.") || host.starts_with("10.") || host.starts_with("169.254.") {
-                anyhow::bail!("Private network addresses are not allowed");
-            }
-        }
+        validate_url(url)?;
 
         Ok(Self {
             url: url.to_string(),
@@ -49,7 +36,12 @@ impl Source for RssSource {
     }
 
     async fn fetch(&self) -> Result<Vec<Content>> {
-        let content = reqwest::get(&self.url)
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+
+        let content = client.get(&self.url)
+            .send()
             .await
             .context("Failed to fetch RSS feed")?
             .bytes()
@@ -130,5 +122,19 @@ mod tests {
         assert_eq!(content.len(), 1);
         assert_eq!(content[0].author, "Test Feed");
         assert!(content[0].body.contains("Test Item 1"));
+    }
+
+    #[test]
+    fn test_rss_dedup() {
+        // Same link should produce same UUID
+        let link = "http://example.com/article1";
+        let uuid1 = Uuid::new_v5(&Uuid::NAMESPACE_URL, link.as_bytes());
+        let uuid2 = Uuid::new_v5(&Uuid::NAMESPACE_URL, link.as_bytes());
+        assert_eq!(uuid1, uuid2);
+
+        // Different link should produce different UUID
+        let link2 = "http://example.com/article2";
+        let uuid3 = Uuid::new_v5(&Uuid::NAMESPACE_URL, link2.as_bytes());
+        assert_ne!(uuid1, uuid3);
     }
 }

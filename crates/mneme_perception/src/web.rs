@@ -1,11 +1,8 @@
-// TODO: Implement web extraction using scraper or readability
-// For now this is a placeholder module to allow crate compilation
-
-use crate::source::Source;
+use crate::source::{Source, validate_url};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mneme_core::{Content, Modality};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use uuid::Uuid;
 use std::io::Cursor;
 use url::Url;
@@ -17,21 +14,9 @@ pub struct WebSource {
 
 impl WebSource {
     pub fn new(url: &str) -> Result<Self> {
-        let parsed = Url::parse(url).context("Invalid URL")?;
-        if parsed.scheme() != "http" && parsed.scheme() != "https" {
-            anyhow::bail!("Only HTTP/HTTPS schemes are allowed");
-        }
+        validate_url(url)?;
         
-        if let Some(host) = parsed.host_str() {
-            let is_test = cfg!(test);
-            if !is_test && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
-                anyhow::bail!("Localhost is not allowed");
-            }
-            if host.starts_with("192.168.") || host.starts_with("10.") || host.starts_with("169.254.") {
-                anyhow::bail!("Private network addresses are not allowed");
-            }
-        }
-        
+        let parsed = Url::parse(url)?;
         // Simple name derivation from domain
         let domain = parsed.host_str().unwrap_or("unknown");
         let name = format!("web:{}", domain);
@@ -52,7 +37,12 @@ impl Source for WebSource {
     fn interval(&self) -> u64 { 0 }
 
     async fn fetch(&self) -> Result<Vec<Content>> {
-         let html = reqwest::get(&self.url)
+         let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+
+         let html = client.get(&self.url)
+            .send()
             .await
             .context("Failed to fetch page")?
             .text()
@@ -64,8 +54,11 @@ impl Source for WebSource {
 
         let body = format!("Title: {}\nLink: {}\nContent: {}", extractor.title, self.url, extractor.text);
 
+        // Deterministic UUID for web pages based on URL
+        let id = Uuid::new_v5(&Uuid::NAMESPACE_URL, self.url.as_bytes());
+
         Ok(vec![Content {
-            id: Uuid::new_v4(),
+            id,
             source: "web".to_string(),
             author: "Unknown".to_string(),
             body,
@@ -110,14 +103,15 @@ mod tests {
     
     #[test]
     fn test_web_ssrf_prevention() {
-        // Localhost is allowed in tests for wiremock
+        // Localhost is allowed in tests via validate_url's cfg!(test) check
         assert!(WebSource::new("http://localhost/admin").is_ok());
         assert!(WebSource::new("http://127.0.0.1/admin").is_ok());
         
-        // Private networks should still be blocked
+        // Private networks should be blocked
         assert!(WebSource::new("http://169.254.169.254/meta").is_err());
         assert!(WebSource::new("http://192.168.1.1/router").is_err());
+        
+        // Public valid
         assert!(WebSource::new("http://google.com").is_ok());
     }
 }
-
