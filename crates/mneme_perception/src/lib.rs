@@ -2,4 +2,4 @@ pub mod source;
 pub mod rss;
 pub mod web;
 
-pub use source::SourceManager;
+pub use source::{Source, SourceManager};

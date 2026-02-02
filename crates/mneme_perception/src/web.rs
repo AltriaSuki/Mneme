@@ -10,6 +10,7 @@ use url::Url;
 pub struct WebSource {
     url: String,
     name: String,
+    client: reqwest::Client,
 }
 
 impl WebSource {
@@ -21,9 +22,14 @@ impl WebSource {
         let domain = parsed.host_str().unwrap_or("unknown");
         let name = format!("web:{}", domain);
 
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+
         Ok(Self { 
             url: url.to_string(),
             name,
+            client,
         })
     }
 }
@@ -37,11 +43,8 @@ impl Source for WebSource {
     fn interval(&self) -> u64 { 0 }
 
     async fn fetch(&self) -> Result<Vec<Content>> {
-         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
 
-         let html = client.get(&self.url)
+         let html = self.client.get(&self.url)
             .send()
             .await
             .context("Failed to fetch page")?

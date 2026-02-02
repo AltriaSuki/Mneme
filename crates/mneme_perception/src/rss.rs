@@ -12,15 +12,21 @@ const MAX_ITEMS: usize = 3;
 pub struct RssSource {
     url: String,
     name: String,
+    client: reqwest::Client,
 }
 
 impl RssSource {
     pub fn new(url: &str, name: &str) -> Result<Self> {
         validate_url(url)?;
 
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+
         Ok(Self {
             url: url.to_string(),
             name: name.to_string(),
+            client,
         })
     }
 }
@@ -36,11 +42,7 @@ impl Source for RssSource {
     }
 
     async fn fetch(&self) -> Result<Vec<Content>> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
-
-        let content = client.get(&self.url)
+        let content = self.client.get(&self.url)
             .send()
             .await
             .context("Failed to fetch RSS feed")?

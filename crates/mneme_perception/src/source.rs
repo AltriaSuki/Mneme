@@ -80,16 +80,15 @@ pub fn validate_url(url: &str) -> Result<()> {
             return Ok(());
         }
 
-        // Check for private IPs
+        // Check for private IPs using ipnetwork crate logic manually or by checking known ranges
+        // Note: The reviewer mentioned using `ipnetwork` crate directly but `is_private` is actually on IpAddr in std (unstable) or we implement it.
+        // However, the `ipnetwork` crate provides convenient range checking.
         if let Ok(ip) = host_str.parse::<IpAddr>() {
             if is_private_ip(ip) {
                 anyhow::bail!("Private network addresses are not allowed");
             }
         } else {
-            // It's a domain name. 
-            // Ideally we'd resolve it to check the IP, but for now we block known localhost strings.
-            // DNS resolution is complex to do synchronously without side effects.
-            // Production systems should resolve and check IP.
+            // Domain name
             if host_str == "localhost" {
                 anyhow::bail!("Localhost is not allowed");
             }
@@ -100,38 +99,25 @@ pub fn validate_url(url: &str) -> Result<()> {
 }
 
 fn is_private_ip(ip: IpAddr) -> bool {
-    // 10.0.0.0/8
-    // 172.16.0.0/12
-    // 192.168.0.0/16
-    // 169.254.0.0/16
-    // fc00::/7 (Unique Local)
-    // Loopback
-    // Unspecified
-    
+    let private_ranges = [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "fc00::/7",
+    ];
+
+    for range in private_ranges {
+        if let Ok(net) = range.parse::<IpNetwork>() {
+            if net.contains(ip) {
+                return true;
+            }
+        }
+    }
+
     if ip.is_loopback() || ip.is_unspecified() {
         return true;
     }
-
-    match ip {
-        IpAddr::V4(ipv4) => {
-            let octets = ipv4.octets();
-            // 10.0.0.0/8
-            if octets[0] == 10 { return true; }
-            // 172.16.0.0/12
-            if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 { return true; }
-            // 192.168.0.0/16
-            if octets[0] == 192 && octets[1] == 168 { return true; }
-            // 169.254.0.0/16
-            if octets[0] == 169 && octets[1] == 254 { return true; }
-            false
-        }
-        IpAddr::V6(ipv6) => {
-            // fc00::/7
-            let octets = ipv6.octets();
-             // fc00::/7 includes fc00:: to fdff::
-             // fc = 1111 1100, fd = 1111 1101. So first 7 bits are 1111 110.
-            if (octets[0] & 0xFE) == 0xFC { return true; }
-            false
-        }
-    }
+    
+    false
 }
