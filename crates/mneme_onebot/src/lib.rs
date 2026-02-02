@@ -1,4 +1,5 @@
-use anyhow::Result;
+use std::time::Duration;
+use anyhow::{Result, Context};
 use async_trait::async_trait;
 use mneme_core::{Perception, Event};
 
@@ -9,12 +10,17 @@ pub struct OneBot {
 }
 
 impl OneBot {
-    pub fn new(api_url: &str, access_token: Option<String>) -> Self {
-        Self {
+    pub fn new(api_url: &str, access_token: Option<String>) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .context("Failed to build HTTP client")?;
+            
+        Ok(Self {
             api_url: api_url.to_string(),
             access_token,
-            client: reqwest::Client::new(),
-        }
+            client,
+        })
     }
     
     /// Send a private message
@@ -25,16 +31,19 @@ impl OneBot {
             "message": message,
         });
         
-        if let Some(_token) = &self.access_token {
-            // OneBot implementations often accept token in Authorization header or query param. 
-            // We'll assume header here or handle it in client builder if needed.
+        let mut req = self.client.post(&url).json(&json);
+        
+        if let Some(token) = &self.access_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
         }
 
-        self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.access_token.clone().unwrap_or_default()))
-            .json(&json)
-            .send()
-            .await?;
+        let response = req.send().await.context("Failed to send message")?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("OneBot API error: {} - {}", status, body);
+        }
             
         Ok(())
     }
@@ -43,8 +52,7 @@ impl OneBot {
 #[async_trait]
 impl Perception for OneBot {
     async fn listen(&self) -> Result<Event> {
-        // TODO: Implement WebSocket listener
-        // For now, this is a placeholder
-        std::future::pending().await
+        // WebSocket listener not yet implemented
+        anyhow::bail!("OneBot listen not yet implemented - use WebSocket integration")
     }
 }

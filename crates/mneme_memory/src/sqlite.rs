@@ -96,12 +96,18 @@ impl SqliteMemory {
                 FOREIGN KEY(source_id) REFERENCES people(id),
                 FOREIGN KEY(target_id) REFERENCES people(id)
             );
-            CREATE INDEX IF NOT EXISTS idx_relationships_source_target ON relationships(source_id, target_id);
             "#
         )
         .execute(&self.pool)
         .await
         .context("Failed to create relationships table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_relationships_source_target ON relationships(source_id, target_id)"
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create relationships index")?;
 
         Ok(())
     }
