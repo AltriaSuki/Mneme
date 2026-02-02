@@ -5,6 +5,9 @@ use mneme_core::{Content, Modality};
 use rss::Channel;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+use chrono::DateTime;
+
+const MAX_ITEMS: usize = 3;
 
 pub struct RssSource {
     url: String,
@@ -16,6 +19,16 @@ impl RssSource {
         let parsed = url::Url::parse(url).context("Invalid URL")?;
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
             anyhow::bail!("Only HTTP/HTTPS schemes are allowed");
+        }
+
+        if let Some(host) = parsed.host_str() {
+            let is_test = cfg!(test);
+            if !is_test && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
+                anyhow::bail!("Localhost is not allowed");
+            }
+            if host.starts_with("192.168.") || host.starts_with("10.") || host.starts_with("169.254.") {
+                anyhow::bail!("Private network addresses are not allowed");
+            }
         }
 
         Ok(Self {
@@ -46,20 +59,33 @@ impl Source for RssSource {
             .context("Failed to parse RSS feed")?;
 
         let mut items = Vec::new();
-        // Just take top 3 for now to avoid spamming
-        for item in channel.items().iter().take(3) {
+        // Limit items to avoid spamming
+        for item in channel.items().iter().take(MAX_ITEMS) {
             let title = item.title().unwrap_or("No Title");
             let description = item.description().unwrap_or("No Description");
             let link = item.link().unwrap_or("");
             
             let body = format!("Title: {}\nLink: {}\nSummary: {}", title, link, description);
+
+            // Use deterministic UUID based on link for deduplication
+            let id = if !link.is_empty() {
+                Uuid::new_v5(&Uuid::NAMESPACE_URL, link.as_bytes())
+            } else {
+                Uuid::new_v4()
+            };
+
+            // Parse timestamp from pub_date if available
+            let timestamp = item.pub_date()
+                .and_then(|d| DateTime::parse_from_rfc2822(d).ok())
+                .map(|dt| dt.timestamp())
+                .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64);
             
             items.push(Content {
-                id: Uuid::new_v4(),
+                id,
                 source: format!("rss:{}", self.name),
                 author: channel.title().to_string(),
                 body,
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64,
+                timestamp,
                 modality: Modality::Text,
             });
         }

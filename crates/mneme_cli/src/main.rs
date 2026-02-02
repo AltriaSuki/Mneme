@@ -1,5 +1,5 @@
 use clap::Parser;
-use mneme_core::{Event, Content, Modality, Reasoning, Psyche};
+use mneme_core::{Event, Content, Modality, Reasoning, Psyche, Memory};
 use mneme_memory::SqliteMemory;
 use mneme_reasoning::ReasoningEngine;
 use std::sync::Arc;
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Reasoning Engine with model {}...", args.model);
     // Note: This will fail if ANTHROPIC_API_KEY is not set. 
     // For now, let's allow it to crash if key is missing to fail fast.
-    let engine = ReasoningEngine::new(psyche, memory, &args.model)?;
+    let engine = ReasoningEngine::new(psyche, memory.clone(), &args.model)?;
 
     println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources.");
     print!("> ");
@@ -81,6 +81,9 @@ async fn main() -> anyhow::Result<()> {
             println!("Fetched {} items.", content.len());
             for item in content {
                 println!("- [{}] {}", item.source, item.body.lines().next().unwrap_or(""));
+                if let Err(e) = memory.memorize(&item).await {
+                    error!("Failed to memorize item {}: {}", item.id, e);
+                }
             }
             print!("> ");
             io::stdout().flush()?;

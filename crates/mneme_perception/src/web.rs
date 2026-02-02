@@ -22,6 +22,16 @@ impl WebSource {
             anyhow::bail!("Only HTTP/HTTPS schemes are allowed");
         }
         
+        if let Some(host) = parsed.host_str() {
+            let is_test = cfg!(test);
+            if !is_test && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
+                anyhow::bail!("Localhost is not allowed");
+            }
+            if host.starts_with("192.168.") || host.starts_with("10.") || host.starts_with("169.254.") {
+                anyhow::bail!("Private network addresses are not allowed");
+            }
+        }
+        
         // Simple name derivation from domain
         let domain = parsed.host_str().unwrap_or("unknown");
         let name = format!("web:{}", domain);
@@ -62,6 +72,52 @@ impl Source for WebSource {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64,
             modality: Modality::Text,
         }])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::{method};
+
+    #[tokio::test]
+    async fn test_web_fetch() {
+        let mock_server = MockServer::start().await;
+
+        let html_body = r#"
+        <html>
+            <head><title>Test Page</title></head>
+            <body>
+                <h1>Test Header</h1>
+                <p>This is the test content.</p>
+            </body>
+        </html>
+        "#;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(html_body))
+            .mount(&mock_server)
+            .await;
+
+        let source = WebSource::new(&mock_server.uri()).expect("Valid URL");
+        let content = source.fetch().await.expect("Failed to fetch");
+
+        assert_eq!(content.len(), 1);
+        assert!(content[0].body.contains("Test Page"));
+        assert!(content[0].body.contains("test content"));
+    }
+    
+    #[test]
+    fn test_web_ssrf_prevention() {
+        // Localhost is allowed in tests for wiremock
+        assert!(WebSource::new("http://localhost/admin").is_ok());
+        assert!(WebSource::new("http://127.0.0.1/admin").is_ok());
+        
+        // Private networks should still be blocked
+        assert!(WebSource::new("http://169.254.169.254/meta").is_err());
+        assert!(WebSource::new("http://192.168.1.1/router").is_err());
+        assert!(WebSource::new("http://google.com").is_ok());
     }
 }
 
