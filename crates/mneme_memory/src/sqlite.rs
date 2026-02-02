@@ -14,6 +14,10 @@ impl SqliteMemory {
     pub async fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         let db_url = format!("sqlite://{}?mode=rwc", db_path.as_ref().display());
         let pool = SqlitePoolOptions::new()
+            .after_connect(|conn, _meta| Box::pin(async move {
+                sqlx::query("PRAGMA foreign_keys = ON").execute(conn).await?;
+                Ok(())
+            }))
             .connect(&db_url)
             .await
             .context("Failed to connect to SQLite database")?;
@@ -92,6 +96,7 @@ impl SqliteMemory {
                 FOREIGN KEY(source_id) REFERENCES people(id),
                 FOREIGN KEY(target_id) REFERENCES people(id)
             );
+            CREATE INDEX IF NOT EXISTS idx_relationships_source_target ON relationships(source_id, target_id);
             "#
         )
         .execute(&self.pool)
@@ -199,7 +204,7 @@ impl SocialGraph for SqliteMemory {
 
         // Upsert person
         sqlx::query(
-            "INSERT OR REPLACE INTO people (id, name) VALUES (?, ?)"
+            "INSERT INTO people (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name"
         )
         .bind(person.id.to_string())
         .bind(&person.name)
@@ -209,7 +214,7 @@ impl SocialGraph for SqliteMemory {
         // Upsert aliases
         for (platform, platform_id) in &person.aliases {
             sqlx::query(
-                "INSERT OR REPLACE INTO aliases (person_id, platform, platform_id) VALUES (?, ?, ?)"
+                "INSERT INTO aliases (person_id, platform, platform_id) VALUES (?, ?, ?) ON CONFLICT(platform, platform_id) DO UPDATE SET person_id = excluded.person_id"
             )
             .bind(person.id.to_string())
             .bind(platform)

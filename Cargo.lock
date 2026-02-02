@@ -1362,6 +1362,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mneme_expression"
+version = "0.1.0"
+
+[[package]]
 name = "mneme_memory"
 version = "0.1.0"
 dependencies = [

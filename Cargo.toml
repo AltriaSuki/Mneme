@@ -6,5 +6,6 @@ members = [
     "crates/mneme_memory",
     "crates/mneme_reasoning",
     "crates/mneme_perception",
-    "crates/mneme_cli", "crates/mneme_expression",
+    "crates/mneme_cli",
+    "crates/mneme_expression",
 ]
