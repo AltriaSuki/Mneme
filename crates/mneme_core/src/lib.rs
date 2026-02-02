@@ -35,6 +35,39 @@ pub enum Event {
     UserMessage(Content),
     SystemSignal(String),
     Heartbeat,
+    /// Proactive trigger initiated by the system
+    ProactiveTrigger(Trigger),
+}
+
+/// Trigger types that can initiate proactive reasoning
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Trigger {
+    /// Scheduled time-based trigger (e.g., morning greeting, evening summary)
+    Scheduled {
+        name: String,
+        /// Cron expression or simple schedule identifier
+        schedule: String,
+    },
+    /// Content from a source matches user interests
+    ContentRelevance {
+        source: String,
+        content_id: String,
+        /// Relevance score (0.0 - 1.0)
+        score: f32,
+        /// Brief description of why it's relevant
+        reason: String,
+    },
+    /// Topic not discussed in a while (memory decay)
+    MemoryDecay {
+        topic: String,
+        /// Unix timestamp of last mention
+        last_mentioned: i64,
+    },
+    /// Trending content on monitored platform
+    Trending {
+        platform: String,
+        topic: String,
+    },
 }
 
 #[async_trait]
@@ -76,6 +109,16 @@ pub trait SocialGraph: Send + Sync {
 #[async_trait]
 pub trait Expression: Send + Sync {
     async fn speak(&self, message: &str) -> anyhow::Result<()>;
+}
+
+/// Evaluates conditions and produces triggers for proactive behavior
+#[async_trait]
+pub trait TriggerEvaluator: Send + Sync {
+    /// Evaluate if any triggers should fire now
+    async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>>;
+    
+    /// Get the name of this evaluator for logging
+    fn name(&self) -> &'static str;
 }
 
 /// Emotional tone for voice synthesis (cross-cutting concern)
