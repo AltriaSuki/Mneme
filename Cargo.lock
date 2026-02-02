@@ -1440,6 +1440,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "mneme_core",
 ]
 
 [[package]]

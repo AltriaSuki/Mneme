@@ -13,6 +13,7 @@ pub enum AudioFormat {
     /// OGG Opus (common for voice messages)
     OggOpus,
     /// Silk format (used by QQ/WeChat)
+    /// Note: No standard IANA MIME type; common variants are audio/silk, audio/x-silk
     Silk,
     /// Raw PCM
     Pcm { sample_rate: u32, channels: u8 },

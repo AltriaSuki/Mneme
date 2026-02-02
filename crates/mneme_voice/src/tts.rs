@@ -2,34 +2,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-
-/// Emotional tone for TTS synthesis
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Emotion {
-    #[default]
-    Neutral,
-    Happy,
-    Sad,
-    Excited,
-    Calm,
-    Angry,
-    Surprised,
-}
-
-impl Emotion {
-    /// Get a descriptive name for the emotion
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Neutral => "neutral",
-            Self::Happy => "happy",
-            Self::Sad => "sad",
-            Self::Excited => "excited",
-            Self::Calm => "calm",
-            Self::Angry => "angry",
-            Self::Surprised => "surprised",
-        }
-    }
-}
+use mneme_core::Emotion;
 
 /// Output format for synthesized audio
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -55,16 +28,25 @@ pub trait TextToSpeech: Send + Sync {
     async fn synthesize(&self, text: &str, emotion: Option<Emotion>) -> Result<Vec<u8>>;
     
     /// Synthesize with a specific output format
+    ///
+    /// Default implementation returns an error. Implementations that support
+    /// multiple formats should override this method.
     async fn synthesize_with_format(
         &self,
-        text: &str,
-        emotion: Option<Emotion>,
+        _text: &str,
+        _emotion: Option<Emotion>,
         format: OutputFormat,
     ) -> Result<Vec<u8>> {
-        // Default implementation ignores format and uses synthesize
-        // Concrete implementations can override for format support
-        let _ = format;
-        self.synthesize(text, emotion).await
+        anyhow::bail!(
+            "Output format {:?} not supported by {}. Use synthesize() for default format.",
+            format,
+            self.provider_name()
+        )
+    }
+    
+    /// Get the default output format for this provider
+    fn default_format(&self) -> OutputFormat {
+        OutputFormat::Mp3
     }
     
     /// Get the voice identifier being used
@@ -76,5 +58,10 @@ pub trait TextToSpeech: Send + Sync {
     /// Check if this TTS engine supports emotional synthesis
     fn supports_emotion(&self) -> bool {
         false
+    }
+    
+    /// Check if this TTS engine supports a specific output format
+    fn supports_format(&self, format: OutputFormat) -> bool {
+        format == self.default_format()
     }
 }

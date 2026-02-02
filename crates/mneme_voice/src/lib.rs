@@ -7,4 +7,6 @@ mod stt;
 mod tts;
 
 pub use stt::{AudioFormat, SpeechToText};
-pub use tts::{Emotion, TextToSpeech};
+pub use tts::{OutputFormat, TextToSpeech};
+// Re-export Emotion from core for convenience
+pub use mneme_core::Emotion;

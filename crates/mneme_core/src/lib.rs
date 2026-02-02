@@ -50,7 +50,7 @@ pub trait Perception: Send + Sync {
 
 #[async_trait]
 pub trait Reasoning: Send + Sync {
-    async fn think(&self, event: Event) -> anyhow::Result<String>;
+    async fn think(&self, event: Event) -> anyhow::Result<ReasoningOutput>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,13 +78,55 @@ pub trait Expression: Send + Sync {
     async fn speak(&self, message: &str) -> anyhow::Result<()>;
 }
 
+/// Emotional tone for voice synthesis (cross-cutting concern)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Emotion {
+    #[default]
+    Neutral,
+    Happy,
+    Sad,
+    Excited,
+    Calm,
+    Angry,
+    Surprised,
+}
+
+impl Emotion {
+    /// Get a descriptive name for the emotion
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::Happy => "happy",
+            Self::Sad => "sad",
+            Self::Excited => "excited",
+            Self::Calm => "calm",
+            Self::Angry => "angry",
+            Self::Surprised => "surprised",
+        }
+    }
+    
+    /// Parse from string (case-insensitive)
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "neutral" => Some(Self::Neutral),
+            "happy" => Some(Self::Happy),
+            "sad" => Some(Self::Sad),
+            "excited" => Some(Self::Excited),
+            "calm" => Some(Self::Calm),
+            "angry" => Some(Self::Angry),
+            "surprised" => Some(Self::Surprised),
+            _ => None,
+        }
+    }
+}
+
 /// Modality hint for how reasoning output should be expressed
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum ResponseModality {
     #[default]
     Text,
     /// Voice output with optional emotional tone
-    Voice(Option<String>), // emotion name
+    Voice(Option<Emotion>),
     /// Platform-specific sticker/emoji
     Sticker(String),
 }
