@@ -1,6 +1,11 @@
 use std::time::Duration;
 use rand::Rng;
 
+mod presence;
+mod scheduled;
+pub use presence::PresenceScheduler;
+pub use scheduled::{ScheduleEntry, ScheduledTriggerEvaluator};
+
 pub struct Humanizer {
     read_speed_cpm: u32,
     typing_speed_cpm: u32,

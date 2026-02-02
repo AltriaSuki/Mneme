@@ -1365,6 +1365,10 @@ dependencies = [
 name = "mneme_expression"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "mneme_core",
  "rand 0.8.5",
 ]
 
