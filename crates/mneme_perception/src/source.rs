@@ -99,19 +99,22 @@ pub fn validate_url(url: &str) -> Result<()> {
 }
 
 fn is_private_ip(ip: IpAddr) -> bool {
-    let private_ranges = [
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "169.254.0.0/16",
-        "fc00::/7",
-    ];
+    static PRIVATE_RANGES: once_cell::sync::Lazy<Vec<IpNetwork>> = once_cell::sync::Lazy::new(|| {
+        vec![
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+            "fc00::/7",
+        ]
+        .into_iter()
+        .flat_map(|s| s.parse::<IpNetwork>())
+        .collect()
+    });
 
-    for range in private_ranges {
-        if let Ok(net) = range.parse::<IpNetwork>() {
-            if net.contains(ip) {
-                return true;
-            }
+    for net in PRIVATE_RANGES.iter() {
+        if net.contains(ip) {
+            return true;
         }
     }
 

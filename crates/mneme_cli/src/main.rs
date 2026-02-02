@@ -49,7 +49,6 @@ async fn main() -> anyhow::Result<()> {
     let memory = Arc::new(SqliteMemory::new(&args.db).await?);
 
     // 3. Initialize Source Manager
-    // 3. Initialize Source Manager
     let source_manager = Arc::new(SourceManager::new());
     for rss_url in args.rss {
         info!("Adding RSS source: {}", rss_url);
