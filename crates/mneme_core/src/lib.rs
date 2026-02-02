@@ -40,7 +40,7 @@ pub enum Event {
 }
 
 /// Trigger types that can initiate proactive reasoning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Trigger {
     /// Scheduled time-based trigger (e.g., morning greeting, evening summary)
     Scheduled {

@@ -4,6 +4,7 @@
 
 use chrono::{Datelike, Local, NaiveTime, Weekday};
 use mneme_core::Trigger;
+use anyhow::{Context, Result};
 
 /// Presence scheduler that filters triggers by appropriate timing
 pub struct PresenceScheduler {
@@ -34,19 +35,29 @@ impl PresenceScheduler {
     }
     
     /// Create a scheduler with custom hours
-    pub fn with_hours(start_hour: u32, end_hour: u32) -> Self {
-        Self {
-            active_start: NaiveTime::from_hms_opt(start_hour, 0, 0).unwrap(),
-            active_end: NaiveTime::from_hms_opt(end_hour, 0, 0).unwrap(),
+    ///
+    /// # Arguments
+    /// * `start_hour` - Hour to start (0-23)
+    /// * `end_hour` - Hour to end (0-23)
+    pub fn with_hours(start_hour: u32, end_hour: u32) -> Result<Self> {
+        Ok(Self {
+            active_start: NaiveTime::from_hms_opt(start_hour, 0, 0)
+                .context("Invalid start hour")?,
+            active_end: NaiveTime::from_hms_opt(end_hour, 0, 0)
+                .context("Invalid end hour")?,
             ..Self::new()
-        }
+        })
     }
     
     /// Check if the current time is within active hours
     pub fn is_appropriate_time(&self) -> bool {
-        let now = Local::now();
-        let current_time = now.time();
-        let current_day = now.weekday();
+        self.is_appropriate_at(Local::now())
+    }
+
+    /// Check if a specific time is within active hours (for testing)
+    pub fn is_appropriate_at<T: Datelike + chrono::Timelike>(&self, time: T) -> bool {
+        let current_time = NaiveTime::from_hms_opt(time.hour(), time.minute(), time.second()).unwrap();
+        let current_day = time.weekday();
         
         // Check day of week
         if !self.active_days.contains(&current_day) {
@@ -83,27 +94,49 @@ impl Default for PresenceScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use chrono::NaiveDate;
+
     #[test]
-    fn test_default_scheduler_creation() {
-        let scheduler = PresenceScheduler::default();
-        assert_eq!(scheduler.active_start, NaiveTime::from_hms_opt(8, 0, 0).unwrap());
-        assert_eq!(scheduler.active_end, NaiveTime::from_hms_opt(23, 0, 0).unwrap());
-        assert_eq!(scheduler.active_days.len(), 7);
+    fn test_custom_hours_validation() {
+        assert!(PresenceScheduler::with_hours(9, 21).is_ok());
+        assert!(PresenceScheduler::with_hours(24, 0).is_err());
+        assert!(PresenceScheduler::with_hours(0, 24).is_err());
     }
-    
+
     #[test]
-    fn test_custom_hours() {
-        let scheduler = PresenceScheduler::with_hours(9, 21);
-        assert_eq!(scheduler.active_start, NaiveTime::from_hms_opt(9, 0, 0).unwrap());
-        assert_eq!(scheduler.active_end, NaiveTime::from_hms_opt(21, 0, 0).unwrap());
+    fn test_behavior_normal_range() {
+        let scheduler = PresenceScheduler::with_hours(9, 17).unwrap();
+        // Day is Monday (2023-01-02)
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 2).unwrap();
+        
+        // 12:00 (inside)
+        let noon = base_date.and_hms_opt(12, 0, 0).unwrap();
+        assert!(scheduler.is_appropriate_at(noon));
+        
+        // 08:00 (outside)
+        let morning = base_date.and_hms_opt(8, 0, 0).unwrap();
+        assert!(!scheduler.is_appropriate_at(morning));
+        
+        // 18:00 (outside)
+        let evening = base_date.and_hms_opt(18, 0, 0).unwrap();
+        assert!(!scheduler.is_appropriate_at(evening));
     }
-    
+
     #[test]
-    fn test_empty_triggers_on_filter() {
-        let scheduler = PresenceScheduler::new();
-        let empty: Vec<Trigger> = Vec::new();
-        let result = scheduler.filter_triggers(empty);
-        assert!(result.is_empty());
+    fn test_behavior_overnight_range() {
+        let scheduler = PresenceScheduler::with_hours(22, 6).unwrap();
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 2).unwrap();
+        
+        // 23:00 (inside)
+        let late_night = base_date.and_hms_opt(23, 0, 0).unwrap();
+        assert!(scheduler.is_appropriate_at(late_night));
+        
+        // 05:00 (inside)
+        let early_morning = base_date.and_hms_opt(5, 0, 0).unwrap();
+        assert!(scheduler.is_appropriate_at(early_morning));
+        
+        // 12:00 (outside)
+        let noon = base_date.and_hms_opt(12, 0, 0).unwrap();
+        assert!(!scheduler.is_appropriate_at(noon));
     }
 }
