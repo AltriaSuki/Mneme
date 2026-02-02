@@ -1362,6 +1362,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mneme_expression"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "mneme_memory"
 version = "0.1.0"
 dependencies = [
@@ -1371,6 +1378,22 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "mneme_onebot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "mneme_core",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
