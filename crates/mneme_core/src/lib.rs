@@ -168,8 +168,8 @@ impl Emotion {
 pub enum ResponseModality {
     #[default]
     Text,
-    /// Voice output with optional emotional tone
-    Voice(Option<Emotion>),
+    /// Voice output hint
+    Voice,
     /// Platform-specific sticker/emoji
     Sticker(String),
 }
@@ -179,4 +179,5 @@ pub enum ResponseModality {
 pub struct ReasoningOutput {
     pub content: String,
     pub modality: ResponseModality,
+    pub emotion: Emotion,
 }

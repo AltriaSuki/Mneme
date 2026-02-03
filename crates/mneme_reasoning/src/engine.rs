@@ -2,6 +2,7 @@ use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, R
 use crate::{prompts::ContextAssembler, anthropic::AnthropicClient};
 use anyhow::Result;
 use std::sync::Arc;
+use regex::Regex;
 
 pub struct ReasoningEngine {
     psyche: Psyche,
@@ -66,18 +67,18 @@ impl ReasoningEngine {
         let raw_response = self.client.complete(&prompt).await?;
 
         // 4. Parse Emotion from Response
+        // 4. Parse Emotion from Response using Regex
         // Format: <emotion>Happy</emotion> Content...
-        let (content, emotion) = if let Some(start_idx) = raw_response.find("<emotion>") {
-            if let Some(end_idx) = raw_response[start_idx..].find("</emotion>") {
-                let tag_end_idx = start_idx + end_idx + 10; // 10 is length of </emotion>
-                let emotion_str = &raw_response[start_idx + 9..start_idx + end_idx];
-                let content_str = &raw_response[tag_end_idx..];
-                
-                let parsed_emotion = Emotion::from_str(emotion_str).unwrap_or(Emotion::Neutral);
-                (content_str.trim().to_string(), parsed_emotion)
-            } else {
-                (raw_response.clone(), Emotion::Neutral)
-            }
+        // Regex is safer for flexible whitespace or malformed tags
+        let re = Regex::new(r"(?i)<emotion>(.*?)</emotion>").unwrap();
+        
+        let (content, emotion) = if let Some(caps) = re.captures(&raw_response) {
+            let emotion_str = caps.get(1).map_or("", |m| m.as_str());
+            let parsed_emotion = Emotion::from_str(emotion_str).unwrap_or(Emotion::Neutral);
+            
+            // Strip the tag from the content
+            let clean_content = re.replace(&raw_response, "").trim().to_string();
+            (clean_content, parsed_emotion)
         } else {
             (raw_response.clone(), Emotion::Neutral)
         };
@@ -118,7 +119,8 @@ impl Reasoning for ReasoningEngine {
 
                 Ok(ReasoningOutput {
                     content: response_text,
-                    modality: ResponseModality::Voice(Some(emotion)), // Pass implicit emotion via Voice modality hint
+                    modality: ResponseModality::Text, // Standard text output
+                    emotion: emotion, // Explicit emotion field
                 })
             }
             Event::ProactiveTrigger(trigger) => {
@@ -138,12 +140,14 @@ impl Reasoning for ReasoningEngine {
 
                 Ok(ReasoningOutput {
                     content: response_text,
-                    modality: ResponseModality::Voice(Some(emotion)),
+                    modality: ResponseModality::Text,
+                    emotion: emotion,
                 })
             }
             _ => Ok(ReasoningOutput {
                 content: "Event not handled yet".to_string(),
                 modality: ResponseModality::Text,
+                emotion: Emotion::Neutral,
             }),
         }
     }

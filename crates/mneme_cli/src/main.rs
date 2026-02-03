@@ -11,6 +11,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mneme_perception::{SourceManager, rss::RssSource};
 use tokio::io::AsyncBufReadExt;
 use std::time::Duration;
+use mneme_core::ReasoningOutput;
+
+async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
+    println!(""); // Spacer
+    let parts = humanizer.split_response(&response.content);
+    for part in parts {
+        // Simulate typing delay based on emotion
+        // ReasoningOutput has implicit emotion in 'emotion' field, and we treat it as Option for Humanizer
+        let delay = humanizer.typing_delay(&part, Some(response.emotion));
+        tokio::time::sleep(delay).await;
+        
+        if let Some(p) = prefix {
+            println!("[{}] Mneme: {}", p, part);
+        } else {
+            println!("Mneme: {}", part);
+        }
+    }
+    println!(""); // Spacer
+}
 
 
 
@@ -110,19 +129,7 @@ async fn main() -> anyhow::Result<()> {
                             // In a future optimization, this could be spawned in a background task
                             match engine.think(event).await {
                                 Ok(response) => {
-                                    // Extract emotion if available
-                                    let emotion = if let mneme_core::ResponseModality::Voice(e) = response.modality { e } else { None };
-                                    
-                                    println!(""); // Spacer
-                                    let parts = humanizer.split_response(&response.content);
-                                    for part in parts {
-                                        // Simulate typing delay
-                                        let delay = humanizer.typing_delay(&part, emotion);
-                                        // In proactive mode we might want to just dump it, but let's be human
-                                        tokio::time::sleep(delay).await;
-                                        println!("[Proactive] Mneme: {}", part);
-                                    }
-                                    println!(""); // Spacer
+                                    print_response(&response, &humanizer, Some("Proactive")).await;
                                     print!("> ");
                                     io::stdout().flush()?;
                                 }
@@ -183,20 +190,7 @@ async fn main() -> anyhow::Result<()> {
 
                 match engine.think(event).await {
                     Ok(response) => {
-                        // Extract emotion (hidden in Voice modality)
-                        let emotion = if let mneme_core::ResponseModality::Voice(e) = response.modality { e } else { None };
-                        
-                        println!(""); // Start response block
-                        
-                        let parts = humanizer.split_response(&response.content);
-                        for part in parts {
-                             // Simulate typing/thinking delay for this chunk
-                            let delay = humanizer.typing_delay(&part, emotion);
-                            tokio::time::sleep(delay).await;
-                            
-                            println!("Mneme: {}", part);
-                        }
-                        println!(""); // End response block
+                        print_response(&response, &humanizer, None).await;
                     }
                     Err(e) => {
                         error!("Error thinking: {}", e);

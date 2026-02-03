@@ -1440,6 +1440,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "mneme_core",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
