@@ -114,8 +114,9 @@ async fn main() -> anyhow::Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(100);
     
     let onebot_client = if let Some(url) = onebot_url {
+        let access_token = std::env::var("ONEBOT_ACCESS_TOKEN").ok();
         tracing::info!("Initializing OneBot at {}", url);
-        match OneBotClient::new(&url) {
+        match OneBotClient::new(&url, access_token.as_deref()) {
             Ok((client, mut onebot_rx)) => {
                 // Forward OneBot content to main event loop
                 let tx_clone = event_tx.clone();

@@ -17,8 +17,14 @@ pub struct OneBotClient {
 }
 
 impl OneBotClient {
-    pub fn new(url: &str) -> Result<(Self, mpsc::Receiver<Content>)> {
-        let ws_url = Url::parse(url).context("Invalid OneBot WS URL")?;
+    pub fn new(url: &str, access_token: Option<&str>) -> Result<(Self, mpsc::Receiver<Content>)> {
+        let mut ws_url = Url::parse(url).context("Invalid OneBot WS URL")?;
+        
+        // Append access token as query parameter if provided
+        if let Some(token) = access_token {
+            ws_url.query_pairs_mut().append_pair("access_token", token);
+        }
+        
         let (tx, mut rx) = mpsc::channel::<String>(32);
         let (content_tx, content_rx) = mpsc::channel::<Content>(32);
 
@@ -28,7 +34,7 @@ impl OneBotClient {
         tokio::spawn(async move {
             let mut retry_count: u32 = 0;
             loop {
-                tracing::info!("Connecting to OneBot at {}...", ws_url);
+                tracing::info!("Connecting to OneBot at {}...", ws_url.as_str().split('?').next().unwrap_or(ws_url.as_str()));
                 match connect_async(&ws_url).await {
                     Ok((ws_stream, _)) => {
                         tracing::info!("Connected to OneBot!");
