@@ -30,7 +30,7 @@ struct Args {
     persona: String,
 
     /// Model to use
-    #[arg(short, long, default_value = "claude-4-5-sonnet-20250929")]
+    #[arg(short, long, env = "ANTHROPIC_MODEL", default_value = "claude-4-5-sonnet-20250929")]
     model: String,
 
 
@@ -38,6 +38,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env file if it exists
+    dotenv::dotenv().ok();
+    
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
