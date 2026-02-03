@@ -137,16 +137,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Stdin loop (always active for local debugging)
     let tx_stdin = event_tx.clone();
-    
-    // NOTE: We need shared access to source_manager and memory for 'sync' command, 
-    // but they are owned by main. Simple fix: Move 'sync' logic to main loop or use Arc/Clone?
-    // Let's keep stdin simple: It just sends raw text. 'sync' command handling needs to happen in the main loop
-    // BUT main loop consumes EVENTS. 
-    // Refactor: We'll intercept 'sync' and 'quit' in the reader task for now, assuming they are "SystemSignals"?
-    // Or better: Treat them as UserMessage and handle them in the Think loop if we want, OR handle here.
-    // Handling in Main Loop is safer for architectural consistency. 
-    // We'll mark 'sync' as a special SystemSignal or just catch string.
-    
     tokio::spawn(async move {
         let stdin = tokio::io::stdin();
         let mut reader = tokio::io::BufReader::new(stdin).lines();
@@ -154,11 +144,7 @@ async fn main() -> anyhow::Result<()> {
             let trimmed = line.trim();
             if trimmed.is_empty() { continue; }
             
-            // Magic commands from CLI
             if trimmed == "quit" || trimmed == "exit" {
-                // We can't easily break the main loop from here without a channel signal.
-                // Send a special "SystemSignal" to request shutdown (not impl yet)
-                // or just exit process? Hard exit is rude but effective for CLI tool.
                 std::process::exit(0);
             }
             
@@ -282,13 +268,8 @@ async fn main() -> anyhow::Result<()> {
                          print!("> ");
                          io::stdout().flush()?;
                      }
-                 } else if let Event::ProactiveTrigger(_) = &event {
-                     // Already handled in the tick() branch? 
-                     // Wait, we can't be here if it was tick(). 
-                     // Logic mismatch. tick() handles it itself and continues.
-                     // So this branch is only for UserMessage or forwarded events.
+                    }
                  }
-             }
              Err(e) => tracing::error!("Reasoning error: {}", e),
         }
     }

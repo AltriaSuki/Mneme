@@ -26,26 +26,26 @@ impl OneBotClient {
 
         // Spawn the WebSocket handler task
         tokio::spawn(async move {
-            let mut retry_count = 0;
+            let mut retry_count: u32 = 0;
             loop {
                 tracing::info!("Connecting to OneBot at {}...", ws_url);
                 match connect_async(&ws_url).await {
                     Ok((ws_stream, _)) => {
                         tracing::info!("Connected to OneBot!");
-                        retry_count = 0; // Reset retry count on success
+                        retry_count = 0;
                         if let Err(e) = Self::handle_connection(ws_stream, &mut rx, &content_tx).await {
                             tracing::error!("OneBot connection error: {}", e);
                         }
+                        // Connection lost, wait before reconnecting
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     }
                     Err(e) => {
-                        let wait_secs = 5u64.min(2u64.pow(retry_count));
-                        tracing::error!("Failed to connect to OneBot: {}. Retrying in {}s...", e, wait_secs);
+                        let wait_secs = 60u64.min(2u64.pow(retry_count + 2)); // 4s, 8s, 16s, 32s, 60s
+                        tracing::error!("Failed to connect: {}. Retrying in {}s...", e, wait_secs);
                         tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
-                        if retry_count < 6 { retry_count += 1; }
+                        if retry_count < 5 { retry_count += 1; }
                     }
                 }
-                // If handle_connection returns, it means connection lost. Wait before reconnect.
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
 
