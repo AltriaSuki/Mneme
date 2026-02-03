@@ -1,4 +1,4 @@
-use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory};
+use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion};
 use crate::{prompts::ContextAssembler, anthropic::AnthropicClient};
 use anyhow::Result;
 use std::sync::Arc;
@@ -8,6 +8,7 @@ pub struct ReasoningEngine {
     memory: Arc<dyn Memory>,
     client: AnthropicClient,
     history: tokio::sync::Mutex<Vec<String>>, // Simple in-memory history for now
+    current_emotion: tokio::sync::Mutex<Emotion>,
     evaluators: Vec<Box<dyn TriggerEvaluator>>,
 }
 
@@ -19,6 +20,7 @@ impl ReasoningEngine {
             memory,
             client,
             history: tokio::sync::Mutex::new(Vec::new()),
+            current_emotion: tokio::sync::Mutex::new(Emotion::Neutral),
             evaluators: Vec::new(),
         })
     }
@@ -40,40 +42,65 @@ impl ReasoningEngine {
         Ok(triggers)
     }
 
-    /// Helper to process thought loop for any input text
-    async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<String> {
+    /// Helper to process thought loop for any input text, returns (content, emotion)
+    async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<(String, Emotion)> {
         // 1. Recall
         let context = self.memory.recall(input_text).await?;
         
         // 2. Assemble
         let mut history = self.history.lock().await;
+        let mut emotion_lock = self.current_emotion.lock().await;
+        
         let history_text = history.join("\n");
         
+        // Update prompt builder to use current emotion
         let prompt = ContextAssembler::build_prompt(
             &self.psyche,
             &context,
             &history_text,
-            input_text
+            input_text,
+            &*emotion_lock
         );
 
         // 3. Generate
-        let response = self.client.complete(&prompt).await?;
+        let raw_response = self.client.complete(&prompt).await?;
 
-        // 4. Update History
+        // 4. Parse Emotion from Response
+        // Format: <emotion>Happy</emotion> Content...
+        let (content, emotion) = if let Some(start_idx) = raw_response.find("<emotion>") {
+            if let Some(end_idx) = raw_response[start_idx..].find("</emotion>") {
+                let tag_end_idx = start_idx + end_idx + 10; // 10 is length of </emotion>
+                let emotion_str = &raw_response[start_idx + 9..start_idx + end_idx];
+                let content_str = &raw_response[tag_end_idx..];
+                
+                let parsed_emotion = Emotion::from_str(emotion_str).unwrap_or(Emotion::Neutral);
+                (content_str.trim().to_string(), parsed_emotion)
+            } else {
+                (raw_response.clone(), Emotion::Neutral)
+            }
+        } else {
+            (raw_response.clone(), Emotion::Neutral)
+        };
+
+        // Update state
+        *emotion_lock = emotion;
+
+        // 5. Update History (store the raw response with emotion tag internally or just content? 
+        // Let's store content to keep history clean for context, but maybe we lose emotional context in history. 
+        // For now, let's just store the content to avoid confusing the model with its own tags if we re-feed it unsystematically)
         if is_user_message {
             history.push(format!("User: {}", input_text));
         } else {
-            // For system/proactive events, record them differently
             history.push(format!("System Event: {}", input_text));
         }
-        history.push(format!("Assistant: {}", response));
+        history.push(format!("Assistant: {}", content));
         
         if history.len() > 20 {
             let overflow = history.len() - 20;
             history.drain(0..overflow);
         }
 
-        Ok(response)
+        Ok((content, emotion))
     }
 }
 
@@ -82,15 +109,16 @@ impl Reasoning for ReasoningEngine {
     async fn think(&self, event: Event) -> Result<ReasoningOutput> {
         match event {
             Event::UserMessage(content) => {
+
                 // Refactored to use shared helper
-                let response = self.process_thought_loop(&content.body, true).await?;
+                let (response_text, emotion) = self.process_thought_loop(&content.body, true).await?;
 
                 // 5. Memorize
                 self.memory.memorize(&content).await?;
 
                 Ok(ReasoningOutput {
-                    content: response,
-                    modality: ResponseModality::Text,
+                    content: response_text,
+                    modality: ResponseModality::Voice(Some(emotion)), // Pass implicit emotion via Voice modality hint
                 })
             }
             Event::ProactiveTrigger(trigger) => {
@@ -106,11 +134,11 @@ impl Reasoning for ReasoningEngine {
                         format!("'{}' is trending. Mention it if relevant.", topic),
                 };
 
-                let response = self.process_thought_loop(&prompt_text, false).await?;
+                let (response_text, emotion) = self.process_thought_loop(&prompt_text, false).await?;
 
                 Ok(ReasoningOutput {
-                    content: response,
-                    modality: ResponseModality::Text,
+                    content: response_text,
+                    modality: ResponseModality::Voice(Some(emotion)),
                 })
             }
             _ => Ok(ReasoningOutput {

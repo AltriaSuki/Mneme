@@ -2,7 +2,7 @@ use clap::Parser;
 use mneme_core::{Event, Content, Modality, Reasoning, Psyche, Memory};
 use mneme_memory::SqliteMemory;
 use mneme_reasoning::ReasoningEngine;
-use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler};
+use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler, Humanizer};
 use std::sync::Arc;
 use std::io::{self, Write};
 use tracing::{info, error};
@@ -79,6 +79,9 @@ async fn main() -> anyhow::Result<()> {
     let presence = PresenceScheduler::default();
     info!("Presence scheduler active: {:?} - {:?}", presence.active_start, presence.active_end);
 
+    // Initialize Humanizer for expressive output
+    let humanizer = Humanizer::new();
+
     println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources.");
     print!("> ");
     io::stdout().flush()?;
@@ -107,7 +110,19 @@ async fn main() -> anyhow::Result<()> {
                             // In a future optimization, this could be spawned in a background task
                             match engine.think(event).await {
                                 Ok(response) => {
-                                    println!("\n[Proactive] Mneme: {}\n", response.content);
+                                    // Extract emotion if available
+                                    let emotion = if let mneme_core::ResponseModality::Voice(e) = response.modality { e } else { None };
+                                    
+                                    println!(""); // Spacer
+                                    let parts = humanizer.split_response(&response.content);
+                                    for part in parts {
+                                        // Simulate typing delay
+                                        let delay = humanizer.typing_delay(&part, emotion);
+                                        // In proactive mode we might want to just dump it, but let's be human
+                                        tokio::time::sleep(delay).await;
+                                        println!("[Proactive] Mneme: {}", part);
+                                    }
+                                    println!(""); // Spacer
                                     print!("> ");
                                     io::stdout().flush()?;
                                 }
@@ -168,7 +183,20 @@ async fn main() -> anyhow::Result<()> {
 
                 match engine.think(event).await {
                     Ok(response) => {
-                        println!("\nMneme: {}\n", response.content);
+                        // Extract emotion (hidden in Voice modality)
+                        let emotion = if let mneme_core::ResponseModality::Voice(e) = response.modality { e } else { None };
+                        
+                        println!(""); // Start response block
+                        
+                        let parts = humanizer.split_response(&response.content);
+                        for part in parts {
+                             // Simulate typing/thinking delay for this chunk
+                            let delay = humanizer.typing_delay(&part, emotion);
+                            tokio::time::sleep(delay).await;
+                            
+                            println!("Mneme: {}", part);
+                        }
+                        println!(""); // End response block
                     }
                     Err(e) => {
                         error!("Error thinking: {}", e);

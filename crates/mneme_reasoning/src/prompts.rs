@@ -7,11 +7,13 @@ impl ContextAssembler {
         psyche: &Psyche,
         recalled_memory: &str,
         conversation_history: &str,
-        user_input: &str
+        user_input: &str,
+        current_emotion: &mneme_core::Emotion
     ) -> String {
         format!(
-            "{}\n\n== RECALLED CONTEXT ==\n{}\n\n== CONVERSATION HISTORY ==\n{}\n\nUser: {}",
+            "{}\n\nYou are currently feeling: {}.\nAlways start your response with an emotional state tag: <emotion>STATE</emotion>, where STATE is one of: Neutral, Happy, Sad, Excited, Calm, Angry, Surprised.\n\n== RECALLED CONTEXT ==\n{}\n\n== CONVERSATION HISTORY ==\n{}\n\nUser: {}",
             psyche.format_context(),
+            current_emotion.as_str(),
             recalled_memory,
             conversation_history,
             user_input

@@ -1,5 +1,6 @@
 use std::time::Duration;
 use rand::Rng;
+use mneme_core::Emotion;
 
 mod presence;
 mod scheduled;
@@ -17,7 +18,7 @@ impl Humanizer {
         Self {
             read_speed_cpm: 1000,
             typing_speed_cpm: 300,
-            max_chunk_chars: 150, // Target chunk size
+            max_chunk_chars: 60, // Aggressive splitting for IM-style bursts
         }
     }
 
@@ -32,14 +33,27 @@ impl Humanizer {
         Duration::from_millis((base_ms as f64 * jitter) as u64)
     }
 
-    /// Calculate simulated delay for typing a response with randomness
-    pub fn typing_delay(&self, response: &str) -> Duration {
-        let chars = response.chars().count() as u64;
-        let ms_per_char = (60 * 1000) / self.typing_speed_cpm as u64;
-        let base_ms = 1000 + chars * ms_per_char;
+    /// Calculate simulated delay for typing a response with emotional modulation
+    pub fn typing_delay(&self, response: &str, emotion: Option<Emotion>) -> Duration {
+        let emotion = emotion.unwrap_or(Emotion::Neutral);
         
-        // Add 20% jitter
-        let jitter = rand::thread_rng().gen_range(0.8..1.2);
+        // modulation based on emotion
+        let (speed_mult, jitter_range) = match emotion {
+            Emotion::Happy | Emotion::Excited => (1.3, 0.8..1.2), // Faster, normal jitter
+            Emotion::Angry => (2.0, 0.5..1.5), // Very fast, erratic jitter
+            Emotion::Sad | Emotion::Calm => (0.7, 0.9..1.1), // Slower, steady
+            Emotion::Surprised => (1.0, 0.8..1.5), // Normal speed, erratic
+            Emotion::Neutral => (1.0, 0.8..1.2),
+        };
+
+        let effective_cpm = (self.typing_speed_cpm as f64 * speed_mult) as u64;
+        let chars = response.chars().count() as u64;
+        let ms_per_char = (60 * 1000) / effective_cpm.max(1); // avoid div by 0
+        
+        let base_ms = 500 + chars * ms_per_char;
+        
+        // Apply jitter
+        let jitter = rand::thread_rng().gen_range(jitter_range);
         Duration::from_millis((base_ms as f64 * jitter) as u64)
     }
 
