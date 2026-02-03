@@ -246,6 +246,11 @@ async fn main() -> anyhow::Result<()> {
         match engine.think(event.clone()).await {
              Ok(response) => {
                  // Handle Output
+                 if response.content.trim().is_empty() {
+                     tracing::debug!("Mneme decided to stay silent.");
+                     continue;
+                 }
+
                  if let Event::UserMessage(input_content) = &event {
                      if input_content.source.starts_with("onebot") {
                          // Reply via OneBot
