@@ -1,5 +1,5 @@
 use clap::Parser;
-use mneme_core::{Event, Content, Modality, Reasoning, Psyche};
+use mneme_core::{Event, Content, Modality, Reasoning, Psyche, Memory};
 use mneme_memory::SqliteMemory;
 use mneme_reasoning::ReasoningEngine;
 use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler, Humanizer};
@@ -137,15 +137,36 @@ async fn main() -> anyhow::Result<()> {
 
     // Stdin loop (always active for local debugging)
     let tx_stdin = event_tx.clone();
+    
+    // NOTE: We need shared access to source_manager and memory for 'sync' command, 
+    // but they are owned by main. Simple fix: Move 'sync' logic to main loop or use Arc/Clone?
+    // Let's keep stdin simple: It just sends raw text. 'sync' command handling needs to happen in the main loop
+    // BUT main loop consumes EVENTS. 
+    // Refactor: We'll intercept 'sync' and 'quit' in the reader task for now, assuming they are "SystemSignals"?
+    // Or better: Treat them as UserMessage and handle them in the Think loop if we want, OR handle here.
+    // Handling in Main Loop is safer for architectural consistency. 
+    // We'll mark 'sync' as a special SystemSignal or just catch string.
+    
     tokio::spawn(async move {
         let stdin = tokio::io::stdin();
         let mut reader = tokio::io::BufReader::new(stdin).lines();
         while let Ok(Some(line)) = reader.next_line().await {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+            
+            // Magic commands from CLI
+            if trimmed == "quit" || trimmed == "exit" {
+                // We can't easily break the main loop from here without a channel signal.
+                // Send a special "SystemSignal" to request shutdown (not impl yet)
+                // or just exit process? Hard exit is rude but effective for CLI tool.
+                std::process::exit(0);
+            }
+            
             let content = Content {
                 id: Uuid::new_v4(),
-                source: "cli".to_string(), // Mark source as CLI
+                source: "cli".to_string(), 
                 author: "User".to_string(),
-                body: line,
+                body: line, // Preserve whitespace for normal chat
                 timestamp: chrono::Utc::now().timestamp(),
                 modality: Modality::Text,
             };
@@ -157,7 +178,6 @@ async fn main() -> anyhow::Result<()> {
 
     // --- MAIN EVENT LOOP ---
     // Now we listen to event_rx, which aggregates both stdin and OneBot
-    
     // We also need a timer for triggering proactive evaluation
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Check triggers every minute
 
@@ -171,11 +191,20 @@ async fn main() -> anyhow::Result<()> {
                         let active_triggers = presence.filter_triggers(triggers);
                         for trigger in active_triggers {
                             info!("Proactive trigger fired: {:?}", trigger);
-                            let event = Event::ProactiveTrigger(trigger);
+                            // We do NOT print here directly to avoid double printing.
+                            // We wrap it in an Event and sending it to the Engine.
+                            // The response handling logic below will take care of printing.
+                            // However, we are in a select! branch, not easily "sending" to self.
+                            // We can just execute engine.think() here directly?
+                            // Yes, that's what the previous code did, but clearer if we just set `event` variable?
+                            // No, `event` is the result of select!.
+                            // We'll process it right here.
                             
-                            match engine.think(event).await {
+                            let trigger_event = Event::ProactiveTrigger(trigger);
+                            match engine.think(trigger_event).await {
                                 Ok(response) => {
                                     print_response(&response, &humanizer, Some("Proactive")).await;
+                                    // TODO: Also send to OneBot if appropriate (e.g. to default user)
                                 }
                                 Err(e) => error!("Error processing trigger: {}", e),
                             }
@@ -188,10 +217,27 @@ async fn main() -> anyhow::Result<()> {
             else => break, // Channel closed
         };
 
+        // Handle specific CLI commands that need main-thread access (like 'sync')
+        if let Event::UserMessage(ref content) = event {
+             if content.source == "cli" && content.body.trim() == "sync" {
+                info!("Syncing sources...");
+                let items = source_manager.collect_all().await;
+                println!("Fetched {} items.", items.len());
+                for item in items {
+                    println!("- [{}] {}", item.source, item.body.lines().next().unwrap_or(""));
+                    if let Err(e) = memory.memorize(&item).await {
+                        error!("Failed to memorize item {}: {}", item.id, e);
+                    }
+                }
+                continue; // Skip thinking
+             }
+        }
+        
+        // Log incoming messages
         match &event {
             Event::UserMessage(content) => {
-                if content.source == "onebot" {
-                    tracing::info!("Received OneBot message from {}: {}", content.author, content.body);
+                if content.source.starts_with("onebot") {
+                    tracing::info!("Received OneBot message ({}) from {}: {}", content.source, content.author, content.body);
                 }
             }
             _ => {}
@@ -201,17 +247,26 @@ async fn main() -> anyhow::Result<()> {
              Ok(response) => {
                  // Handle Output
                  if let Event::UserMessage(input_content) = &event {
-                     if input_content.source == "onebot" {
+                     if input_content.source.starts_with("onebot") {
                          // Reply via OneBot
                          if let Some(client) = &onebot_client {
-                             if let Ok(user_id) = input_content.author.parse::<i64>() {
-                                 tracing::info!("Replying via OneBot to {}: {}", user_id, response.content);
-                                 let parts = humanizer.split_response(&response.content);
-                                 for part in parts {
-                                     let delay = humanizer.typing_delay(&part, Some(response.emotion));
-                                     tokio::time::sleep(delay).await;
+                             let parts = humanizer.split_response(&response.content);
+                             for part in parts {
+                                 let delay = humanizer.typing_delay(&part, Some(response.emotion));
+                                 tokio::time::sleep(delay).await;
+                                 
+                                 // Check routing
+                                 if let Some(group_str) = input_content.source.strip_prefix("onebot:group:") {
+                                     if let Ok(group_id) = group_str.parse::<i64>() {
+                                         // Reply to Group
+                                         if let Err(e) = client.send_group_message(group_id, &part).await {
+                                             error!("Failed to send OneBot Group message: {}", e);
+                                         }
+                                     }
+                                 } else if let Ok(user_id) = input_content.author.parse::<i64>() {
+                                     // Reply to Private
                                      if let Err(e) = client.send_private_message(user_id, &part).await {
-                                         error!("Failed to send OneBot message: {}", e);
+                                         error!("Failed to send OneBot Private message: {}", e);
                                      }
                                  }
                              }
@@ -219,9 +274,14 @@ async fn main() -> anyhow::Result<()> {
                      } else {
                          // Reply via CLI
                          print_response(&response, &humanizer, None).await;
+                         print!("> ");
+                         io::stdout().flush()?;
                      }
                  } else if let Event::ProactiveTrigger(_) = &event {
-                     print_response(&response, &humanizer, Some("Proactive")).await;
+                     // Already handled in the tick() branch? 
+                     // Wait, we can't be here if it was tick(). 
+                     // Logic mismatch. tick() handles it itself and continues.
+                     // So this branch is only for UserMessage or forwarded events.
                  }
              }
              Err(e) => tracing::error!("Reasoning error: {}", e),

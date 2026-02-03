@@ -26,19 +26,25 @@ impl OneBotClient {
 
         // Spawn the WebSocket handler task
         tokio::spawn(async move {
+            let mut retry_count = 0;
             loop {
                 tracing::info!("Connecting to OneBot at {}...", ws_url);
                 match connect_async(&ws_url).await {
                     Ok((ws_stream, _)) => {
                         tracing::info!("Connected to OneBot!");
+                        retry_count = 0; // Reset retry count on success
                         if let Err(e) = Self::handle_connection(ws_stream, &mut rx, &content_tx).await {
                             tracing::error!("OneBot connection error: {}", e);
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Failed to connect to OneBot: {}. Retrying in 5s...", e);
+                        let wait_secs = 5u64.min(2u64.pow(retry_count));
+                        tracing::error!("Failed to connect to OneBot: {}. Retrying in {}s...", e, wait_secs);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
+                        if retry_count < 6 { retry_count += 1; }
                     }
                 }
+                // If handle_connection returns, it means connection lost. Wait before reconnect.
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
@@ -60,20 +66,35 @@ impl OneBotClient {
                     let msg = msg?;
                     if let Message::Text(text) = msg {
                         // Parse event
-                        if let Ok(event) = serde_json::from_str::<OneBotEvent>(&text) {
-                             if let OneBotEvent::Message(msg_event) = event {
-                                 // Convert to mneme_core::Content
-                                 let content = Content {
-                                     id: Uuid::new_v4(),
-                                     source: "onebot".to_string(),
-                                     author: msg_event.user_id.to_string(), // In group: should probably be user_id, context has group_id
-                                     body: msg_event.raw_message, // Simplified: assume raw text for now
-                                     timestamp: msg_event.time,
-                                     modality: Modality::Text,
-                                 };
-                                 
-                                 // Send to reasoning engine
-                                 let _ = content_tx.send(content).await;
+                        match serde_json::from_str::<OneBotEvent>(&text) {
+                             Ok(event) => {
+                                 if let OneBotEvent::Message(msg_event) = event {
+                                     // Determine source type (private vs group)
+                                     let source = if let Some(group_id) = msg_event.group_id {
+                                         format!("onebot:group:{}", group_id)
+                                     } else {
+                                         "onebot:private".to_string()
+                                     };
+
+                                     // Convert to mneme_core::Content
+                                     let content = Content {
+                                         id: Uuid::new_v4(),
+                                         source,
+                                         author: msg_event.user_id.to_string(),
+                                         body: msg_event.raw_message,
+                                         timestamp: msg_event.time,
+                                         modality: Modality::Text,
+                                     };
+                                     
+                                     // Send to reasoning engine
+                                     let _ = content_tx.send(content).await;
+                                 }
+                             }
+                             Err(_) => {
+                                 // Simple debug log for unparseable events (heartbeats usually don't match OneBotEvent if filtered strict, or just noise)
+                                 // To avoid spamming logs with Heartbeats if they fail parsing, we check if it is a heartbeat meta event type first or just ignore.
+                                 // For now, minimal logging.
+                                 tracing::debug!("Ignored non-message event or parse error.");
                              }
                         }
                     }
@@ -94,6 +115,21 @@ impl OneBotClient {
                 message_type: "private".to_string(),
                 user_id: Some(user_id),
                 group_id: None,
+                message: message.to_string(),
+            },
+        };
+        let json = serde_json::to_string(&payload)?;
+        self.tx.send(json).await.map_err(|_| anyhow::anyhow!("WS task dropped"))?;
+        Ok(())
+    }
+
+    pub async fn send_group_message(&self, group_id: i64, message: &str) -> Result<()> {
+        let payload = SendMessageAction {
+            action: "send_group_msg".to_string(),
+            params: SendMessageParams {
+                message_type: "group".to_string(),
+                user_id: None,
+                group_id: Some(group_id),
                 message: message.to_string(),
             },
         };
