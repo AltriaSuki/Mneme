@@ -11,6 +11,7 @@ pub struct ReasoningEngine {
     history: tokio::sync::Mutex<Vec<String>>, // Simple in-memory history for now
     current_emotion: tokio::sync::Mutex<Emotion>,
     evaluators: Vec<Box<dyn TriggerEvaluator>>,
+    emotion_regex: Regex,
 }
 
 impl ReasoningEngine {
@@ -23,6 +24,7 @@ impl ReasoningEngine {
             history: tokio::sync::Mutex::new(Vec::new()),
             current_emotion: tokio::sync::Mutex::new(Emotion::Neutral),
             evaluators: Vec::new(),
+            emotion_regex: Regex::new(r"(?i)<emotion>(.*?)</emotion>").expect("Invalid regex"),
         })
     }
 
@@ -66,18 +68,15 @@ impl ReasoningEngine {
         // 3. Generate
         let raw_response = self.client.complete(&prompt).await?;
 
-        // 4. Parse Emotion from Response
         // 4. Parse Emotion from Response using Regex
         // Format: <emotion>Happy</emotion> Content...
         // Regex is safer for flexible whitespace or malformed tags
-        let re = Regex::new(r"(?i)<emotion>(.*?)</emotion>").unwrap();
-        
-        let (content, emotion) = if let Some(caps) = re.captures(&raw_response) {
+        let (content, emotion) = if let Some(caps) = self.emotion_regex.captures(&raw_response) {
             let emotion_str = caps.get(1).map_or("", |m| m.as_str());
             let parsed_emotion = Emotion::from_str(emotion_str).unwrap_or(Emotion::Neutral);
             
             // Strip the tag from the content
-            let clean_content = re.replace(&raw_response, "").trim().to_string();
+            let clean_content = self.emotion_regex.replace(&raw_response, "").trim().to_string();
             (clean_content, parsed_emotion)
         } else {
             (raw_response.clone(), Emotion::Neutral)
@@ -120,7 +119,7 @@ impl Reasoning for ReasoningEngine {
                 Ok(ReasoningOutput {
                     content: response_text,
                     modality: ResponseModality::Text, // Standard text output
-                    emotion: emotion, // Explicit emotion field
+                    emotion, // Explicit emotion field
                 })
             }
             Event::ProactiveTrigger(trigger) => {
@@ -141,7 +140,7 @@ impl Reasoning for ReasoningEngine {
                 Ok(ReasoningOutput {
                     content: response_text,
                     modality: ResponseModality::Text,
-                    emotion: emotion,
+                    emotion,
                 })
             }
             _ => Ok(ReasoningOutput {
