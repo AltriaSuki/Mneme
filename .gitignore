@@ -22,3 +22,7 @@ mneme.db-wal
 
 # MacOS
 .DS_Store
+
+# FastEmbed Cache
+.fastembed_cache/
+crates/mneme_memory/.fastembed_cache/

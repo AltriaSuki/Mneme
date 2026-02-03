@@ -8,18 +8,7 @@ use crate::embedding::{EmbeddingModel, cosine_similarity};
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Episode {
-    id: String,
-    source: String,
-    author: String,
-    body: String,
-    timestamp: i64,
-    modality: String,
-    // Embedding is stored as BLOB, we'll deserialize on read
-    #[serde(skip)] 
-    embedding: Option<Vec<u8>>,
-}
+// Removed unused Episode struct per code review
 
 #[derive(Clone)]
 pub struct SqliteMemory {
@@ -65,13 +54,13 @@ impl SqliteMemory {
         .context("Failed to create episodes table")?;
 
         // Add embedding column if it doesn't exist (v1 -> v2 migration)
-        // We use a separate query or rely on "create if not exists" handling quirks.
-        // For simplicity, let's try to add the column and ignore error if it exists.
-        // Or better: Check if column exists first.
-        
-        let _ = sqlx::query("ALTER TABLE episodes ADD COLUMN embedding BLOB")
+        if let Err(e) = sqlx::query("ALTER TABLE episodes ADD COLUMN embedding BLOB")
             .execute(&self.pool)
-            .await; // Ignore error (column likely exists)
+            .await 
+        {
+            // This is expected if the column already exists
+            tracing::debug!("Column 'embedding' likely exists or migration skipped: {}", e);
+        }
 
         sqlx::query(
             r#"
@@ -148,9 +137,11 @@ impl Memory for SqliteMemory {
         // Generate embedding for the query
         let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
 
-        // Fetch ALL episodes with embeddings (naive approach for small dataset)
-        // Optimization: In future, use strict limit or time range + limit
-        let rows = sqlx::query("SELECT author, body, timestamp, embedding FROM episodes")
+        // Fetch recent episodes with embeddings
+        // Optimization: Added LIMIT 1000 to avoid full table scan at scale.
+        // We assume recent memories are more relevant contextually anyway.
+        // Future: Implement proper Approximate Nearest Neighbor (ANN) index.
+        let rows = sqlx::query("SELECT author, body, timestamp, embedding FROM episodes ORDER BY timestamp DESC LIMIT 1000")
             .fetch_all(&self.pool)
             .await
             .context("Failed to fetch episodes for vector search")?;
@@ -164,12 +155,8 @@ impl Memory for SqliteMemory {
             let embedding_blob: Option<Vec<u8>> = row.get("embedding");
 
             if let Some(blob) = embedding_blob {
-                // Deserialize blob back to Vec<f32>
-                // We use bincode or serde_json? Or generic bytes cast?
-                // Let's assume we stored it as standard bytes using bincode or similar.
-                // Revert to simple JSON for robustness if needed, but Vec<u8> suggests binary.
-                // Assuming we used serde_json::to_vec for simplicity in memorize.
-                if let Ok(embedding) = serde_json::from_slice::<Vec<f32>>(&blob) {
+                // Deserialize blob back to Vec<f32> using bincode (more efficient than JSON)
+                if let Ok(embedding) = bincode::deserialize::<Vec<f32>>(&blob) {
                     let score = cosine_similarity(&query_embedding, &embedding);
                     scored_episodes.push((score, author, body, timestamp));
                 }
@@ -201,9 +188,9 @@ impl Memory for SqliteMemory {
         let embedding = self.embedding_model.embed(&content.body)
             .ok(); // If embedding fails (e.g. empty text), we still store the episode, just no vector.
 
-        // Serialize embedding to JSON bytes
+        // Serialize embedding to efficient binary format
         let embedding_blob = if let Some(emb) = embedding {
-            Some(serde_json::to_vec(&emb)?)
+            Some(bincode::serialize(&emb).context("Failed to serialize embedding")?)
         } else {
             None
         };
