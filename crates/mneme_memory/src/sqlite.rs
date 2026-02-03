@@ -4,14 +4,34 @@ use mneme_core::{Content, Memory, SocialGraph, Person};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::path::Path;
 use uuid::Uuid;
+use crate::embedding::{EmbeddingModel, cosine_similarity};
+use serde::{Serialize, Deserialize};
+use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Episode {
+    id: String,
+    source: String,
+    author: String,
+    body: String,
+    timestamp: i64,
+    modality: String,
+    // Embedding is stored as BLOB, we'll deserialize on read
+    #[serde(skip)] 
+    embedding: Option<Vec<u8>>,
+}
+
+#[derive(Clone)]
 pub struct SqliteMemory {
     pool: Pool<Sqlite>,
+    embedding_model: Arc<EmbeddingModel>,
 }
 
 impl SqliteMemory {
     pub async fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
+        // Initialize embedding model first (might take a moment to load/download)
+        let embedding_model = Arc::new(EmbeddingModel::new().context("Failed to initialize embedding model")?);
+
         let db_url = format!("sqlite://{}?mode=rwc", db_path.as_ref().display());
         let pool = SqlitePoolOptions::new()
             .after_connect(|conn, _meta| Box::pin(async move {
@@ -22,7 +42,7 @@ impl SqliteMemory {
             .await
             .context("Failed to connect to SQLite database")?;
 
-        let memory = Self { pool };
+        let memory = Self { pool, embedding_model };
         memory.migrate().await?;
         Ok(memory)
     }
@@ -43,6 +63,15 @@ impl SqliteMemory {
         .execute(&self.pool)
         .await
         .context("Failed to create episodes table")?;
+
+        // Add embedding column if it doesn't exist (v1 -> v2 migration)
+        // We use a separate query or rely on "create if not exists" handling quirks.
+        // For simplicity, let's try to add the column and ignore error if it exists.
+        // Or better: Check if column exists first.
+        
+        let _ = sqlx::query("ALTER TABLE episodes ADD COLUMN embedding BLOB")
+            .execute(&self.pool)
+            .await; // Ignore error (column likely exists)
 
         sqlx::query(
             r#"
@@ -115,30 +144,50 @@ impl SqliteMemory {
 
 #[async_trait]
 impl Memory for SqliteMemory {
-    async fn recall(&self, _query: &str) -> Result<String> {
-        // Phase 1: Naive Keyword Search (No vectors yet)
-        // We just grab the most recent 5 episodes for now to simulate context
-        let episodes: Vec<(String, String, String)> = sqlx::query_as(
-            r#"
-            SELECT author, body, timestamp 
-            FROM episodes 
-            ORDER BY timestamp DESC 
-            LIMIT 5
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to fetch recent episodes")?
-        .into_iter()
-        .map(|(author, body, _ts): (String, String, i64)| (author, body, _ts.to_string()))
-        .collect();
+    async fn recall(&self, query: &str) -> Result<String> {
+        // Generate embedding for the query
+        let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
 
-        if episodes.is_empty() {
+        // Fetch ALL episodes with embeddings (naive approach for small dataset)
+        // Optimization: In future, use strict limit or time range + limit
+        let rows = sqlx::query("SELECT author, body, timestamp, embedding FROM episodes")
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to fetch episodes for vector search")?;
+
+        let mut scored_episodes: Vec<(f32, String, String, i64)> = Vec::new();
+
+        for row in rows {
+            let author: String = row.get("author");
+            let body: String = row.get("body");
+            let timestamp: i64 = row.get("timestamp");
+            let embedding_blob: Option<Vec<u8>> = row.get("embedding");
+
+            if let Some(blob) = embedding_blob {
+                // Deserialize blob back to Vec<f32>
+                // We use bincode or serde_json? Or generic bytes cast?
+                // Let's assume we stored it as standard bytes using bincode or similar.
+                // Revert to simple JSON for robustness if needed, but Vec<u8> suggests binary.
+                // Assuming we used serde_json::to_vec for simplicity in memorize.
+                if let Ok(embedding) = serde_json::from_slice::<Vec<f32>>(&blob) {
+                    let score = cosine_similarity(&query_embedding, &embedding);
+                    scored_episodes.push((score, author, body, timestamp));
+                }
+            }
+        }
+
+        // Sort by score descending
+        scored_episodes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Take top 5
+        let top_episodes = scored_episodes.into_iter().take(5).collect::<Vec<_>>();
+
+        if top_episodes.is_empty() {
              return Ok("No relevant memories found.".to_string());
         }
 
-        let mut context = String::from("RECALLED MEMORIES:\n");
-        for (author, body, ts) in episodes {
+        let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
+        for (_score, author, body, ts) in top_episodes {
             context.push_str(&format!("- [{}] {}: {}\n", ts, author, body));
         }
 
@@ -148,10 +197,21 @@ impl Memory for SqliteMemory {
     async fn memorize(&self, content: &Content) -> Result<()> {
         let modality_str = format!("{:?}", content.modality); // Simple debug format for enum
         
+        // Generate embedding
+        let embedding = self.embedding_model.embed(&content.body)
+            .ok(); // If embedding fails (e.g. empty text), we still store the episode, just no vector.
+
+        // Serialize embedding to JSON bytes
+        let embedding_blob = if let Some(emb) = embedding {
+            Some(serde_json::to_vec(&emb)?)
+        } else {
+            None
+        };
+
         sqlx::query(
             r#"
-            INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality, embedding)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             "#
         )
         .bind(content.id.to_string())
@@ -160,6 +220,7 @@ impl Memory for SqliteMemory {
         .bind(&content.body)
         .bind(content.timestamp)
         .bind(modality_str)
+        .bind(embedding_blob)
         .execute(&self.pool)
         .await
         .context("Failed to insert episode")?;
