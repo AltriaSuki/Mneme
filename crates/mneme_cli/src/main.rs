@@ -7,11 +7,13 @@ use std::sync::Arc;
 use std::io::{self, Write};
 use tracing::{info, error};
 use uuid::Uuid;
-use std::time::{SystemTime, UNIX_EPOCH};
+
 use mneme_perception::{SourceManager, rss::RssSource};
 use tokio::io::AsyncBufReadExt;
-use std::time::Duration;
+
 use mneme_core::ReasoningOutput;
+use mneme_onebot::OneBotClient;
+use std::env;
 
 async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
     println!(""); // Spacer
@@ -105,102 +107,170 @@ async fn main() -> anyhow::Result<()> {
     print!("> ");
     io::stdout().flush()?;
 
-    // Use Async BufReader for stdin to allow select! to work
-    let stdin = tokio::io::stdin();
-    let mut reader = tokio::io::BufReader::new(stdin).lines();
+    // --- ONEBOT MODE ---
+    let onebot_url = env::var("ONEBOT_WS_URL").ok();
     
-    // Trigger check interval (every 60 seconds)
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    // Channel for events from stdin (CLI) or OneBot
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(100);
+    
+    let onebot_client = if let Some(url) = onebot_url {
+        tracing::info!("Initializing OneBot at {}", url);
+        match OneBotClient::new(&url) {
+            Ok((client, mut onebot_rx)) => {
+                // Forward OneBot content to main event loop
+                let tx_clone = event_tx.clone();
+                tokio::spawn(async move {
+                    while let Some(content) = onebot_rx.recv().await {
+                         let _ = tx_clone.send(Event::UserMessage(content)).await;
+                    }
+                });
+                Some(Arc::<OneBotClient>::new(client))
+            },
+            Err(e) => {
+                tracing::error!("Failed to init OneBot: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Stdin loop (always active for local debugging)
+    let tx_stdin = event_tx.clone();
+    tokio::spawn(async move {
+        let stdin = tokio::io::stdin();
+        let mut reader = tokio::io::BufReader::new(stdin).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+            
+            if trimmed == "quit" || trimmed == "exit" {
+                std::process::exit(0);
+            }
+            
+            let content = Content {
+                id: Uuid::new_v4(),
+                source: "cli".to_string(), 
+                author: "User".to_string(),
+                body: line, // Preserve whitespace for normal chat
+                timestamp: chrono::Utc::now().timestamp(),
+                modality: Modality::Text,
+            };
+            if let Err(_) = tx_stdin.send(Event::UserMessage(content)).await {
+                break;
+            }
+        }
+    });
+
+    // --- MAIN EVENT LOOP ---
+    // Now we listen to event_rx, which aggregates both stdin and OneBot
+    // We also need a timer for triggering proactive evaluation
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Check triggers every minute
 
     loop {
-        tokio::select! {
-            // 1. Periodic Trigger Check
+        let event = tokio::select! {
+            Some(evt) = event_rx.recv() => evt,
             _ = interval.tick() => {
+                // Proactive Trigger Check
                 match engine.evaluate_triggers().await {
                     Ok(triggers) => {
-                        // Filter triggers based on presence (active hours)
                         let active_triggers = presence.filter_triggers(triggers);
-                        
                         for trigger in active_triggers {
                             info!("Proactive trigger fired: {:?}", trigger);
-                            let event = Event::ProactiveTrigger(trigger);
+                            // We do NOT print here directly to avoid double printing.
+                            // We wrap it in an Event and sending it to the Engine.
+                            // The response handling logic below will take care of printing.
+                            // However, we are in a select! branch, not easily "sending" to self.
+                            // We can just execute engine.think() here directly?
+                            // Yes, that's what the previous code did, but clearer if we just set `event` variable?
+                            // No, `event` is the result of select!.
+                            // We'll process it right here.
                             
-                            // Note: proactive thinking might take time and block input reading
-                            // In a future optimization, this could be spawned in a background task
-                            match engine.think(event).await {
+                            let trigger_event = Event::ProactiveTrigger(trigger);
+                            match engine.think(trigger_event).await {
                                 Ok(response) => {
                                     print_response(&response, &humanizer, Some("Proactive")).await;
-                                    print!("> ");
-                                    io::stdout().flush()?;
+                                    // TODO: Also send to OneBot if appropriate (e.g. to default user)
                                 }
                                 Err(e) => error!("Error processing trigger: {}", e),
                             }
                         }
                     }
-                    Err(e) => error!("Error evaluating triggers: {}", e),
+                     Err(e) => error!("Error evaluating triggers: {}", e),
+                }
+                continue;
+            },
+            else => break, // Channel closed
+        };
+
+        // Handle specific CLI commands that need main-thread access (like 'sync')
+        if let Event::UserMessage(ref content) = event {
+             if content.source == "cli" && content.body.trim() == "sync" {
+                info!("Syncing sources...");
+                let items = source_manager.collect_all().await;
+                println!("Fetched {} items.", items.len());
+                for item in items {
+                    println!("- [{}] {}", item.source, item.body.lines().next().unwrap_or(""));
+                    if let Err(e) = memory.memorize(&item).await {
+                        error!("Failed to memorize item {}: {}", item.id, e);
+                    }
+                }
+                continue; // Skip thinking
+             }
+        }
+        
+        // Log incoming messages
+        match &event {
+            Event::UserMessage(content) => {
+                if content.source.starts_with("onebot") {
+                    tracing::info!("Received OneBot message ({}) from {}: {}", content.source, content.author, content.body);
                 }
             }
-            
-            // 2. User Input
-            line = reader.next_line() => {
-                let input = match line {
-                    Ok(Some(s)) => s,
-                    Ok(None) => break, // EOF
-                    Err(e) => {
-                        error!("Error reading input: {}", e);
-                        break;
+            _ => {}
+        }
+        
+        match engine.think(event.clone()).await {
+             Ok(response) => {
+                 // Handle Output
+                 if response.content.trim().is_empty() {
+                     tracing::debug!("Mneme decided to stay silent.");
+                     continue;
+                 }
+
+                 if let Event::UserMessage(input_content) = &event {
+                     if input_content.source.starts_with("onebot") {
+                         // Reply via OneBot
+                         if let Some(client) = &onebot_client {
+                             let parts = humanizer.split_response(&response.content);
+                             for part in parts {
+                                 let delay = humanizer.typing_delay(&part, Some(response.emotion));
+                                 tokio::time::sleep(delay).await;
+                                 
+                                 // Check routing
+                                 if let Some(group_str) = input_content.source.strip_prefix("onebot:group:") {
+                                     if let Ok(group_id) = group_str.parse::<i64>() {
+                                         // Reply to Group
+                                         if let Err(e) = client.send_group_message(group_id, &part).await {
+                                             error!("Failed to send OneBot Group message: {}", e);
+                                         }
+                                     }
+                                 } else if let Ok(user_id) = input_content.author.parse::<i64>() {
+                                     // Reply to Private
+                                     if let Err(e) = client.send_private_message(user_id, &part).await {
+                                         error!("Failed to send OneBot Private message: {}", e);
+                                     }
+                                 }
+                             }
+                         }
+                     } else {
+                         // Reply via CLI
+                         print_response(&response, &humanizer, None).await;
+                         print!("> ");
+                         io::stdout().flush()?;
+                     }
                     }
-                };
-
-                let trimmed = input.trim();
-
-                if trimmed == "quit" || trimmed == "exit" {
-                    break;
-                }
-
-                if trimmed == "sync" {
-                    info!("Syncing sources...");
-                    let content = source_manager.collect_all().await;
-                    println!("Fetched {} items.", content.len());
-                    for item in content {
-                        println!("- [{}] {}", item.source, item.body.lines().next().unwrap_or(""));
-                        if let Err(e) = memory.memorize(&item).await {
-                            error!("Failed to memorize item {}: {}", item.id, e);
-                        }
-                    }
-                    print!("> ");
-                    io::stdout().flush()?;
-                    continue;
-                }
-
-                if trimmed.is_empty() {
-                    print!("> ");
-                    io::stdout().flush()?;
-                    continue;
-                }
-
-                let event = Event::UserMessage(Content {
-                    id: Uuid::new_v4(),
-                    source: "terminal".to_string(),
-                    author: "User".to_string(),
-                    body: trimmed.to_string(),
-                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64,
-                    modality: Modality::Text,
-                });
-
-                match engine.think(event).await {
-                    Ok(response) => {
-                        print_response(&response, &humanizer, None).await;
-                    }
-                    Err(e) => {
-                        error!("Error thinking: {}", e);
-                        println!("\n[System Error]: {}\n", e);
-                    }
-                }
-
-                print!("> ");
-                io::stdout().flush()?;
-            }
+                 }
+             Err(e) => tracing::error!("Reasoning error: {}", e),
         }
     }
 

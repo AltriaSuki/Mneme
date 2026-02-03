@@ -81,6 +81,11 @@ impl ReasoningEngine {
         } else {
             (raw_response.clone(), Emotion::Neutral)
         };
+        
+        // Check for silence
+        if content.trim() == "[SILENCE]" {
+            return Ok((String::new(), emotion));
+        }
 
         // Update state
         *emotion_lock = emotion;
