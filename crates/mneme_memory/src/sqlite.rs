@@ -5,10 +5,9 @@ use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::path::Path;
 use uuid::Uuid;
 use crate::embedding::{EmbeddingModel, cosine_similarity};
-use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 
-// Removed unused Episode struct per code review
+
 
 #[derive(Clone)]
 pub struct SqliteMemory {
