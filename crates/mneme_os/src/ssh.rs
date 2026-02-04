@@ -58,7 +58,6 @@ impl SshExecutor {
         // 加载私钥
         let key_pair = load_secret_key(&self.key_path, None)?;
 
-        // authenticate_publickey requires mutable access if it modifies internal state
         let auth_res = session
             .authenticate_publickey(&self.user, Arc::new(key_pair))
             .await?;

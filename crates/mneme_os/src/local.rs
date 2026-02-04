@@ -16,13 +16,26 @@ impl LocalExecutor {
 impl Executor for LocalExecutor {
     async fn execute(&self, command: &str) -> Result<String> {
         // 使用 sh -c 来支持 shell 特性 (管道, 重定向等)
-        let exec_future = Command::new("sh").arg("-c").arg(command).output();
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("Failed to spawn command locally")?;
 
-        let output =
-            match tokio::time::timeout(std::time::Duration::from_secs(30), exec_future).await {
-                Ok(res) => res.context("Failed to execute command locally")?,
-                Err(_) => anyhow::bail!("Command execution timed out after 30 seconds"),
-            };
+        let output = match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            child.wait_with_output(),
+        )
+        .await
+        {
+            Ok(res) => res.context("Failed to wait for command output")?,
+            Err(_) => {
+                let _ = child.kill().await;
+                anyhow::bail!("Command execution timed out after 30 seconds");
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
