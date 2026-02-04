@@ -21,11 +21,23 @@ impl AnthropicClient {
         })
     }
 
-    pub async fn complete(&self, prompt: &str) -> Result<String> {
+    pub async fn complete_with_tools(
+        &self,
+        system: &str,
+        messages: Vec<crate::api_types::Message>,
+        tools: Vec<crate::api_types::Tool>,
+    ) -> Result<crate::api_types::MessagesResponse> {
+        use crate::api_types::{MessagesRequest, ContentBlock, MessagesResponse};
+
         if self.api_key == "mock" {
             // Mock delay to simulate network
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            return Ok(format!("(Mock Response) I received your prompt of length {}.", prompt.len()));
+            return Ok(MessagesResponse {
+                content: vec![ContentBlock::Text { 
+                    text: "(Mock Response) I received your prompt.".to_string() 
+                }],
+                stop_reason: Some("end_turn".to_string()),
+            });
         }
 
         let base_url = env::var("ANTHROPIC_BASE_URL")
@@ -33,17 +45,19 @@ impl AnthropicClient {
         // Handle trailing slash just in case
         let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
 
+        let request_body = MessagesRequest {
+            model: self.model.clone(),
+            system: system.to_string(),
+            messages,
+            max_tokens: 4096, // Increased as requested
+            tools,
+        };
+
         let response = self.client
             .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
-            .json(&json!({
-                "model": self.model,
-                "max_tokens": 1024,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-            }))
+            .json(&request_body)
             .send()
             .await
             .context("Failed to send request to Anthropic")?;
@@ -53,12 +67,7 @@ impl AnthropicClient {
             anyhow::bail!("Anthropic API Error: {}", error_text);
         }
 
-        let json: serde_json::Value = response.json().await?;
-        let content = json["content"][0]["text"]
-            .as_str()
-            .context("Failed to parse response content")?
-            .to_string();
-
-        Ok(content)
+        let api_response: MessagesResponse = response.json().await?;
+        Ok(api_response)
     }
 }

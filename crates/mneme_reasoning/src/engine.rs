@@ -10,15 +10,13 @@ pub struct ReasoningEngine {
     psyche: Psyche,
     memory: Arc<dyn Memory>,
     client: AnthropicClient,
-    history: tokio::sync::Mutex<Vec<String>>,
+    history: tokio::sync::Mutex<Vec<crate::api_types::Message>>,
     current_emotion: tokio::sync::Mutex<Emotion>,
     evaluators: Vec<Box<dyn TriggerEvaluator>>,
     emotion_regex: Regex,
-    cmd_regex: Regex,
     executor: Arc<dyn Executor>,
     
     // Phase 3: Web Automation
-    browser_regex: Regex,
     browser_session: tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>,
 }
 
@@ -33,13 +31,7 @@ impl ReasoningEngine {
             current_emotion: tokio::sync::Mutex::new(Emotion::Neutral),
             evaluators: Vec::new(),
             emotion_regex: Regex::new(r"(?i)<emotion>(.*?)</emotion>").expect("Invalid regex"),
-            cmd_regex: Regex::new(r"(?s)<cmd>(.*?)</cmd>").expect("Invalid regex"),
-            browser_regex: Regex::new(r"(?s)<browser>(.*?)</browser>").expect("Invalid regex"),
             executor,
-            // Init browser as None (lazy or passed in?)
-            // For now, let's just create a lazy slot.
-            // Ideally should be passed in like Executor, but BrowserClient is mutable state.
-            // Let's use Mutex<Option<BrowserClient>> to hold the session.
             browser_session: tokio::sync::Mutex::new(None), 
         })
     }
@@ -62,179 +54,163 @@ impl ReasoningEngine {
     }
 
     /// Helper to process thought loop for any input text, returns (content, emotion)
-    async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<(String, Emotion)> {
+    async fn process_thought_loop(&self, input_text: &str, _is_user_message: bool) -> Result<(String, Emotion)> {
+        use crate::api_types::{Message, Role, ContentBlock};
+        
         // 1. Recall
         let context = self.memory.recall(input_text).await?;
         
-        // Lock history to append initial input
-        {
-            let mut history = self.history.lock().await;
+        // 2. Prepare Tools
+        let tools = vec![
+            crate::tools::shell_tool(), 
+            crate::tools::browser_action_tool()
+        ];
+        
+        // 3. Prepare System Prompt & History
+        let emotion_lock = self.current_emotion.lock().await;
+        let system_prompt = ContextAssembler::build_system_prompt(&self.psyche, &context, &*emotion_lock);
+        drop(emotion_lock);
 
-            // Add initial input to history
-            if is_user_message {
-                history.push(format!("User: {}", input_text));
-            } else {
-                // For system triggers, we treat them as "System Event" but let's just format as text
-                history.push(format!("System Event: {}", input_text));
-            }
-        } // Drop history lock here
-
+        let mut current_messages = {
+            let history_lock = self.history.lock().await;
+            ContextAssembler::assemble_history(&*history_lock, input_text)
+        };
+        
         let mut final_content = String::new();
         let mut final_emotion = Emotion::Neutral;
         
         // --- React Loop (Max 5 turns) ---
         for _iteration in 0..5 {
-            let emotion_lock = self.current_emotion.lock().await;
             
-            // Re-acquire history lock briefly to read
-            let history_text = self.history.lock().await.join("\n");
-            
-            // Build prompt. Notice we pass empty string for input because it's already in history_text
-            let prompt = ContextAssembler::build_prompt(
-                &self.psyche,
-                &context,
-                &history_text,
-                "", 
-                &*emotion_lock
-            );
-            drop(emotion_lock); // Release emotion lock before network call
+            // Call API
+            let response = self.client.complete_with_tools(
+                &system_prompt,
+                current_messages.clone(),
+                tools.clone()
+            ).await?;
 
-            // Generate
-            let raw_response = self.client.complete(&prompt).await?;
-            tracing::debug!("LLM Output: {}", raw_response);
-
-            // Parse Emotion
-            let (content, emotion) = if let Some(caps) = self.emotion_regex.captures(&raw_response) {
-                let emotion_str = caps.get(1).map_or("", |m| m.as_str());
-                let parsed_emotion = Emotion::from_str(emotion_str).unwrap_or(Emotion::Neutral);
-                let clean_content = self.emotion_regex.replace(&raw_response, "").trim().to_string();
-                (clean_content, parsed_emotion)
-            } else {
-                (raw_response.clone(), Emotion::Neutral)
+            // Append Assistant Response to current messages
+            let assistant_msg = Message {
+                role: Role::Assistant,
+                content: response.content.clone(),
             };
-            
-            // Update state immediately
-            *self.current_emotion.lock().await = emotion.clone();
-            final_content = content.clone();
-            final_emotion = emotion;
+            current_messages.push(assistant_msg);
 
-            // Silence check
-            if content.trim() == "[SILENCE]" {
-                let mut history = self.history.lock().await;
-                history.push("Assistant: [SILENCE]".to_string());
-                return Ok((String::new(), final_emotion));
-            }
-            
-            // Append assistant response to history
-            {
-                let mut history = self.history.lock().await;
-                history.push(format!("Assistant: {}", content));
-            }
-            
-            // TOOL CHECK 1: <cmd>
-            let mut tool_used = false;
+            // Process Content Blocks
+            let mut tool_results = Vec::new();
+            let mut text_output = String::new();
 
-            if let Some(caps) = self.cmd_regex.captures(&content) {
-                tool_used = true;
-                let command = caps.get(1).map_or("", |m| m.as_str());
-                tracing::info!("Agent detected command execution: {}", command);
-                
-                // Execute command
-                let output = match self.executor.execute(command).await {
-                    Ok(out) => out,
-                    Err(e) => format!("Error: {}", e),
-                };
-                
-                // Truncate output
-                let truncated_output = if output.len() > 1000 {
-                    format!("{} ... (truncated)", &output[..1000])
-                } else {
-                    output
-                };
-                
-                tracing::info!("Command Output: {}", truncated_output);
-                {
-                    let mut history = self.history.lock().await;
-                    history.push(format!("System Output: {}", truncated_output));
-                }
-            } 
-            // TOOL CHECK 2: <browser>
-            else if let Some(caps) = self.browser_regex.captures(&content) {
-                tool_used = true;
-                let json_str = caps.get(1).map_or("", |m| m.as_str());
-                tracing::info!("Agent detected browser action: {}", json_str);
-
-                use mneme_browser::{BrowserClient, BrowserAction};
-
-                // Get or Init Session
-                let mut session_lock = self.browser_session.lock().await;
-                if session_lock.is_none() {
-                     match BrowserClient::new(true) {
-                         Ok(mut client) => {
-                             if let Err(e) = client.launch() {
-                                 let err_msg = format!("Failed to launch browser: {}", e);
-                                 let mut history = self.history.lock().await;
-                                 history.push(format!("System Output: {}", err_msg));
-                                 continue;
-                             }
-                             *session_lock = Some(client);
-                         },
-                         Err(e) => {
-                             let err_msg = format!("Failed to init browser: {}", e);
-                             let mut history = self.history.lock().await;
-                             history.push(format!("System Output: {}", err_msg));
-                             continue;
-                         }
-                     }
-                }
-
-                // Execute Action
-                let output = if let Some(client) = session_lock.as_mut() {
-                    match serde_json::from_str::<BrowserAction>(json_str) {
-                        Ok(action) => {
-                            match client.execute_action(action) {
-                                Ok(out) => out,
-                                Err(e) => format!("Browser Action Failed: {}", e),
-                            }
-                        },
-                        Err(e) => format!("Invalid Browser JSON: {}", e),
-                    }
-                } else {
-                    "Browser Initialization Failed.".to_string()
-                };
-
-                // Truncate output (especially for get_html)
-                let truncated_output = if output.len() > 2000 {
-                    format!("{} ... (truncated remaining {} chars)", &output[..2000], output.len() - 2000)
-                } else {
-                    output
-                };
-
-                tracing::info!("Browser Output: {}", truncated_output);
-                {
-                    let mut history = self.history.lock().await;
-                    history.push(format!("System Output: {}", truncated_output));
+            for block in &response.content {
+                match block {
+                    ContentBlock::Text { text } => {
+                        text_output.push_str(text);
+                        tracing::debug!("LLM Text: {}", text);
+                        
+                        // Parse Emotion from text (still keeping regex for emotion for now, or move to structured output later)
+                         if let Some(caps) = self.emotion_regex.captures(text) {
+                            let emotion_str = caps.get(1).map_or("", |m| m.as_str());
+                            final_emotion = Emotion::from_str(emotion_str).unwrap_or(Emotion::Neutral);
+                            let clean_content = self.emotion_regex.replace(text, "").trim().to_string();
+                            final_content.push_str(&clean_content);
+                        } else {
+                            final_content.push_str(text);
+                        }
+                    },
+                    ContentBlock::ToolUse { id, name, input } => {
+                        tracing::info!("Tool Use: {} input: {:?}", name, input);
+                        let result_content = self.execute_tool(name, input).await;
+                        
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id: id.clone(),
+                            content: result_content,
+                            is_error: None, 
+                        });
+                    },
+                    _ => {}
                 }
             }
+            
+            // Update Emotion State
+            *self.current_emotion.lock().await = final_emotion.clone();
 
-            if tool_used {
-                continue; // Re-enter loop to react to output
+            // Check if we need to continue loop (if tools were used)
+            if !tool_results.is_empty() {
+                // Return tool results as a user message
+                let tool_msg = Message {
+                    role: Role::User,
+                    content: tool_results,
+                };
+                current_messages.push(tool_msg);
+                continue; // Loop again
+            } else {
+                // No tools used, we are done
+                break;
             }
-
-            // No tool used, break loop
-            break;
         }
         
-        // Prune history
+        // Save history (Prune if needed)
         {
             let mut history = self.history.lock().await;
+            // For now, let's just replace history with the new conversation? 
+            // Or append? The `current_messages` includes the old history + new turns.
+            // So we can just update history to `current_messages` assuming `assemble_history` copied it.
+            // Actually `assemble_history` cloned it.
+            *history = current_messages;
+            
             if history.len() > 20 {
                 let overflow = history.len() - 20;
                 history.drain(0..overflow);
             }
         }
 
-        Ok((final_content, final_emotion))
+        Ok((final_content.trim().to_string(), final_emotion))
+    }
+
+    async fn execute_tool(&self, name: &str, input: &serde_json::Value) -> String {
+        match name {
+            "shell" => {
+                if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                     match self.executor.execute(cmd).await {
+                        Ok(out) => out,
+                        Err(e) => format!("Error: {}", e),
+                    }
+                } else {
+                    "Missing 'command' parameter".to_string()
+                }
+            },
+            "browser_action" => {
+                 use mneme_browser::{BrowserClient, BrowserAction};
+                 // Deserialize input to BrowserAction
+                 match serde_json::from_value::<BrowserAction>(input.clone()) {
+                     Ok(action) => {
+                         // Get or Init Session
+                        let mut session_lock = self.browser_session.lock().await;
+                        if session_lock.is_none() {
+                             match BrowserClient::new(true) {
+                                 Ok(mut client) => {
+                                     if let Err(e) = client.launch() {
+                                         return format!("Failed to launch browser: {}", e);
+                                     }
+                                     *session_lock = Some(client);
+                                 },
+                                 Err(e) => return format!("Failed to init browser: {}", e),
+                             }
+                        }
+                        
+                        if let Some(client) = session_lock.as_mut() {
+                            match client.execute_action(action) {
+                                Ok(out) => out,
+                                Err(e) => format!("Browser Action Failed: {}", e),
+                            }
+                        } else {
+                            "Browser Session Lost".to_string()
+                        }
+                     },
+                     Err(e) => format!("Invalid Browser Action input: {}", e),
+                 }
+            },
+            _ => format!("Unknown Tool: {}", name),
+        }
     }
 }
 // ABORTING REPLACEMENT to rethink the loop structure.
