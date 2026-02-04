@@ -21,8 +21,8 @@ pub struct ReasoningEngine {
 }
 
 impl ReasoningEngine {
-    pub fn new(psyche: Psyche, memory: Arc<dyn Memory>, client: Box<dyn LlmClient>, executor: Arc<dyn Executor>) -> Result<Self> {
-        Ok(Self {
+    pub fn new(psyche: Psyche, memory: Arc<dyn Memory>, client: Box<dyn LlmClient>, executor: Arc<dyn Executor>) -> Self {
+        Self {
             psyche,
             memory,
             client,
@@ -32,7 +32,7 @@ impl ReasoningEngine {
             emotion_regex: Regex::new(r"(?i)<emotion>(.*?)</emotion>").expect("Invalid regex"),
             executor,
             browser_session: tokio::sync::Mutex::new(None), 
-        })
+        }
     }
 
     /// Register a trigger evaluator

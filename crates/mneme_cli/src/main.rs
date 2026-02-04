@@ -14,6 +14,7 @@ use tokio::io::AsyncBufReadExt;
 use mneme_core::ReasoningOutput;
 use mneme_onebot::OneBotClient;
 use std::env;
+use mneme_reasoning::{llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
 
 async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
     println!(""); // Spacer
@@ -93,7 +94,6 @@ async fn main() -> anyhow::Result<()> {
     let executor = Arc::new(LocalExecutor::default());
     
     // Initialize LLM Client
-    use mneme_reasoning::{llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
     
     let provider = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
     let client: Box<dyn LlmClient> = match provider.as_str() {
@@ -105,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
         },
     };
 
-    let mut engine = ReasoningEngine::new(psyche, memory.clone(), client, executor)?;
+    let mut engine = ReasoningEngine::new(psyche, memory.clone(), client, executor);
     
     // 5. Initialize Proactive Triggers
     info!("Initializing proactive triggers...");
