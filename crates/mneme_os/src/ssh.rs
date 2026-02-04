@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use russh::*;
 use russh_keys::*;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 struct ClientHandler;
 
@@ -26,17 +28,24 @@ pub struct SshExecutor {
     user: String,
     host: String,
     port: u16,
-    key_path: String,
+    key_path: PathBuf,
+    timeout: Duration,
 }
 
 impl SshExecutor {
-    pub fn new(user: String, host: String, port: u16, key_path: String) -> Self {
+    pub fn new(host: &str, user: &str, key_path: PathBuf) -> Self {
         Self {
-            user,
-            host,
-            port,
+            host: host.to_string(),
+            user: user.to_string(),
+            port: 22, // Default SSH port
             key_path,
+            timeout: Duration::from_secs(30),
         }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     async fn connect(&self) -> Result<client::Handle<ClientHandler>> {
@@ -81,7 +90,6 @@ impl Executor for SshExecutor {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        let timeout_duration = std::time::Duration::from_secs(30);
         let exec_future = async {
             // 简单的读取循环
             while let Some(msg) = channel.wait().await {
@@ -111,9 +119,9 @@ impl Executor for SshExecutor {
             Ok(())
         };
 
-        match tokio::time::timeout(timeout_duration, exec_future).await {
+        match tokio::time::timeout(self.timeout, exec_future).await {
             Ok(result) => result?,
-            Err(_) => anyhow::bail!("Command execution timed out after 30 seconds"),
+            Err(_) => anyhow::bail!("Command execution timed out after {:?}", self.timeout),
         }
 
         Ok(String::from_utf8(stdout).context("Output was not valid UTF-8")?)
