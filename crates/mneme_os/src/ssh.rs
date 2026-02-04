@@ -3,15 +3,15 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use russh::*;
 use russh_keys::*;
-use std::sync::Arc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 struct ClientHandler;
 
 #[async_trait]
 impl client::Handler for ClientHandler {
     type Error = anyhow::Error;
-    
+
     async fn check_server_key(
         &mut self,
         _server_public_key: &key::PublicKey,
@@ -49,16 +49,20 @@ impl SshExecutor {
         let addr: SocketAddr = format!("{}:{}", self.host, self.port)
             .parse()
             .context("Invalid address")?;
-            
+
         // russh::client::connect handles the TCP connection itself
-        let mut session = client::connect(config, addr, handler).await.context("Failed to start SSH session")?;
+        let mut session = client::connect(config, addr, handler)
+            .await
+            .context("Failed to start SSH session")?;
 
         // 加载私钥
         let key_pair = load_secret_key(&self.key_path, None)?;
-        
+
         // authenticate_publickey requires mutable access if it modifies internal state
-        let auth_res = session.authenticate_publickey(&self.user, Arc::new(key_pair)).await?;
-        
+        let auth_res = session
+            .authenticate_publickey(&self.user, Arc::new(key_pair))
+            .await?;
+
         if !auth_res {
             anyhow::bail!("Authentication failed");
         }
@@ -72,12 +76,12 @@ impl Executor for SshExecutor {
     async fn execute(&self, command: &str) -> Result<String> {
         let session = self.connect().await?;
         let mut channel = session.channel_open_session().await?;
-        
+
         channel.exec(true, command).await?;
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        
+
         let timeout_duration = std::time::Duration::from_secs(30);
         let exec_future = async {
             // 简单的读取循环
@@ -92,12 +96,17 @@ impl Executor for SshExecutor {
                     ChannelMsg::ExitStatus { exit_status } => {
                         if exit_status != 0 {
                             // Collect stderr before bailing
-                             let stderr_str = String::from_utf8_lossy(&stderr);
-                             let stdout_str = String::from_utf8_lossy(&stdout);
-                             anyhow::bail!("Command failed with exit code: {}\nStderr: {}\nStdout: {}", exit_status, stderr_str, stdout_str);
+                            let stderr_str = String::from_utf8_lossy(&stderr);
+                            let stdout_str = String::from_utf8_lossy(&stdout);
+                            anyhow::bail!(
+                                "Command failed with exit code: {}\nStderr: {}\nStdout: {}",
+                                exit_status,
+                                stderr_str,
+                                stdout_str
+                            );
                         }
                     }
-                    _ => {} 
+                    _ => {}
                 }
             }
             Ok(())

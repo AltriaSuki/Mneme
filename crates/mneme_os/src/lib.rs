@@ -1,8 +1,8 @@
 pub mod local;
 pub mod ssh;
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 
 /// Executor trait 定义了执行系统命令的能力
 ///
@@ -13,7 +13,7 @@ use anyhow::Result;
 pub trait Executor: Send + Sync {
     /// 执行命令并返回标准输出
     async fn execute(&self, command: &str) -> Result<String>;
-    
+
     /// 获取 Executor 类型名称 (用于日志)
     fn name(&self) -> &str;
 }
