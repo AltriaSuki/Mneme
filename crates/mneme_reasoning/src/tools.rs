@@ -18,32 +18,81 @@ pub fn shell_tool() -> Tool {
     }
 }
 
-pub fn browser_action_tool() -> Tool {
+pub fn browser_goto_tool() -> Tool {
     Tool {
-        name: "browser_action".to_string(),
-        description: "Control a web browser to navigate, click, type, and inspect pages.".to_string(),
+        name: "browser_goto".to_string(),
+        description: "Navigate the browser to a specific URL.".to_string(),
         input_schema: ToolInputSchema {
             schema_type: "object".to_string(),
             properties: json!({
-                "action": {
-                    "type": "string",
-                    "enum": ["goto", "click", "type", "screenshot", "get_html"],
-                    "description": "The action to perform"
-                },
                 "url": {
                     "type": "string",
-                    "description": "URL for 'goto' action"
-                },
+                    "description": "The URL to navigate to (e.g. https://google.com)"
+                }
+            }),
+            required: vec!["url".to_string()],
+        },
+    }
+}
+
+pub fn browser_click_tool() -> Tool {
+    Tool {
+        name: "browser_click".to_string(),
+        description: "Click an element on the current page specified by a CSS selector.".to_string(),
+        input_schema: ToolInputSchema {
+            schema_type: "object".to_string(),
+            properties: json!({
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector for 'click' or 'type' actions"
+                    "description": "CSS selector for the element to click (e.g. #btn-submit)"
+                }
+            }),
+            required: vec!["selector".to_string()],
+        },
+    }
+}
+
+pub fn browser_type_tool() -> Tool {
+    Tool {
+        name: "browser_type".to_string(),
+        description: "Type text into an input field.".to_string(),
+        input_schema: ToolInputSchema {
+            schema_type: "object".to_string(),
+            properties: json!({
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector for the input element"
                 },
                 "text": {
                     "type": "string",
-                    "description": "Text to type for 'type' action"
+                    "description": "The text to type"
                 }
             }),
-            required: vec!["action".to_string()],
+            required: vec!["selector".to_string(), "text".to_string()],
+        },
+    }
+}
+
+pub fn browser_screenshot_tool() -> Tool {
+    Tool {
+        name: "browser_screenshot".to_string(),
+        description: "Capture a screenshot of the current viewport.".to_string(),
+        input_schema: ToolInputSchema {
+            schema_type: "object".to_string(),
+            properties: json!({}),
+            required: vec![],
+        },
+    }
+}
+
+pub fn browser_get_html_tool() -> Tool {
+    Tool {
+        name: "browser_get_html".to_string(),
+        description: "Get the HTML content of the current page. Useful for getting context before taking actions.".to_string(),
+        input_schema: ToolInputSchema {
+            schema_type: "object".to_string(),
+            properties: json!({}),
+            required: vec![],
         },
     }
 }

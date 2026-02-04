@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
-use serde_json::json;
 use std::env;
 
 #[derive(Debug, Clone)]

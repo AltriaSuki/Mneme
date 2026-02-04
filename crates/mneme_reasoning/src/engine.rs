@@ -53,7 +53,6 @@ impl ReasoningEngine {
         Ok(triggers)
     }
 
-    /// Helper to process thought loop for any input text, returns (content, emotion)
     async fn process_thought_loop(&self, input_text: &str, _is_user_message: bool) -> Result<(String, Emotion)> {
         use crate::api_types::{Message, Role, ContentBlock};
         
@@ -63,7 +62,12 @@ impl ReasoningEngine {
         // 2. Prepare Tools
         let tools = vec![
             crate::tools::shell_tool(), 
-            crate::tools::browser_action_tool()
+            // We reference separate tools now, assuming tools.rs is updated
+            crate::tools::browser_goto_tool(),
+            crate::tools::browser_click_tool(),
+            crate::tools::browser_type_tool(),
+            crate::tools::browser_screenshot_tool(),
+            crate::tools::browser_get_html_tool(),
         ];
         
         // 3. Prepare System Prompt & History
@@ -71,7 +75,8 @@ impl ReasoningEngine {
         let system_prompt = ContextAssembler::build_system_prompt(&self.psyche, &context, &*emotion_lock);
         drop(emotion_lock);
 
-        let mut current_messages = {
+        // Current messages serves as the "Scratchpad" for the ReAct loop
+        let mut scratchpad_messages = {
             let history_lock = self.history.lock().await;
             ContextAssembler::assemble_history(&*history_lock, input_text)
         };
@@ -81,32 +86,32 @@ impl ReasoningEngine {
         
         // --- React Loop (Max 5 turns) ---
         for _iteration in 0..5 {
+            // Reset final content for this turn - we only want the last turn's text for the user
+            final_content.clear();
             
             // Call API
             let response = self.client.complete_with_tools(
                 &system_prompt,
-                current_messages.clone(),
+                scratchpad_messages.clone(),
                 tools.clone()
             ).await?;
 
-            // Append Assistant Response to current messages
+            // Append Assistant Response to scratchpad
             let assistant_msg = Message {
                 role: Role::Assistant,
                 content: response.content.clone(),
             };
-            current_messages.push(assistant_msg);
+            scratchpad_messages.push(assistant_msg);
 
             // Process Content Blocks
             let mut tool_results = Vec::new();
-            let mut text_output = String::new();
 
             for block in &response.content {
                 match block {
                     ContentBlock::Text { text } => {
-                        text_output.push_str(text);
                         tracing::debug!("LLM Text: {}", text);
                         
-                        // Parse Emotion from text (still keeping regex for emotion for now, or move to structured output later)
+                        // Parse Emotion from text (legacy regex support)
                          if let Some(caps) = self.emotion_regex.captures(text) {
                             let emotion_str = caps.get(1).map_or("", |m| m.as_str());
                             final_emotion = Emotion::from_str(emotion_str).unwrap_or(Emotion::Neutral);
@@ -140,7 +145,7 @@ impl ReasoningEngine {
                     role: Role::User,
                     content: tool_results,
                 };
-                current_messages.push(tool_msg);
+                scratchpad_messages.push(tool_msg);
                 continue; // Loop again
             } else {
                 // No tools used, we are done
@@ -148,15 +153,34 @@ impl ReasoningEngine {
             }
         }
         
-        // Save history (Prune if needed)
+        // Silence Check
+        if final_content.trim() == "[SILENCE]" {
+            final_content.clear();
+        }
+
+        // Save history (Compressed: Logic is History + UserInput + FinalResponse)
+        // We do typically want to save the fact that we ran tools? 
+        // User requested compression. So we drop intermediate tool steps.
         {
             let mut history = self.history.lock().await;
-            // For now, let's just replace history with the new conversation? 
-            // Or append? The `current_messages` includes the old history + new turns.
-            // So we can just update history to `current_messages` assuming `assemble_history` copied it.
-            // Actually `assemble_history` cloned it.
-            *history = current_messages;
             
+            // Add User Input
+            if !input_text.is_empty() {
+                history.push(Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text { text: input_text.to_string() }]
+                });
+            }
+            
+            // Add Assistant Response (Only if not silent)
+            if !final_content.is_empty() {
+                history.push(Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::Text { text: final_content.clone() }]
+                });
+            }
+            
+            // Prune
             if history.len() > 20 {
                 let overflow = history.len() - 20;
                 history.drain(0..overflow);
@@ -178,10 +202,31 @@ impl ReasoningEngine {
                     "Missing 'command' parameter".to_string()
                 }
             },
-            "browser_action" => {
+            "browser_goto" | "browser_click" | "browser_type" | "browser_screenshot" | "browser_get_html" => {
                  use mneme_browser::{BrowserClient, BrowserAction};
-                 // Deserialize input to BrowserAction
-                 match serde_json::from_value::<BrowserAction>(input.clone()) {
+                 
+                 // Map tool usage to BrowserAction
+                 let action_result = match name {
+                     "browser_goto" => input.get("url").and_then(|u| u.as_str())
+                         .map(|url| BrowserAction::Goto { url: url.to_string() })
+                         .ok_or("Missing 'url'"),
+                     "browser_click" => input.get("selector").and_then(|s| s.as_str())
+                         .map(|sel| BrowserAction::Click { selector: sel.to_string() })
+                         .ok_or("Missing 'selector'"),
+                     "browser_type" => {
+                         let sel = input.get("selector").and_then(|s| s.as_str());
+                         let txt = input.get("text").and_then(|t| t.as_str());
+                         match (sel, txt) {
+                             (Some(s), Some(t)) => Ok(BrowserAction::Type { selector: s.to_string(), text: t.to_string() }),
+                             _ => Err("Missing 'selector' or 'text'")
+                         }
+                     },
+                     "browser_screenshot" => Ok(BrowserAction::Screenshot),
+                     "browser_get_html" => Ok(BrowserAction::GetHtml),
+                     _ => Err("Unreachable"),
+                 };
+                 
+                 match action_result {
                      Ok(action) => {
                          // Get or Init Session
                         let mut session_lock = self.browser_session.lock().await;
@@ -206,7 +251,7 @@ impl ReasoningEngine {
                             "Browser Session Lost".to_string()
                         }
                      },
-                     Err(e) => format!("Invalid Browser Action input: {}", e),
+                     Err(e) => format!("Invalid Input for {}: {}", name, e),
                  }
             },
             _ => format!("Unknown Tool: {}", name),
