@@ -22,8 +22,9 @@ impl LocalExecutor {
         Self::default()
     }
 
-    pub fn with_timeout(timeout: Duration) -> Self {
-        Self { timeout }
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -41,8 +42,8 @@ impl Executor for LocalExecutor {
             .context("Failed to spawn command locally")?;
 
         let output = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
-             Ok(res) => res.context("Failed to wait for command output")?,
-             Err(_) => anyhow::bail!("Command execution timed out after {:?}", self.timeout),
+            Ok(res) => res.context("Failed to wait for command output")?,
+            Err(_) => anyhow::bail!("Command execution timed out after {:?}", self.timeout),
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -56,7 +57,7 @@ impl Executor for LocalExecutor {
                 stdout
             );
         } else if !stderr.is_empty() {
-             tracing::debug!("Command stderr (success): {}", stderr);
+            tracing::debug!("Command stderr (success): {}", stderr);
         }
 
         Ok(stdout.to_string())
@@ -81,8 +82,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_executor_timeout() {
-        // Set a very short timeout
-        let executor = LocalExecutor::with_timeout(Duration::from_millis(100));
+        // Set a very short timeout uses default().with_timeout()
+        let executor = LocalExecutor::default().with_timeout(Duration::from_millis(100));
         // Sleep for longer than timeout
         let res = executor.execute("sleep 1").await;
         assert!(res.is_err());

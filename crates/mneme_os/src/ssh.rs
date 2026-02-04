@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use russh::*;
 use russh_keys::*;
-use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,16 +48,24 @@ impl SshExecutor {
         self
     }
 
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
     async fn connect(&self) -> Result<client::Handle<ClientHandler>> {
         let config = client::Config {
+            inactivity_timeout: Some(std::time::Duration::from_secs(10)),
             ..Default::default()
         };
         let config = Arc::new(config);
         let handler = ClientHandler;
 
-        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
-            .parse()
-            .context("Invalid address")?;
+        let addr_str = format!("{}:{}", self.host, self.port);
+        // Resolve address (this is blocking, but for MVP local/ip usage it's fine, or use tokio::net::lookup_host)
+        // russh::client::connect expects SocketAddr, so we need to resolve it.
+        // Simple way:
+        let addr = addr_str.to_socket_addrs()?.next().ok_or_else(|| anyhow::anyhow!("Could not resolve address"))?;
 
         // russh::client::connect handles the TCP connection itself
         let mut session = client::connect(config, addr, handler)
@@ -72,7 +80,7 @@ impl SshExecutor {
             .await?;
 
         if !auth_res {
-            anyhow::bail!("Authentication failed");
+            anyhow::bail!("SSH authentication failed");
         }
 
         Ok(session)
@@ -128,6 +136,22 @@ impl Executor for SshExecutor {
     }
 
     fn name(&self) -> &str {
-        "SshExecutor"
+        "ssh"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ssh_executor_construction() {
+        let exec = SshExecutor::new("localhost", "user", PathBuf::from("/tmp/key"))
+            .with_timeout(Duration::from_secs(10))
+            .with_port(2222);
+
+        assert_eq!(exec.name(), "ssh");
+        assert_eq!(exec.port, 2222);
+        assert_eq!(exec.timeout, Duration::from_secs(10));
     }
 }
