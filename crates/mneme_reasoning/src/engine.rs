@@ -1,5 +1,5 @@
 use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion};
-use crate::{prompts::ContextAssembler, anthropic::AnthropicClient};
+use crate::{prompts::ContextAssembler, llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
 use anyhow::Result;
 use std::sync::Arc;
 use regex::Regex;
@@ -9,7 +9,7 @@ use mneme_os::Executor;
 pub struct ReasoningEngine {
     psyche: Psyche,
     memory: Arc<dyn Memory>,
-    client: AnthropicClient,
+    client: Box<dyn LlmClient>, // Dynamic dispatch
     history: tokio::sync::Mutex<Vec<crate::api_types::Message>>,
     current_emotion: tokio::sync::Mutex<Emotion>,
     evaluators: Vec<Box<dyn TriggerEvaluator>>,
@@ -22,7 +22,14 @@ pub struct ReasoningEngine {
 
 impl ReasoningEngine {
     pub fn new(psyche: Psyche, memory: Arc<dyn Memory>, model: &str, executor: Arc<dyn Executor>) -> Result<Self> {
-        let client = AnthropicClient::new(model)?;
+        let provider = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
+        
+        let client: Box<dyn LlmClient> = match provider.as_str() {
+            "anthropic" => Box::new(AnthropicClient::new(model)?),
+            "openai" | "deepseek" => Box::new(OpenAiClient::new(model)?),
+            _ => Box::new(AnthropicClient::new(model)?),
+        };
+        
         Ok(Self {
             psyche,
             memory,
@@ -90,7 +97,7 @@ impl ReasoningEngine {
             final_content.clear();
             
             // Call API
-            let response = self.client.complete_with_tools(
+            let response = self.client.complete(
                 &system_prompt,
                 scratchpad_messages.clone(),
                 tools.clone()

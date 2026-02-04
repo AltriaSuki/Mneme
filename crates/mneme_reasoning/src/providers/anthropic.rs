@@ -9,6 +9,20 @@ pub struct AnthropicClient {
     model: String,
 }
 
+use crate::llm::LlmClient;
+
+#[async_trait::async_trait]
+impl LlmClient for AnthropicClient {
+    async fn complete(
+        &self,
+        system: &str,
+        messages: Vec<crate::api_types::Message>,
+        tools: Vec<crate::api_types::Tool>,
+    ) -> Result<crate::api_types::MessagesResponse> {
+        self.complete_with_tools(system, messages, tools).await
+    }
+}
+
 impl AnthropicClient {
     pub fn new(model: &str) -> Result<Self> {
         let api_key = env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "mock".to_string());
@@ -20,7 +34,9 @@ impl AnthropicClient {
         })
     }
 
-    pub async fn complete_with_tools(
+    // Retaining internal method for now, but trait method delegates to it.
+    // Ideally code moves into trait impl, but keeping as helper is fine.
+    async fn complete_with_tools(
         &self,
         system: &str,
         messages: Vec<crate::api_types::Message>,
