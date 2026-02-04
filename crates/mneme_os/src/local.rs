@@ -82,7 +82,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_executor_timeout() {
-        // Set a very short timeout uses default().with_timeout()
+        // Use builder to set a very short timeout
         let executor = LocalExecutor::default().with_timeout(Duration::from_millis(100));
         // Sleep for longer than timeout
         let res = executor.execute("sleep 1").await;

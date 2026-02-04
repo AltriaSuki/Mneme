@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use russh::*;
 use russh_keys::*;
-use std::net::ToSocketAddrs;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -53,6 +53,15 @@ impl SshExecutor {
         self
     }
 
+    // Getters for testing
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
     async fn connect(&self) -> Result<client::Handle<ClientHandler>> {
         let config = client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(10)),
@@ -62,10 +71,11 @@ impl SshExecutor {
         let handler = ClientHandler;
 
         let addr_str = format!("{}:{}", self.host, self.port);
-        // Resolve address (this is blocking, but for MVP local/ip usage it's fine, or use tokio::net::lookup_host)
-        // russh::client::connect expects SocketAddr, so we need to resolve it.
-        // Simple way:
-        let addr = addr_str.to_socket_addrs()?.next().ok_or_else(|| anyhow::anyhow!("Could not resolve address"))?;
+        // Use tokio::net::lookup_host for non-blocking DNS resolution
+        let mut addrs = tokio::net::lookup_host(&addr_str)
+            .await
+            .context("Could not resolve address")?;
+        let addr = addrs.next().ok_or_else(|| anyhow::anyhow!("Could not resolve address"))?;
 
         // russh::client::connect handles the TCP connection itself
         let mut session = client::connect(config, addr, handler)
@@ -151,7 +161,8 @@ mod tests {
             .with_port(2222);
 
         assert_eq!(exec.name(), "ssh");
-        assert_eq!(exec.port, 2222);
-        assert_eq!(exec.timeout, Duration::from_secs(10));
+        // Use public getters instead of private fields
+        assert_eq!(exec.port(), 2222);
+        assert_eq!(exec.timeout(), Duration::from_secs(10));
     }
 }
