@@ -233,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
                     },
                     Err(e) => error!("Execution failed: {:?}", e),
                 }
-                println!("> ");
+                print!("> ");
                 io::stdout().flush()?;
                 continue;
              }

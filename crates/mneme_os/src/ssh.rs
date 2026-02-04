@@ -56,12 +56,7 @@ impl SshExecutor {
         // 加载私钥
         let key_pair = load_secret_key(&self.key_path, None)?;
         
-        // authenticate_publickey requires mutable access if it modifies internal state, 
-        // but let's check if the handle needs to be mut. 
-        // The previous error said `session` didn't need to be mutable for `channel_open_session`, 
-        // but authenticate might. Let's keep it immutable first as the warning suggested, 
-        // or check if authenticate requires &mut. 
-        // Actually, Handle refers to a channel to the background task, so almost all methods take &self.
+        // authenticate_publickey requires mutable access if it modifies internal state
         let auth_res = session.authenticate_publickey(&self.user, Arc::new(key_pair)).await?;
         
         if !auth_res {
@@ -81,22 +76,36 @@ impl Executor for SshExecutor {
         channel.exec(true, command).await?;
 
         let mut stdout = Vec::new();
-        // 简单的读取循环
-        while let Some(msg) = channel.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => {
-                    stdout.extend_from_slice(data);
-                }
-                ChannelMsg::ExitStatus { exit_status } => {
-                    if exit_status != 0 {
-                        // 如果需要收集 stderr，这里需要更复杂的逻辑，russh 将 stderr 发送为 ExtendedData
-                        // 为简单起见，MVP 暂时只返回 exit code 非零错误
-                        // 实际改进: 区分 stdout/stderr
-                         anyhow::bail!("Command failed with exit code: {}", exit_status);
+        let mut stderr = Vec::new();
+        
+        let timeout_duration = std::time::Duration::from_secs(30);
+        let exec_future = async {
+            // 简单的读取循环
+            while let Some(msg) = channel.wait().await {
+                match msg {
+                    ChannelMsg::Data { ref data } => {
+                        stdout.extend_from_slice(data);
                     }
+                    ChannelMsg::ExtendedData { ref data, .. } => {
+                        stderr.extend_from_slice(data);
+                    }
+                    ChannelMsg::ExitStatus { exit_status } => {
+                        if exit_status != 0 {
+                            // Collect stderr before bailing
+                             let stderr_str = String::from_utf8_lossy(&stderr);
+                             let stdout_str = String::from_utf8_lossy(&stdout);
+                             anyhow::bail!("Command failed with exit code: {}\nStderr: {}\nStdout: {}", exit_status, stderr_str, stdout_str);
+                        }
+                    }
+                    _ => {} 
                 }
-                _ => {} 
             }
+            Ok(())
+        };
+
+        match tokio::time::timeout(timeout_duration, exec_future).await {
+            Ok(result) => result?,
+            Err(_) => anyhow::bail!("Command execution timed out after 30 seconds"),
         }
 
         Ok(String::from_utf8(stdout).context("Output was not valid UTF-8")?)

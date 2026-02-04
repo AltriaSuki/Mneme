@@ -11,6 +11,12 @@ impl LocalExecutor {
     }
 }
 
+impl Default for LocalExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Executor for LocalExecutor {
     async fn execute(&self, command: &str) -> Result<String> {
@@ -31,6 +37,8 @@ impl Executor for LocalExecutor {
                 output.status,
                 stderr
             );
+        } else if !stderr.is_empty() {
+             tracing::debug!("Command stderr (success): {}", stderr);
         }
 
         Ok(stdout.to_string())
