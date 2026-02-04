@@ -63,3 +63,12 @@ pub struct SendMessageParams {
     pub group_id: Option<i64>,
     pub message: String,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OneBotResponse {
+    pub status: String,
+    pub retcode: i32,
+    pub data: Option<serde_json::Value>,
+    pub message: String,
+    pub wording: String,
+    pub echo: Option<String>,
+}

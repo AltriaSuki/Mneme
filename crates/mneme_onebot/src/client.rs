@@ -72,36 +72,41 @@ impl OneBotClient {
                     let msg = msg?;
                     if let Message::Text(text) = msg {
                         // Parse event
-                        match serde_json::from_str::<OneBotEvent>(&text) {
-                             Ok(event) => {
-                                 if let OneBotEvent::Message(msg_event) = event {
-                                     // Determine source type (private vs group)
-                                     let source = if let Some(group_id) = msg_event.group_id {
-                                         format!("onebot:group:{}", group_id)
-                                     } else {
-                                         "onebot:private".to_string()
-                                     };
+                        // Parse event or response
+                        if let Ok(event) = serde_json::from_str::<OneBotEvent>(&text) {
+                             if let OneBotEvent::Message(msg_event) = event {
+                                 // Determine source type (private vs group)
+                                 let source = if let Some(group_id) = msg_event.group_id {
+                                     format!("onebot:group:{}", group_id)
+                                 } else {
+                                     "onebot:private".to_string()
+                                 };
 
-                                     // Convert to mneme_core::Content
-                                     let content = Content {
-                                         id: Uuid::new_v4(),
-                                         source,
-                                         author: msg_event.user_id.to_string(),
-                                         body: msg_event.raw_message,
-                                         timestamp: msg_event.time,
-                                         modality: Modality::Text,
-                                     };
-                                     
-                                     // Send to reasoning engine
-                                     let _ = content_tx.send(content).await;
-                                 }
+                                 // Convert to mneme_core::Content
+                                 let content = Content {
+                                     id: Uuid::new_v4(),
+                                     source,
+                                     author: msg_event.user_id.to_string(),
+                                     body: msg_event.raw_message,
+                                     timestamp: msg_event.time,
+                                     modality: Modality::Text,
+                                 };
+                                 
+                                 // Send to reasoning engine
+                                 let _ = content_tx.send(content).await;
+                             } else {
+                                 tracing::debug!("Ignored non-message event: {:?}", event);
                              }
-                             Err(_) => {
-                                 // Simple debug log for unparseable events (heartbeats usually don't match OneBotEvent if filtered strict, or just noise)
-                                 // To avoid spamming logs with Heartbeats if they fail parsing, we check if it is a heartbeat meta event type first or just ignore.
-                                 // For now, minimal logging.
-                                 tracing::debug!("Ignored non-message event or parse error.");
-                             }
+                        } else if let Ok(response) = serde_json::from_str::<super::event::OneBotResponse>(&text) {
+                            if response.status == "ok" {
+                                tracing::debug!("OneBot Action Success: {:?}", response);
+                            } else {
+                                tracing::warn!("OneBot Action Failed: {:?}", response);
+                            }
+                        } else {
+                             // Log parse errors more visibly to debug connection issues
+                             // Heartbeats might flood this if they fail parsing, but valid heartbeats should parse as MetaEvent
+                             tracing::warn!("Failed to parse OneBot message: {}. Raw: {}", text, text);
                         }
                     }
                 }
