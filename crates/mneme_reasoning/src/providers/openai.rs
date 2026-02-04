@@ -2,7 +2,6 @@ use crate::llm::LlmClient;
 use crate::api_types::{Message, Tool, MessagesResponse, ContentBlock, Role};
 use anyhow::{Context, Result};
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use std::env;
 use std::time::Duration;
@@ -84,6 +83,9 @@ impl LlmClient for OpenAiClient {
                     }).collect::<Vec<_>>().join("\n");
                     
                     // Also check for ToolResults (which are role: tool in OpenAI)
+                    // NOTE: This logic assumes ToolResults might be mixed in User messages (Mneme internal model).
+                    // In strict OpenAI flow, tool results are standalone messages. 
+                    // This converter extracts them and ensures they are emitted as distinct named messages.
                     for block in msg.content {
                         match block {
                             ContentBlock::ToolResult { tool_use_id, content, .. } => {

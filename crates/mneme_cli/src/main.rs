@@ -92,9 +92,20 @@ async fn main() -> anyhow::Result<()> {
     // Default to a safe timeout for agentic operations
     let executor = Arc::new(LocalExecutor::default());
     
-    // Note: This will fail if ANTHROPIC_API_KEY is not set. 
-    // For now, let's allow it to crash if key is missing to fail fast.
-    let mut engine = ReasoningEngine::new(psyche, memory.clone(), &args.model, executor)?;
+    // Initialize LLM Client
+    use mneme_reasoning::{llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
+    
+    let provider = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
+    let client: Box<dyn LlmClient> = match provider.as_str() {
+        "anthropic" => Box::new(AnthropicClient::new(&args.model)?),
+        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&args.model)?),
+        _ => {
+            tracing::warn!("Unknown provider '{}', defaulting to Anthropic", provider);
+            Box::new(AnthropicClient::new(&args.model)?)
+        },
+    };
+
+    let mut engine = ReasoningEngine::new(psyche, memory.clone(), client, executor)?;
     
     // 5. Initialize Proactive Triggers
     info!("Initializing proactive triggers...");

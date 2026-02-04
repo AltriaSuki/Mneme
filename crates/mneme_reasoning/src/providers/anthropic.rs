@@ -19,29 +19,6 @@ impl LlmClient for AnthropicClient {
         messages: Vec<crate::api_types::Message>,
         tools: Vec<crate::api_types::Tool>,
     ) -> Result<crate::api_types::MessagesResponse> {
-        self.complete_with_tools(system, messages, tools).await
-    }
-}
-
-impl AnthropicClient {
-    pub fn new(model: &str) -> Result<Self> {
-        let api_key = env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "mock".to_string());
-        
-        Ok(Self {
-            client: Client::new(),
-            api_key,
-            model: model.to_string(),
-        })
-    }
-
-    // Retaining internal method for now, but trait method delegates to it.
-    // Ideally code moves into trait impl, but keeping as helper is fine.
-    async fn complete_with_tools(
-        &self,
-        system: &str,
-        messages: Vec<crate::api_types::Message>,
-        tools: Vec<crate::api_types::Tool>,
-    ) -> Result<crate::api_types::MessagesResponse> {
         use crate::api_types::{MessagesRequest, ContentBlock, MessagesResponse};
 
         if self.api_key == "mock" {
@@ -84,5 +61,19 @@ impl AnthropicClient {
 
         let api_response: MessagesResponse = response.json().await?;
         Ok(api_response)
+    }
+}
+
+impl AnthropicClient {
+    pub fn new(model: &str) -> Result<Self> {
+        let api_key = env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "mock".to_string());
+        
+        Ok(Self {
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()?,
+            api_key,
+            model: model.to_string(),
+        })
     }
 }

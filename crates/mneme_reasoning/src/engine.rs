@@ -1,5 +1,5 @@
 use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion};
-use crate::{prompts::ContextAssembler, llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
+use crate::{prompts::ContextAssembler, llm::LlmClient};
 use anyhow::Result;
 use std::sync::Arc;
 use regex::Regex;
@@ -21,15 +21,7 @@ pub struct ReasoningEngine {
 }
 
 impl ReasoningEngine {
-    pub fn new(psyche: Psyche, memory: Arc<dyn Memory>, model: &str, executor: Arc<dyn Executor>) -> Result<Self> {
-        let provider = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
-        
-        let client: Box<dyn LlmClient> = match provider.as_str() {
-            "anthropic" => Box::new(AnthropicClient::new(model)?),
-            "openai" | "deepseek" => Box::new(OpenAiClient::new(model)?),
-            _ => Box::new(AnthropicClient::new(model)?),
-        };
-        
+    pub fn new(psyche: Psyche, memory: Arc<dyn Memory>, client: Box<dyn LlmClient>, executor: Arc<dyn Executor>) -> Result<Self> {
         Ok(Self {
             psyche,
             memory,

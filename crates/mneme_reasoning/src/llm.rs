@@ -1,4 +1,4 @@
-use crate::api_types::{Message, Tool, MessagesResponse};
+use crate::api_types::MessagesResponse;
 use anyhow::Result;
 use async_trait::async_trait;
 
