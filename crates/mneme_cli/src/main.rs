@@ -217,6 +217,25 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 continue; // Skip thinking
+             } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
+                let cmd = content.body.trim_start_matches("os-exec ").trim();
+                info!("Executing OS command: '{}'", cmd);
+                
+                // Temp: use LocalExecutor for now
+                // In Phase 3 integration, this will be selected based on config or intent
+                use mneme_os::Executor;
+                let executor = mneme_os::local::LocalExecutor::new();
+                match executor.execute(cmd).await {
+                    Ok(output) => {
+                        println!("--- Output ---");
+                        println!("{}", output.trim());
+                        println!("--------------");
+                    },
+                    Err(e) => error!("Execution failed: {:?}", e),
+                }
+                println!("> ");
+                io::stdout().flush()?;
+                continue;
              }
         }
         

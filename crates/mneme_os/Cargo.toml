@@ -1,0 +1,13 @@
+[package]
+name = "mneme_os"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.0", features = ["process", "io-util"] }
+russh = "0.45"
+russh-keys = "0.45"
+anyhow = "1.0"
+async-trait = "0.1"
+tracing = "0.1"
+dirs = "5.0"
