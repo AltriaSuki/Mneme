@@ -86,9 +86,15 @@ async fn main() -> anyhow::Result<()> {
 
     // 4. Initialize Reasoning
     info!("Starting Reasoning Engine with model {}...", args.model);
+    
+    // Initialize OS Executor (Local for now, potentially SSH based on config later)
+    use mneme_os::local::LocalExecutor;
+    // Default to a safe timeout for agentic operations
+    let executor = Arc::new(LocalExecutor::default());
+    
     // Note: This will fail if ANTHROPIC_API_KEY is not set. 
     // For now, let's allow it to crash if key is missing to fail fast.
-    let mut engine = ReasoningEngine::new(psyche, memory.clone(), &args.model)?;
+    let mut engine = ReasoningEngine::new(psyche, memory.clone(), &args.model, executor)?;
     
     // 5. Initialize Proactive Triggers
     info!("Initializing proactive triggers...");
