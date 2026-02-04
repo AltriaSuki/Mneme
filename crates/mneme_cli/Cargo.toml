@@ -17,5 +17,6 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 mneme_expression = { path = "../mneme_expression" }
 mneme_os = { path = "../mneme_os" }
 mneme_onebot = { path = "../mneme_onebot" }
+mneme_browser = { path = "../mneme_browser" }
 chrono = "0.4"
 dotenv = "0.15"

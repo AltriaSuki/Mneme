@@ -16,6 +16,10 @@ pub struct ReasoningEngine {
     emotion_regex: Regex,
     cmd_regex: Regex,
     executor: Arc<dyn Executor>,
+    
+    // Phase 3: Web Automation
+    browser_regex: Regex,
+    browser_session: tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>,
 }
 
 impl ReasoningEngine {
@@ -30,7 +34,13 @@ impl ReasoningEngine {
             evaluators: Vec::new(),
             emotion_regex: Regex::new(r"(?i)<emotion>(.*?)</emotion>").expect("Invalid regex"),
             cmd_regex: Regex::new(r"(?s)<cmd>(.*?)</cmd>").expect("Invalid regex"),
+            browser_regex: Regex::new(r"(?s)<browser>(.*?)</browser>").expect("Invalid regex"),
             executor,
+            // Init browser as None (lazy or passed in?)
+            // For now, let's just create a lazy slot.
+            // Ideally should be passed in like Executor, but BrowserClient is mutable state.
+            // Let's use Mutex<Option<BrowserClient>> to hold the session.
+            browser_session: tokio::sync::Mutex::new(None), 
         })
     }
 
@@ -116,13 +126,16 @@ impl ReasoningEngine {
             }
             
             // Append assistant response to history
-             {
+            {
                 let mut history = self.history.lock().await;
                 history.push(format!("Assistant: {}", content));
             }
             
-            // TOOL CHECK: Check for <cmd>...<cmd>
+            // TOOL CHECK 1: <cmd>
+            let mut tool_used = false;
+
             if let Some(caps) = self.cmd_regex.captures(&content) {
+                tool_used = true;
                 let command = caps.get(1).map_or("", |m| m.as_str());
                 tracing::info!("Agent detected command execution: {}", command);
                 
@@ -132,7 +145,7 @@ impl ReasoningEngine {
                     Err(e) => format!("Error: {}", e),
                 };
                 
-                // Truncate output if too long to prevent context explosion
+                // Truncate output
                 let truncated_output = if output.len() > 1000 {
                     format!("{} ... (truncated)", &output[..1000])
                 } else {
@@ -144,9 +157,68 @@ impl ReasoningEngine {
                     let mut history = self.history.lock().await;
                     history.push(format!("System Output: {}", truncated_output));
                 }
-                
-                // Continue loop to let LLM react to output
-                continue;
+            } 
+            // TOOL CHECK 2: <browser>
+            else if let Some(caps) = self.browser_regex.captures(&content) {
+                tool_used = true;
+                let json_str = caps.get(1).map_or("", |m| m.as_str());
+                tracing::info!("Agent detected browser action: {}", json_str);
+
+                use mneme_browser::{BrowserClient, BrowserAction};
+
+                // Get or Init Session
+                let mut session_lock = self.browser_session.lock().await;
+                if session_lock.is_none() {
+                     match BrowserClient::new(true) {
+                         Ok(mut client) => {
+                             if let Err(e) = client.launch() {
+                                 let err_msg = format!("Failed to launch browser: {}", e);
+                                 let mut history = self.history.lock().await;
+                                 history.push(format!("System Output: {}", err_msg));
+                                 continue;
+                             }
+                             *session_lock = Some(client);
+                         },
+                         Err(e) => {
+                             let err_msg = format!("Failed to init browser: {}", e);
+                             let mut history = self.history.lock().await;
+                             history.push(format!("System Output: {}", err_msg));
+                             continue;
+                         }
+                     }
+                }
+
+                // Execute Action
+                let output = if let Some(client) = session_lock.as_mut() {
+                    match serde_json::from_str::<BrowserAction>(json_str) {
+                        Ok(action) => {
+                            match client.execute_action(action) {
+                                Ok(out) => out,
+                                Err(e) => format!("Browser Action Failed: {}", e),
+                            }
+                        },
+                        Err(e) => format!("Invalid Browser JSON: {}", e),
+                    }
+                } else {
+                    "Browser Initialization Failed.".to_string()
+                };
+
+                // Truncate output (especially for get_html)
+                let truncated_output = if output.len() > 2000 {
+                    format!("{} ... (truncated remaining {} chars)", &output[..2000], output.len() - 2000)
+                } else {
+                    output
+                };
+
+                tracing::info!("Browser Output: {}", truncated_output);
+                {
+                    let mut history = self.history.lock().await;
+                    history.push(format!("System Output: {}", truncated_output));
+                }
+            }
+
+            if tool_used {
+                continue; // Re-enter loop to react to output
             }
 
             // No tool used, break loop

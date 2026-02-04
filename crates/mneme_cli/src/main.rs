@@ -242,6 +242,34 @@ async fn main() -> anyhow::Result<()> {
                 print!("> ");
                 io::stdout().flush()?;
                 continue;
+             } else if content.source == "cli" && content.body.trim().starts_with("browser-test ") {
+                let url = content.body.trim_start_matches("browser-test ").trim();
+                info!("Testing Browser Navigation to: '{}'", url);
+                
+                // Test Browser Client
+                use mneme_browser::BrowserClient;
+                match BrowserClient::new(true) { // Headless = true
+                    Ok(mut client) => {
+                        if let Err(e) = client.launch() {
+                            error!("Failed to launch browser: {}", e);
+                        } else {
+                            println!("Browser launched. Navigating...");
+                            if let Err(e) = client.goto(url) {
+                                error!("Failed to navigate: {}", e);
+                            } else {
+                                match client.get_title() {
+                                    Ok(title) => println!("Page Title: {}", title),
+                                    Err(e) => error!("Failed to get title: {}", e),
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => error!("Failed to init browser client: {}", e),
+                }
+                
+                print!("> ");
+                io::stdout().flush()?;
+                continue;
              }
         }
         
