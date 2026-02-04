@@ -53,7 +53,7 @@ impl ReasoningEngine {
         Ok(triggers)
     }
 
-    async fn process_thought_loop(&self, input_text: &str, _is_user_message: bool) -> Result<(String, Emotion)> {
+    async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<(String, Emotion)> {
         use crate::api_types::{Message, Role, ContentBlock};
         
         // 1. Recall
@@ -159,16 +159,21 @@ impl ReasoningEngine {
         }
 
         // Save history (Compressed: Logic is History + UserInput + FinalResponse)
-        // We do typically want to save the fact that we ran tools? 
-        // User requested compression. So we drop intermediate tool steps.
+        // We drop intermediate tool steps.
         {
             let mut history = self.history.lock().await;
             
-            // Add User Input
+            // Add Input (User or System)
             if !input_text.is_empty() {
+                let content = if is_user_message {
+                    input_text.to_string()
+                } else {
+                    format!("[System Event]: {}", input_text)
+                };
+                
                 history.push(Message {
                     role: Role::User,
-                    content: vec![ContentBlock::Text { text: input_text.to_string() }]
+                    content: vec![ContentBlock::Text { text: content }]
                 });
             }
             
@@ -180,16 +185,25 @@ impl ReasoningEngine {
                 });
             }
             
-            // Prune
+            // Prune: Keep max 20, AND ensure history starts with User
             if history.len() > 20 {
                 let overflow = history.len() - 20;
                 history.drain(0..overflow);
+            }
+            
+            // Validate start with User (Anthropic Requirement)
+            while !history.is_empty() {
+                if matches!(history[0].role, Role::Assistant) {
+                    history.remove(0);
+                } else {
+                    break;
+                }
             }
         }
 
         Ok((final_content.trim().to_string(), final_emotion))
     }
-
+    
     async fn execute_tool(&self, name: &str, input: &serde_json::Value) -> String {
         match name {
             "shell" => {
@@ -258,24 +272,6 @@ impl ReasoningEngine {
         }
     }
 }
-// ABORTING REPLACEMENT to rethink the loop structure.
-// The previous logic was too messy. I need to implement a clean ReAct loop.
-// 1. Receive User Input.
-// 2. Append to History.
-// 3. Loop:
-//    a. Construct Prompt (History so far).
-//    b. LLM Complete.
-//    c. Parse Output.
-//    d. If <cmd>: Execute -> Append "System: Output" to History -> Continue Loop.
-//    e. Else: Break and Return.
-
-// I need to update `prompts.rs` first to handle "History Only" mode or just be cleaner.
-// Currently `build_prompt` takes `user_input` and enforces `User: {user_input}` at the end.
-// If I want to support a loop where the "User" (System) has just spoken, I need `build_prompt` to be flexible.
-
-// Let's look at `prompts.rs` again.
-
-
 #[async_trait::async_trait]
 impl Reasoning for ReasoningEngine {
     async fn think(&self, event: Event) -> Result<ReasoningOutput> {
