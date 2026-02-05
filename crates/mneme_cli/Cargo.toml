@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 mneme_core = { path = "../mneme_core" }
 mneme_memory = { path = "../mneme_memory" }
+mneme_limbic = { path = "../mneme_limbic" }
 mneme_reasoning = { path = "../mneme_reasoning" }
 mneme_perception = { path = "../mneme_perception" }
 clap = { version = "4.4", features = ["derive", "env"] }

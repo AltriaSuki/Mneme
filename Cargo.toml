@@ -3,6 +3,7 @@ resolver = "2"
 
 members = [
     "crates/mneme_core",
+    "crates/mneme_limbic",
     "crates/mneme_memory",
     "crates/mneme_reasoning",
     "crates/mneme_perception",

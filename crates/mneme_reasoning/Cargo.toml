@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 mneme_core = { path = "../mneme_core" }
+mneme_limbic = { path = "../mneme_limbic" }
+mneme_memory = { path = "../mneme_memory" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"
@@ -15,3 +17,4 @@ tracing = "0.1"
 regex = "1.10"
 mneme_os = { path = "../mneme_os" }
 mneme_browser = { path = "../mneme_browser" }
+chrono = "0.4"

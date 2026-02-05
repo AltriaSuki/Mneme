@@ -37,13 +37,43 @@ impl LlmClient for AnthropicClient {
         // Handle trailing slash just in case
         let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
 
+        // Check if we should use legacy system format (system as first user message)
+        let use_legacy = env::var("ANTHROPIC_LEGACY_SYSTEM")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+
+        let (system_field, final_messages) = if use_legacy && !system.is_empty() {
+            // Legacy mode: prepend system as a user message
+            use crate::api_types::{Message, Role, ContentBlock};
+            let mut msgs = vec![Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text { text: format!("[System]\n{}", system) }],
+            }];
+            // Add an assistant acknowledgment if first real message is from user
+            if messages.first().map(|m| matches!(m.role, Role::User)).unwrap_or(false) {
+                msgs.push(Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::Text { text: "Understood.".to_string() }],
+                });
+            }
+            msgs.extend(messages);
+            (None, msgs)
+        } else {
+            (Some(system.to_string()), messages)
+        };
+
         let request_body = MessagesRequest {
             model: self.model.clone(),
-            system: system.to_string(),
-            messages,
+            system: system_field,
+            messages: final_messages,
             max_tokens: 4096, // Increased as requested
             tools,
         };
+
+        // Debug: log the request body
+        if env::var("DEBUG_PAYLOAD").map(|v| v == "true").unwrap_or(false) {
+            tracing::info!("Anthropic request: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+        }
 
         let response = self.client
             .post(&url)

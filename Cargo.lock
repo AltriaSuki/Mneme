@@ -2421,6 +2421,7 @@ dependencies = [
  "mneme_browser",
  "mneme_core",
  "mneme_expression",
+ "mneme_limbic",
  "mneme_memory",
  "mneme_onebot",
  "mneme_os",
@@ -2438,6 +2439,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "serde",
  "serde_json",
  "tokio",
@@ -2457,6 +2459,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mneme_limbic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mneme_core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mneme_memory"
 version = "0.1.0"
 dependencies = [
@@ -2466,6 +2481,7 @@ dependencies = [
  "chrono",
  "fastembed",
  "mneme_core",
+ "mneme_limbic",
  "rand 0.9.2",
  "serde",
  "serde_json",
@@ -2533,8 +2549,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "mneme_browser",
  "mneme_core",
+ "mneme_limbic",
+ "mneme_memory",
  "mneme_os",
  "regex",
  "reqwest 0.11.27",

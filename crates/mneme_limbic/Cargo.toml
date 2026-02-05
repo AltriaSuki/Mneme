@@ -1,0 +1,14 @@
+[package]
+name = "mneme_limbic"
+version = "0.1.0"
+edition = "2021"
+description = "System 1: The Limbic Core - fast, non-verbal state regulation"
+
+[dependencies]
+mneme_core = { path = "../mneme_core" }
+tokio = { version = "1.0", features = ["full", "sync", "time"] }
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"

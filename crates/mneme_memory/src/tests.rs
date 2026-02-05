@@ -2,7 +2,6 @@ use crate::sqlite::SqliteMemory;
 use mneme_core::{SocialGraph, Person, Memory, Content, Modality};
 use uuid::Uuid;
 use std::collections::HashMap;
-use std::time::SystemTime;
 
 #[tokio::test]
 async fn test_social_graph_ops() {

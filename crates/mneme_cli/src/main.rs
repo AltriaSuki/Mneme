@@ -1,6 +1,7 @@
 use clap::Parser;
 use mneme_core::{Event, Content, Modality, Reasoning, Psyche, Memory};
-use mneme_memory::SqliteMemory;
+use mneme_memory::{SqliteMemory, OrganismCoordinator, OrganismConfig};
+use mneme_limbic::LimbicSystem;
 use mneme_reasoning::ReasoningEngine;
 use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler, Humanizer};
 use std::sync::Arc;
@@ -105,7 +106,14 @@ async fn main() -> anyhow::Result<()> {
         },
     };
 
-    let mut engine = ReasoningEngine::new(psyche, memory.clone(), client, executor);
+    // Initialize Organism Coordinator with persistence
+    let limbic = Arc::new(LimbicSystem::new());
+    let organism_config = OrganismConfig::default();
+    let coordinator = Arc::new(
+        OrganismCoordinator::with_persistence(limbic, organism_config, memory.clone()).await?
+    );
+    
+    let mut engine = ReasoningEngine::with_coordinator(psyche, memory.clone(), client, executor, coordinator.clone());
     
     // 5. Initialize Proactive Triggers
     info!("Initializing proactive triggers...");
@@ -120,7 +128,10 @@ async fn main() -> anyhow::Result<()> {
     // Initialize Humanizer for expressive output
     let humanizer = Humanizer::new();
 
-    println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources.");
+    // Subscribe to lifecycle changes
+    let mut lifecycle_rx = coordinator.subscribe_lifecycle();
+    
+    println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
     print!("> ");
     io::stdout().flush()?;
 
@@ -155,6 +166,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Stdin loop (always active for local debugging)
     let tx_stdin = event_tx.clone();
+    let coordinator_for_stdin = coordinator.clone();
     tokio::spawn(async move {
         let stdin = tokio::io::stdin();
         let mut reader = tokio::io::BufReader::new(stdin).lines();
@@ -163,6 +175,10 @@ async fn main() -> anyhow::Result<()> {
             if trimmed.is_empty() { continue; }
             
             if trimmed == "quit" || trimmed == "exit" {
+                // Graceful shutdown with consolidation
+                println!("Shutting down gracefully...");
+                coordinator_for_stdin.shutdown().await;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 std::process::exit(0);
             }
             
@@ -182,13 +198,35 @@ async fn main() -> anyhow::Result<()> {
 
     // --- MAIN EVENT LOOP ---
     // Now we listen to event_rx, which aggregates both stdin and OneBot
-    // We also need a timer for triggering proactive evaluation
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Check triggers every minute
+    // We also need a timer for triggering proactive evaluation and organism tick
+    let mut trigger_interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Check triggers every minute
+    let mut tick_interval = tokio::time::interval(std::time::Duration::from_secs(10)); // Organism tick every 10 seconds
 
+    // Clone coordinator for signal handler
+    let coordinator_for_signal = coordinator.clone();
+    
     loop {
         let event = tokio::select! {
             Some(evt) = event_rx.recv() => evt,
-            _ = interval.tick() => {
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nReceived Ctrl+C, shutting down gracefully...");
+                coordinator_for_signal.shutdown().await;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                std::process::exit(0);
+            },
+            _ = lifecycle_rx.changed() => {
+                let state = *lifecycle_rx.borrow();
+                info!("Lifecycle state changed: {:?}", state);
+                continue;
+            },
+            _ = tick_interval.tick() => {
+                // Organism periodic tick (state maintenance)
+                if let Err(e) = coordinator.tick().await {
+                    tracing::warn!("Organism tick error: {}", e);
+                }
+                continue;
+            },
+            _ = trigger_interval.tick() => {
                 // Proactive Trigger Check
                 match engine.evaluate_triggers().await {
                     Ok(triggers) => {
@@ -234,6 +272,43 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 continue; // Skip thinking
+             } else if content.source == "cli" && content.body.trim() == "sleep" {
+                // Manual sleep/consolidation trigger
+                info!("Triggering sleep consolidation...");
+                match coordinator.trigger_sleep().await {
+                    Ok(result) => {
+                        if result.performed {
+                            println!("Sleep consolidation completed.");
+                            if let Some(chapter) = result.new_chapter {
+                                println!("New narrative chapter: {}", chapter.title);
+                            }
+                            if result.crisis.is_some() {
+                                println!("⚠️ Narrative crisis detected during consolidation.");
+                            }
+                        } else {
+                            println!("Consolidation skipped: {}", result.skip_reason.unwrap_or_default());
+                        }
+                    }
+                    Err(e) => error!("Sleep consolidation failed: {}", e),
+                }
+                print!("> ");
+                io::stdout().flush()?;
+                continue;
+             } else if content.source == "cli" && content.body.trim() == "status" {
+                // Show organism status
+                let state = coordinator.state().read().await.clone();
+                let lifecycle = coordinator.lifecycle_state().await;
+                println!("=== Organism Status ===");
+                println!("Lifecycle: {:?}", lifecycle);
+                println!("Energy: {:.2}", state.fast.energy);
+                println!("Stress: {:.2}", state.fast.stress);
+                println!("Mood bias: {:.2}", state.medium.mood_bias);
+                println!("Affect: {}", state.fast.affect.describe());
+                println!("Attachment: {:?}", state.medium.attachment.style());
+                println!("=======================");
+                print!("> ");
+                io::stdout().flush()?;
+                continue;
              } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
                 let cmd = content.body.trim_start_matches("os-exec ").trim();
                 info!("Executing OS command: '{}'", cmd);

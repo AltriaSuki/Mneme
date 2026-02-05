@@ -126,6 +126,62 @@ impl SqliteMemory {
         .await
         .context("Failed to create relationships index")?;
 
+        // === New tables for Organism State persistence ===
+        
+        // Organism state (singleton - only one row)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS organism_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                state_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create organism_state table")?;
+
+        // Narrative chapters
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS narrative_chapters (
+                id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                period_start INTEGER NOT NULL,
+                period_end INTEGER NOT NULL,
+                emotional_tone REAL NOT NULL,
+                themes_json TEXT NOT NULL,
+                people_json TEXT NOT NULL,
+                turning_points_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create narrative_chapters table")?;
+
+        // Feedback signals (for persistence across restarts)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS feedback_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                emotional_context REAL NOT NULL,
+                timestamp INTEGER NOT NULL,
+                consolidated INTEGER NOT NULL DEFAULT 0
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create feedback_signals table")?;
+
         Ok(())
     }
 }
@@ -295,6 +351,203 @@ impl SocialGraph for SqliteMemory {
         .execute(&self.pool)
         .await?;
         
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Organism State Persistence
+// =============================================================================
+
+use mneme_core::OrganismState;
+use crate::narrative::NarrativeChapter;
+use crate::feedback_buffer::{FeedbackSignal, SignalType};
+use chrono::{DateTime, Utc};
+
+impl SqliteMemory {
+    /// Load organism state from database, or return None if not found
+    pub async fn load_organism_state(&self) -> Result<Option<OrganismState>> {
+        let row = sqlx::query("SELECT state_json FROM organism_state WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query organism_state")?;
+
+        if let Some(row) = row {
+            let json: String = row.get("state_json");
+            let state: OrganismState = serde_json::from_str(&json)
+                .context("Failed to deserialize organism state")?;
+            Ok(Some(state))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Save organism state to database
+    pub async fn save_organism_state(&self, state: &OrganismState) -> Result<()> {
+        let json = serde_json::to_string(state)
+            .context("Failed to serialize organism state")?;
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "INSERT INTO organism_state (id, state_json, updated_at) VALUES (1, ?, ?) 
+             ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at"
+        )
+        .bind(&json)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save organism state")?;
+
+        tracing::debug!("Organism state saved");
+        Ok(())
+    }
+
+    /// Load all narrative chapters
+    pub async fn load_narrative_chapters(&self) -> Result<Vec<NarrativeChapter>> {
+        let rows = sqlx::query(
+            "SELECT id, title, content, period_start, period_end, emotional_tone, 
+                    themes_json, people_json, turning_points_json, created_at, updated_at 
+             FROM narrative_chapters ORDER BY period_start"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query narrative_chapters")?;
+
+        let mut chapters = Vec::new();
+        for row in rows {
+            let themes: Vec<String> = serde_json::from_str(row.get("themes_json"))?;
+            let people: Vec<String> = serde_json::from_str(row.get("people_json"))?;
+            let turning_points = serde_json::from_str(row.get("turning_points_json"))?;
+
+            chapters.push(NarrativeChapter {
+                id: row.get("id"),
+                title: row.get("title"),
+                content: row.get("content"),
+                period_start: DateTime::from_timestamp(row.get("period_start"), 0).unwrap_or_default(),
+                period_end: DateTime::from_timestamp(row.get("period_end"), 0).unwrap_or_default(),
+                emotional_tone: row.get("emotional_tone"),
+                themes,
+                people_mentioned: people,
+                turning_points,
+                created_at: DateTime::from_timestamp(row.get("created_at"), 0).unwrap_or_default(),
+                updated_at: DateTime::from_timestamp(row.get("updated_at"), 0).unwrap_or_default(),
+            });
+        }
+
+        Ok(chapters)
+    }
+
+    /// Save a narrative chapter
+    pub async fn save_narrative_chapter(&self, chapter: &NarrativeChapter) -> Result<()> {
+        let themes_json = serde_json::to_string(&chapter.themes)?;
+        let people_json = serde_json::to_string(&chapter.people_mentioned)?;
+        let turning_points_json = serde_json::to_string(&chapter.turning_points)?;
+
+        sqlx::query(
+            "INSERT INTO narrative_chapters 
+             (id, title, content, period_start, period_end, emotional_tone, 
+              themes_json, people_json, turning_points_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET 
+              title = excluded.title, content = excluded.content,
+              updated_at = excluded.updated_at"
+        )
+        .bind(chapter.id)
+        .bind(&chapter.title)
+        .bind(&chapter.content)
+        .bind(chapter.period_start.timestamp())
+        .bind(chapter.period_end.timestamp())
+        .bind(chapter.emotional_tone)
+        .bind(&themes_json)
+        .bind(&people_json)
+        .bind(&turning_points_json)
+        .bind(chapter.created_at.timestamp())
+        .bind(chapter.updated_at.timestamp())
+        .execute(&self.pool)
+        .await
+        .context("Failed to save narrative chapter")?;
+
+        tracing::debug!("Narrative chapter {} saved", chapter.id);
+        Ok(())
+    }
+
+    /// Get the next chapter ID
+    pub async fn next_chapter_id(&self) -> Result<i64> {
+        let row = sqlx::query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM narrative_chapters")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get("next_id"))
+    }
+
+    /// Load unconsolidated feedback signals
+    pub async fn load_pending_feedback(&self) -> Result<Vec<FeedbackSignal>> {
+        let rows = sqlx::query(
+            "SELECT id, signal_type, content, confidence, emotional_context, timestamp, consolidated 
+             FROM feedback_signals WHERE consolidated = 0 ORDER BY timestamp"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query feedback_signals")?;
+
+        let mut signals = Vec::new();
+        for row in rows {
+            let signal_type_str: String = row.get("signal_type");
+            let signal_type: SignalType = serde_json::from_str(&signal_type_str)
+                .unwrap_or(SignalType::SituationInterpretation);
+
+            signals.push(FeedbackSignal {
+                id: row.get("id"),
+                timestamp: DateTime::from_timestamp(row.get("timestamp"), 0).unwrap_or_default(),
+                signal_type,
+                content: row.get("content"),
+                confidence: row.get("confidence"),
+                emotional_context: row.get("emotional_context"),
+                consolidated: row.get::<i32, _>("consolidated") != 0,
+            });
+        }
+
+        Ok(signals)
+    }
+
+    /// Save a feedback signal
+    pub async fn save_feedback_signal(&self, signal: &FeedbackSignal) -> Result<i64> {
+        let signal_type_json = serde_json::to_string(&signal.signal_type)?;
+
+        let result = sqlx::query(
+            "INSERT INTO feedback_signals (signal_type, content, confidence, emotional_context, timestamp, consolidated)
+             VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&signal_type_json)
+        .bind(&signal.content)
+        .bind(signal.confidence)
+        .bind(signal.emotional_context)
+        .bind(signal.timestamp.timestamp())
+        .bind(if signal.consolidated { 1 } else { 0 })
+        .execute(&self.pool)
+        .await
+        .context("Failed to save feedback signal")?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Mark feedback signals as consolidated
+    pub async fn mark_feedback_consolidated(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "UPDATE feedback_signals SET consolidated = 1 WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut q = sqlx::query(&query);
+        for id in ids {
+            q = q.bind(id);
+        }
+        q.execute(&self.pool).await?;
+
         Ok(())
     }
 }

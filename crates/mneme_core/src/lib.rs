@@ -1,7 +1,15 @@
 pub mod persona;
 pub mod prelude;
+pub mod affect;
+pub mod state;
+pub mod dynamics;
+pub mod values;
 
 pub use persona::Psyche;
+pub use affect::Affect;
+pub use state::{OrganismState, FastState, MediumState, SlowState, SensoryInput, AttachmentStyle, ValueNetwork};
+pub use dynamics::{Dynamics, DefaultDynamics};
+pub use values::{ValueJudge, RuleBasedJudge, Situation, JudgmentResult, ValueConflict, HierarchicalValueNetwork, ValueTier};
 
 
 use async_trait::async_trait;
@@ -122,6 +130,9 @@ pub trait TriggerEvaluator: Send + Sync {
 }
 
 /// Emotional tone for voice synthesis (cross-cutting concern)
+/// 
+/// DEPRECATED: Use `Affect` for the new continuous emotion model.
+/// This enum is kept for backward compatibility with TTS and existing code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Emotion {
     #[default]
@@ -161,6 +172,19 @@ impl Emotion {
             _ => None,
         }
     }
+
+    /// Convert from Affect (new model) to Emotion (legacy)
+    pub fn from_affect(affect: &Affect) -> Self {
+        match affect.to_discrete_label() {
+            "happy" => Self::Happy,
+            "sad" => Self::Sad,
+            "excited" => Self::Excited,
+            "calm" => Self::Calm,
+            "angry" => Self::Angry,
+            "anxious" => Self::Surprised, // Map anxious to surprised for TTS
+            _ => Self::Neutral,
+        }
+    }
 }
 
 /// Modality hint for how reasoning output should be expressed
@@ -179,5 +203,21 @@ pub enum ResponseModality {
 pub struct ReasoningOutput {
     pub content: String,
     pub modality: ResponseModality,
+    /// Legacy emotion for backward compatibility (TTS, etc.)
     pub emotion: Emotion,
+    /// New continuous affect model
+    #[serde(default)]
+    pub affect: Affect,
+}
+
+impl ReasoningOutput {
+    /// Create a new output with affect (emotion is derived automatically)
+    pub fn with_affect(content: String, modality: ResponseModality, affect: Affect) -> Self {
+        Self {
+            content,
+            modality,
+            emotion: Emotion::from_affect(&affect),
+            affect,
+        }
+    }
 }

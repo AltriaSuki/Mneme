@@ -50,7 +50,8 @@ pub struct ToolInputSchema {
 #[derive(Debug, Serialize)]
 pub struct MessagesRequest {
     pub model: String,
-    pub system: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
     pub messages: Vec<Message>,
     pub max_tokens: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
