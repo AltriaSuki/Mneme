@@ -260,26 +260,29 @@ if !response.status().is_success() {
 
 ---
 
-### 3. 🏗️ 状态历史记录（调试与回溯）
+### 3. ✅ 状态历史记录（调试与回溯）
 **模块**: `mneme_memory/src/coordinator.rs`, `mneme_memory/src/sqlite.rs`  
 **问题**: 当前只保存最新状态快照，无法回溯历史状态变化。
 
-**需要实现**:
-- [ ] 状态快照历史表 (`organism_state_history`)
-- [ ] 定期记录 (每 N 分钟或每次显著变化)
-- [ ] 状态 diff 计算与存储
-- [ ] 调试时可查询特定时间点的状态
-- [ ] 自动清理过旧历史（保留策略）
+**已完成** (commit `8c7ad3f`):
+- [x] 状态快照历史表 (`organism_state_history`) ✅ — SQLite migration, timestamp 索引
+- [x] 定期记录 (每 N 分钟或每次显著变化) ✅ — tick/interaction/consolidation/shutdown 四种触发器
+- [x] 状态 diff 计算与存储 ✅ — `compute_state_diff()` 比较 prev/curr，epsilon=0.01，紧凑格式 `E-0.40 S+0.60`
+- [x] 调试时可查询特定时间点的状态 ✅ — `query_state_history(from, to, limit)` + `recent_state_history(count)`
+- [x] 自动清理过旧历史（保留策略） ✅ — `prune_state_history(keep=10000, max_age=7d)`，每 360 tick 自动触发
+- [x] `StateSnapshot` 结构体 + `prev_snapshot` diff 跟踪 ✅
+- [x] 7 个测试（4 unit + 3 integration） ✅
 
-**Schema 草案**:
+**Schema**:
 ```sql
 CREATE TABLE organism_state_history (
     id INTEGER PRIMARY KEY,
     timestamp INTEGER NOT NULL,
     state_json TEXT NOT NULL,
-    trigger TEXT,  -- 'tick', 'interaction', 'consolidation'
+    trigger TEXT,  -- 'tick', 'interaction', 'consolidation', 'shutdown'
     diff_summary TEXT
 );
+CREATE INDEX idx_state_history_ts ON organism_state_history(timestamp);
 ```
 
 ---
