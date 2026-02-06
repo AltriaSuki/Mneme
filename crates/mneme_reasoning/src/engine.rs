@@ -507,7 +507,7 @@ impl Reasoning for ReasoningEngine {
 /// This is a structural defense: instead of telling the LLM "don't use markdown",
 /// we just strip it. Same principle as ModulationVector — constrain structurally,
 /// not with instructions.
-fn sanitize_chat_output(text: &str) -> String {
+pub fn sanitize_chat_output(text: &str) -> String {
     let mut result = text.to_string();
     
     // 1. Strip markdown bold first: **text** → text
@@ -515,19 +515,27 @@ fn sanitize_chat_output(text: &str) -> String {
     result = bold_re.replace_all(&result, "$1").to_string();
     
     // 2. Strip roleplay asterisks: *action* or *心理描写* → text
-    //    Safe to run after bold is already removed
+    //    Apply repeatedly until stable (handles nested/overlapping patterns).
     let roleplay_re = Regex::new(r"\*([^*\n]+)\*").unwrap();
-    result = roleplay_re.replace_all(&result, "$1").to_string();
+    loop {
+        let next = roleplay_re.replace_all(&result, "$1").to_string();
+        if next == result { break; }
+        result = next;
+    }
     
-    // 3. Strip markdown headers: # text, ## text, etc.
+    // 3. Remove any remaining stray asterisks (in chat, * is always an artifact)
+    result = result.replace('*', "");
+    
+    // 4. Strip markdown headers: # text, ## text, etc.
     let header_re = Regex::new(r"(?m)^#{1,6}\s+").unwrap();
     result = header_re.replace_all(&result, "").to_string();
     
-    // 4. Strip markdown bullet lists: - text or * text (at line start)
-    let bullet_re = Regex::new(r"(?m)^[\-\*]\s+").unwrap();
+    // 5. Strip markdown bullet lists: - text or * text (at line start)
+    //    (* bullets already removed by step 3, but - bullets need stripping)
+    let bullet_re = Regex::new(r"(?m)^-\s+").unwrap();
     result = bullet_re.replace_all(&result, "").to_string();
     
-    // 5. Clean up excess whitespace from stripping
+    // 6. Clean up excess whitespace from stripping
     let multi_newline = Regex::new(r"\n{3,}").unwrap();
     result = multi_newline.replace_all(&result, "\n\n").to_string();
     
