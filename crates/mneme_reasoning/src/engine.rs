@@ -25,6 +25,9 @@ pub struct ReasoningEngine {
     
     // Phase 3: Web Automation
     browser_session: tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>,
+
+    // Layer 3: Shared feed digest cache (written by CLI sync, read during think)
+    feed_cache: Arc<tokio::sync::RwLock<String>>,
 }
 
 impl ReasoningEngine {
@@ -43,6 +46,7 @@ impl ReasoningEngine {
             limbic,
             coordinator,
             browser_session: tokio::sync::Mutex::new(None), 
+            feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
         }
     }
 
@@ -66,6 +70,7 @@ impl ReasoningEngine {
             limbic,
             coordinator,
             browser_session: tokio::sync::Mutex::new(None), 
+            feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
         }
     }
 
@@ -82,6 +87,13 @@ impl ReasoningEngine {
     /// Register a trigger evaluator
     pub fn add_evaluator(&mut self, evaluator: Box<dyn TriggerEvaluator>) {
         self.evaluators.push(evaluator);
+    }
+
+    /// Update the feed digest cache (called by CLI after sync).
+    /// `items` are formatted into a concise digest string.
+    pub async fn update_feed_digest(&self, items: &[mneme_core::Content]) {
+        let digest = format_feed_digest(items);
+        *self.feed_cache.write().await = digest;
     }
 
     /// Check if proactive messaging should be triggered based on limbic state
@@ -201,7 +213,7 @@ impl ReasoningEngine {
         let context_layers = ContextLayers {
             user_facts,
             recalled_episodes: episodes,
-            feed_digest: String::new(), // TODO: Layer 3 — social feed digest
+            feed_digest: self.feed_cache.read().await.clone(),
         };
         
         let system_prompt = ContextAssembler::build_full_system_prompt(
@@ -478,14 +490,14 @@ impl Reasoning for ReasoningEngine {
 fn sanitize_chat_output(text: &str) -> String {
     let mut result = text.to_string();
     
-    // 1. Strip roleplay asterisks: *action* or *心理描写*
-    //    Matches *some text* but not **bold** (which has its own rule)
-    let roleplay_re = Regex::new(r"(?<!\*)\*([^*\n]+)\*(?!\*)").unwrap();
-    result = roleplay_re.replace_all(&result, "$1").to_string();
-    
-    // 2. Strip markdown bold: **text**
+    // 1. Strip markdown bold first: **text** → text
     let bold_re = Regex::new(r"\*\*([^*]+)\*\*").unwrap();
     result = bold_re.replace_all(&result, "$1").to_string();
+    
+    // 2. Strip roleplay asterisks: *action* or *心理描写* → text
+    //    Safe to run after bold is already removed
+    let roleplay_re = Regex::new(r"\*([^*\n]+)\*").unwrap();
+    result = roleplay_re.replace_all(&result, "$1").to_string();
     
     // 3. Strip markdown headers: # text, ## text, etc.
     let header_re = Regex::new(r"(?m)^#{1,6}\s+").unwrap();
@@ -500,4 +512,67 @@ fn sanitize_chat_output(text: &str) -> String {
     result = multi_newline.replace_all(&result, "\n\n").to_string();
     
     result.trim().to_string()
+}
+
+/// Format a list of Content items into a concise feed digest for the LLM context.
+/// Each item is condensed to one line: "[source] first-line-of-body".
+/// Caps at 10 items to stay within budget.
+fn format_feed_digest(items: &[mneme_core::Content]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<String> = items.iter().take(10).map(|item| {
+        let headline = item.body.lines().next().unwrap_or("(empty)");
+        format!("[{}] {}", item.source, headline)
+    }).collect();
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mneme_core::{Content, Modality};
+
+    fn test_content(source: &str, body: &str) -> Content {
+        Content {
+            id: uuid::Uuid::nil(),
+            source: source.into(),
+            author: "Feed".into(),
+            body: body.into(),
+            timestamp: 0,
+            modality: Modality::Text,
+        }
+    }
+
+    #[test]
+    fn test_format_feed_digest_empty() {
+        assert_eq!(format_feed_digest(&[]), "");
+    }
+
+    #[test]
+    fn test_format_feed_digest_basic() {
+        let items = vec![
+            test_content("rss:tech", "Title: Rust 2024\nLink: http://example.com\nSummary: Great year"),
+            test_content("rss:news", "Title: Weather Update"),
+        ];
+        let digest = format_feed_digest(&items);
+        assert_eq!(digest, "[rss:tech] Title: Rust 2024\n[rss:news] Title: Weather Update");
+    }
+
+    #[test]
+    fn test_format_feed_digest_caps_at_10() {
+        let items: Vec<Content> = (0..15).map(|i| {
+            test_content(&format!("rss:feed{}", i), &format!("Item {}", i))
+        }).collect();
+        let digest = format_feed_digest(&items);
+        assert_eq!(digest.lines().count(), 10);
+    }
+
+    #[test]
+    fn test_sanitize_chat_output() {
+        assert_eq!(sanitize_chat_output("*叹气*你好"), "叹气你好");
+        assert_eq!(sanitize_chat_output("**重要**的事"), "重要的事");
+        assert_eq!(sanitize_chat_output("# 标题\n内容"), "标题\n内容");
+        assert_eq!(sanitize_chat_output("- 项目一\n- 项目二"), "项目一\n项目二");
+    }
 }

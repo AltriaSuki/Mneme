@@ -300,12 +300,14 @@ async fn main() -> anyhow::Result<()> {
                 info!("Syncing sources...");
                 let items = source_manager.collect_all().await;
                 println!("Fetched {} items.", items.len());
-                for item in items {
+                for item in &items {
                     println!("- [{}] {}", item.source, item.body.lines().next().unwrap_or(""));
-                    if let Err(e) = memory.memorize(&item).await {
+                    if let Err(e) = memory.memorize(item).await {
                         error!("Failed to memorize item {}: {}", item.id, e);
                     }
                 }
+                // Update engine's feed digest cache (Layer 3)
+                engine.update_feed_digest(&items).await;
                 continue; // Skip thinking
              } else if content.source == "cli" && content.body.trim() == "sleep" {
                 // Manual sleep/consolidation trigger

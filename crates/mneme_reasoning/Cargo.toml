@@ -18,3 +18,6 @@ regex = "1.10"
 mneme_os = { path = "../mneme_os" }
 mneme_browser = { path = "../mneme_browser" }
 chrono = "0.4"
+
+[dev-dependencies]
+uuid = "1.0"

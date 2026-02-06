@@ -378,7 +378,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 |--------|------|------|------|
 | 1 | Persona 定义 | ✅ | 加载机制有，文件已填充（见 #27） |
 | 2 | User facts（语义记忆） | ✅ | `recall_facts_formatted()` 注入 prompt |
-| 3 | Social feed digest | ❌ | 未实现摘要生成与注入（placeholder 已预留） |
+| 3 | Social feed digest | ✅ | `format_feed_digest()` + `update_feed_digest()` + CLI sync 写入 |
 | 4 | Relevant episodes | ✅ | 向量搜索结果注入 `ContextLayers.recalled_episodes` |
 | 5 | Conversation history | ✅ | 已实现，滑动窗口 |
 | 6 | Triggering event | ✅ | 已实现 |
@@ -387,7 +387,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 **需要实现**:
 - [x] 将 `recall_facts()` 结果注入 prompt（user facts 层） ✅
-- [ ] 实现 feed digest 生成（perception 摘要 → 紧凑的 prompt 段落）
+- [x] 实现 feed digest 生成（`format_feed_digest()` → CLI sync → `feed_cache` → `ContextLayers`） ✅
 - [x] 将语义相关 episodes 注入 prompt ✅ — `ContextLayers.recalled_episodes`
 - [x] Token 预算管理：按优先级裁剪（feed digest 先于 user facts 丢弃；persona 永不丢弃） ✅
 - [x] 统一的 `ContextAssembler` 结构体 + `ContextLayers` + `build_full_system_prompt()` ✅
@@ -823,7 +823,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 | ~~状态与回复不一致~~ | mneme_limbic/somatic | stress=1.0 时回复"挺好的" → 已改为结构性调制 | **Fixed** ✅ |
 | ~~Persona 文件全部为空~~ | persona/*.md | 5 个脑区定义文件已填充（刚出生的小女孩人格） | **Fixed** ✅ |
 | Semantic facts 读写已实现 | mneme_memory | store/recall/decay/format 方法完成 | **Fixed** ✅ |
-| ~~Context assembly 管道断裂~~ | mneme_reasoning | 6 层上下文已实现 5 层（缺 feed digest） | **Fixed** ✅ |
+| ~~Context assembly 管道断裂~~ | mneme_reasoning | 6/6 层上下文全部完成 | **Fixed** ✅ |
 | 浏览器阻塞异步运行时 | mneme_browser | headless_chrome 同步调用阻塞 tokio | Open |
 | Shell 无权限控制 | mneme_os | LocalShell 可执行任意命令，无沙箱 | Open |
 | ~~输出含 roleplay 动作描写~~ | prompts/broca | `*感觉有点熟悉*` 等星号旁白，人类不这样聊天 | **Fixed** ✅ |
@@ -1001,7 +1001,7 @@ rustyline = "14.0"
 
 - ~~Persona 定义文件填充 (#27)~~ ✅
 - Semantic Memory 读写闭环 (#26) ⚠️ 基础 API 完成，缺 extraction pass
-- ~~Context Assembly 完整管道 (#28)~~ ⚠️ 5/6 层完成，缺 feed digest
+- ~~Context Assembly 完整管道 (#28)~~ ✅ 6/6 层完成
 - ~~Somatic Marker 结构性调制 (#20 短期)~~ ✅
 - ~~API 重试机制 (#1)~~ ✅
 - ~~数值边界检查 (#4)~~ ✅
