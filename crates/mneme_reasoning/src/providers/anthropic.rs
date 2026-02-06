@@ -98,7 +98,14 @@ impl LlmClient for AnthropicClient {
             Ok(resp)
         }).await?;
 
-        let api_response: MessagesResponse = response.json().await?;
+        // Log raw response for debugging tool-use issues (visible with RUST_LOG=debug)
+        let resp_text = response.text().await?;
+        tracing::debug!(
+            "Anthropic raw response (first 2000 chars): {}",
+            &resp_text[..resp_text.len().min(2000)]
+        );
+        let api_response: MessagesResponse = serde_json::from_str(&resp_text)
+            .context("Failed to parse Anthropic response")?;
         Ok(api_response)
     }
 }

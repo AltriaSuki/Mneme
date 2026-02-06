@@ -178,8 +178,12 @@ impl LlmClient for OpenAiClient {
             Ok(resp)
         }).await?;
         
-        // Parse Response
+        // Parse Response — log raw for debugging tool-use issues
         let resp_json: Value = response.json().await?;
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let raw = serde_json::to_string(&resp_json).unwrap_or_default();
+            tracing::debug!("OpenAI raw response (first 2000 chars): {}", &raw[..raw.len().min(2000)]);
+        }
         let choice = &resp_json["choices"][0];
         let message = &choice["message"];
         let finish_reason = choice["finish_reason"].as_str().map(|s| s.to_string());

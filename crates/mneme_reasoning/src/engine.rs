@@ -267,6 +267,7 @@ impl ReasoningEngine {
         let mut final_emotion = Emotion::from_affect(&somatic_marker.affect);
         
         // --- React Loop (Max 5 turns) ---
+        let mut consecutive_permanent_fails = 0u32;
         for _iteration in 0..5 {
             final_content.clear();
             
@@ -321,11 +322,29 @@ impl ReasoningEngine {
             }
 
             if !tool_results.is_empty() {
+                // Detect repeated permanent failures to avoid burning API tokens
+                let all_errors = tool_results.iter().all(|r| {
+                    matches!(r, ContentBlock::ToolResult { is_error: Some(true), .. })
+                });
+                if all_errors {
+                    consecutive_permanent_fails += 1;
+                } else {
+                    consecutive_permanent_fails = 0;
+                }
+
                 let tool_msg = Message {
                     role: Role::User,
                     content: tool_results,
                 };
                 scratchpad_messages.push(tool_msg);
+
+                if consecutive_permanent_fails >= 2 {
+                    tracing::warn!(
+                        "Tool calls failing repeatedly ({} rounds), aborting ReAct loop",
+                        consecutive_permanent_fails
+                    );
+                    break;
+                }
                 continue;
             } else {
                 break;
