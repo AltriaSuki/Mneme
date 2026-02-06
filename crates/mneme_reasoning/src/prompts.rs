@@ -45,6 +45,11 @@ impl ContextAssembler {
             "== 表达风格指引 ==\n{}\n\n\
              重要：不要在回复中直接描述或提及你的情绪状态、精力水平或心情。\
              让这些自然地体现在你的语气、回复长度和热情程度中，而不是用语言说出来。\n\n\
+             == 输出格式规则（绝对） ==\n\
+             1. 禁止 *动作描写* 或 *心理旁白*。你不是在演戏。不要写类似 *歪头* *感觉开心* 这样的内容。\n\
+             2. 日常聊天时使用纯文本，不要用 markdown 格式（无加粗、标题、列表、代码块）。像发微信一样说话。\n\
+             3. 只有在明确的技术讨论或写文档时才可以使用 markdown/代码块。\n\
+             4. 不要描述自己的动作或表情。\n\n\
              == SILENCE RULES ==\n\
              If the user's message is a casual remark in a group chat not directed at you, \
              or if you have nothing meaningful to add, you may output exactly: [SILENCE]",
