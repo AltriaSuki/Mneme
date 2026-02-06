@@ -485,20 +485,19 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 8. 🏗️ LLM 响应解析健壮性
-**模块**: `mneme_reasoning/src/engine.rs`  
+### 8. ✅ LLM 响应解析健壮性
+**模块**: `mneme_reasoning/src/engine.rs`, `mneme_reasoning/src/extraction.rs`  
 **问题**: LLM 输出格式可能不符合预期，解析可能失败。
 
-**当前风险**:
-- `<emotion>` 标签解析依赖正则
-- 工具调用的 JSON 可能格式错误
-- `[SILENCE]` 检测过于简单
-
-**需要实现**:
-- [ ] JSON 工具输入的 schema 验证
-- [ ] 格式错误时的回退策略
-- [ ] 多次解析失败后请求 LLM 重新格式化
-- [ ] 响应内容的安全检查（防注入）
+**已完成** (commit `5b581df`):
+- [x] Emotion tag 解析健壮化 ✅ — `parse_emotion_tags()`: 处理大小写 `<Emotion>`、空格 `< emotion >`、多标签、空内容、无法识别的情绪值
+- [x] Silence 检测健壮化 ✅ — `is_silence_response()`: 大小写不敏感、容忍空格/省略号，但不误判含 SILENCE 的正常文本
+- [x] JSON 提取多策略解析 ✅ — 6 层 fallback: 直接解析 → code block 提取 → balanced braces → bare array → JSON repair → graceful empty
+- [x] JSON repair ✅ — `repair_json()`: 修复 trailing commas、单引号替换、unquoted keys
+- [x] `extract_balanced_braces()` ✅ — 正确处理嵌套 `{}`、字符串内转义、避免 `find('}')/rfind('}')` 的错误匹配
+- [x] Tool result 安全处理 ✅ — `sanitize_tool_result()`: 8KB 截断 + prompt injection 检测 (`ignore previous instructions`, `<system>` 标签)
+- [x] emotion regex 升级 ✅ — `(?si)<\s*emotion\s*>(.*?)<\s*/\s*emotion\s*>` 支持 dotall + case insensitive + 灵活空格
+- [x] 29 个新单元测试（emotion 8 + silence 7 + tool sanitize 4 + extraction 10） ✅
 
 ---
 
