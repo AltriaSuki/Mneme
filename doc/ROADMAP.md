@@ -342,7 +342,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 - [x] `get_facts_about()` — 按主题查询事实 ✅
 - [x] `decay_fact()` — 事实衰减（矛盾信息出现时降低 confidence） ✅
 - [x] `format_facts_for_prompt()` — 格式化事实供 prompt 注入 ✅
-- [ ] 对话后的 fact extraction pass（设计文档 §4.3："not optional — part of the core loop"）
+- [x] 对话后的 fact extraction pass（`extraction.rs` + `extract_facts()` + think() 集成） ✅
 - [ ] Social graph 的实际读写（当前只有 trait 骨架）
 - [ ] `Coordinator::recall()` 返回混合结果：episodes + facts + social context
 
@@ -1000,7 +1000,7 @@ rustyline = "14.0"
 > **目标**: 让 agent 的核心管道（persona → memory → context → expression）真正跑通。
 
 - ~~Persona 定义文件填充 (#27)~~ ✅
-- Semantic Memory 读写闭环 (#26) ⚠️ 基础 API 完成，缺 extraction pass
+- ~~Semantic Memory 读写闭环 (#26)~~ ✅ API + extraction pass 完成
 - ~~Context Assembly 完整管道 (#28)~~ ✅ 6/6 层完成
 - ~~Somatic Marker 结构性调制 (#20 短期)~~ ✅
 - ~~API 重试机制 (#1)~~ ✅

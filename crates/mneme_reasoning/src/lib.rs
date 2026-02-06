@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod extraction;
 pub mod prompts;
 pub mod api_types;
 pub mod tools;

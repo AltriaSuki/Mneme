@@ -89,6 +89,10 @@ pub trait Memory: Send + Sync {
     async fn recall_facts_formatted(&self, _query: &str) -> anyhow::Result<String> {
         Ok(String::new())
     }
+    /// Store a semantic fact triple. Default: no-op.
+    async fn store_fact(&self, _subject: &str, _predicate: &str, _object: &str, _confidence: f32) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait]

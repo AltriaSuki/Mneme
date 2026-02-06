@@ -293,6 +293,12 @@ impl Memory for SqliteMemory {
 
         Ok(())
     }
+
+    async fn store_fact(&self, subject: &str, predicate: &str, object: &str, confidence: f32) -> Result<()> {
+        // Delegate to the inherent method, discarding the returned id
+        let _ = SqliteMemory::store_fact(self, subject, predicate, object, confidence).await?;
+        Ok(())
+    }
 }
 #[async_trait]
 impl SocialGraph for SqliteMemory {

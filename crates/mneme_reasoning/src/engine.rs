@@ -438,8 +438,28 @@ impl Reasoning for ReasoningEngine {
             Event::UserMessage(content) => {
                 let (response_text, emotion, affect) = self.process_thought_loop(&content.body, true).await?;
 
-                // Memorize
+                // Memorize the episode
                 self.memory.memorize(&content).await?;
+
+                // Background fact extraction: spawn a task so it doesn't delay the response.
+                // We extract facts from the exchange and store them in semantic memory.
+                {
+                    let user_text = content.body.clone();
+                    let reply_text = response_text.clone();
+                    let memory = self.memory.clone();
+                    // We need to call the LLM client, but it's not Arc-shareable.
+                    // Instead, extract facts inline (fast: ~500ms with low max_tokens).
+                    let facts = crate::extraction::extract_facts(
+                        self.client.as_ref(), &user_text, &reply_text
+                    ).await;
+                    for fact in facts {
+                        if let Err(e) = memory.store_fact(
+                            &fact.subject, &fact.predicate, &fact.object, fact.confidence
+                        ).await {
+                            tracing::warn!("Failed to store extracted fact: {}", e);
+                        }
+                    }
+                }
 
                 Ok(ReasoningOutput {
                     content: response_text,
