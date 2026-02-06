@@ -8,6 +8,40 @@ use regex::Regex;
 
 use mneme_os::Executor;
 
+/// Categorise tool failures so we can decide whether to retry.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolErrorKind {
+    /// Transient: timeout, connection reset — worth retrying.
+    Transient,
+    /// Permanent: missing param, unknown tool — retrying won't help.
+    Permanent,
+}
+
+/// Structured result from a tool execution.
+#[derive(Debug, Clone)]
+pub struct ToolOutcome {
+    pub content: String,
+    pub is_error: bool,
+    pub error_kind: Option<ToolErrorKind>,
+}
+
+impl ToolOutcome {
+    fn ok(content: String) -> Self {
+        Self { content, is_error: false, error_kind: None }
+    }
+
+    fn transient_error(msg: String) -> Self {
+        Self { content: msg, is_error: true, error_kind: Some(ToolErrorKind::Transient) }
+    }
+
+    fn permanent_error(msg: String) -> Self {
+        Self { content: msg, is_error: true, error_kind: Some(ToolErrorKind::Permanent) }
+    }
+}
+
+/// Maximum number of retries for transient tool failures.
+const TOOL_MAX_RETRIES: usize = 1;
+
 pub struct ReasoningEngine {
     psyche: Psyche,
     memory: Arc<dyn Memory>,
@@ -268,12 +302,21 @@ impl ReasoningEngine {
                     },
                     ContentBlock::ToolUse { id, name, input } => {
                         tracing::info!("Tool Use: {} input: {:?}", name, input);
-                        let result_content = self.execute_tool(name, input).await;
+                        let outcome = self.execute_tool_with_retry(name, input).await;
+                        
+                        if outcome.is_error {
+                            tracing::warn!(
+                                "Tool '{}' failed ({:?}): {}",
+                                name,
+                                outcome.error_kind,
+                                outcome.content
+                            );
+                        }
                         
                         tool_results.push(ContentBlock::ToolResult {
                             tool_use_id: id.clone(),
-                            content: result_content,
-                            is_error: None, 
+                            content: outcome.content,
+                            is_error: Some(outcome.is_error),
                         });
                     },
                     _ => {}
@@ -362,72 +405,139 @@ impl ReasoningEngine {
         Ok((final_content.trim().to_string(), final_emotion, final_affect))
     }
     
-    async fn execute_tool(&self, name: &str, input: &serde_json::Value) -> String {
+    /// Execute a tool with automatic retry for transient failures.
+    async fn execute_tool_with_retry(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
+        let outcome = self.execute_tool(name, input).await;
+        
+        // Retry only transient errors
+        if outcome.is_error && outcome.error_kind == Some(ToolErrorKind::Transient) {
+            for attempt in 1..=TOOL_MAX_RETRIES {
+                tracing::info!("Retrying tool '{}' (attempt {}/{})", name, attempt, TOOL_MAX_RETRIES);
+                
+                // Brief pause before retry
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                
+                let retry_outcome = self.execute_tool(name, input).await;
+                if !retry_outcome.is_error {
+                    return retry_outcome;
+                }
+                // If still failing on last attempt, return the latest error
+                if attempt == TOOL_MAX_RETRIES {
+                    return retry_outcome;
+                }
+            }
+        }
+        
+        outcome
+    }
+    
+    async fn execute_tool(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
         match name {
             "shell" => {
                 if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
-                     match self.executor.execute(cmd).await {
-                        Ok(out) => out,
-                        Err(e) => format!("Error: {}", e),
+                    match self.executor.execute(cmd).await {
+                        Ok(out) => ToolOutcome::ok(out),
+                        Err(e) => {
+                            let msg = e.to_string();
+                            // Classify: timeouts and spawn failures are transient
+                            if msg.contains("timed out") || msg.contains("spawn") {
+                                ToolOutcome::transient_error(format!("Shell command failed (transient): {}", msg))
+                            } else {
+                                // Non-zero exit, syntax error, etc. — permanent
+                                ToolOutcome::permanent_error(format!("Shell command failed: {}", msg))
+                            }
+                        }
                     }
                 } else {
-                    "Missing 'command' parameter".to_string()
+                    ToolOutcome::permanent_error("Missing 'command' parameter".to_string())
                 }
             },
             "browser_goto" | "browser_click" | "browser_type" | "browser_screenshot" | "browser_get_html" => {
-                 use mneme_browser::{BrowserClient, BrowserAction};
-                 
-                 // Map tool usage to BrowserAction
-                 let action_result = match name {
-                     "browser_goto" => input.get("url").and_then(|u| u.as_str())
-                         .map(|url| BrowserAction::Goto { url: url.to_string() })
-                         .ok_or("Missing 'url'"),
-                     "browser_click" => input.get("selector").and_then(|s| s.as_str())
-                         .map(|sel| BrowserAction::Click { selector: sel.to_string() })
-                         .ok_or("Missing 'selector'"),
-                     "browser_type" => {
-                         let sel = input.get("selector").and_then(|s| s.as_str());
-                         let txt = input.get("text").and_then(|t| t.as_str());
-                         match (sel, txt) {
-                             (Some(s), Some(t)) => Ok(BrowserAction::Type { selector: s.to_string(), text: t.to_string() }),
-                             _ => Err("Missing 'selector' or 'text'")
-                         }
-                     },
-                     "browser_screenshot" => Ok(BrowserAction::Screenshot),
-                     "browser_get_html" => Ok(BrowserAction::GetHtml),
-                     _ => Err("Unreachable"),
-                 };
-                 
-                 match action_result {
-                     Ok(action) => {
-                         // Get or Init Session
-                        let mut session_lock = self.browser_session.lock().await;
-                        if session_lock.is_none() {
-                             match BrowserClient::new(true) {
-                                 Ok(mut client) => {
-                                     if let Err(e) = client.launch() {
-                                         return format!("Failed to launch browser: {}", e);
-                                     }
-                                     *session_lock = Some(client);
-                                 },
-                                 Err(e) => return format!("Failed to init browser: {}", e),
-                             }
-                        }
-                        
-                        if let Some(client) = session_lock.as_mut() {
-                            match client.execute_action(action) {
-                                Ok(out) => out,
-                                Err(e) => format!("Browser Action Failed: {}", e),
-                            }
-                        } else {
-                            "Browser Session Lost".to_string()
-                        }
-                     },
-                     Err(e) => format!("Invalid Input for {}: {}", name, e),
-                 }
+                self.execute_browser_tool(name, input).await
             },
-            _ => format!("Unknown Tool: {}", name),
+            _ => ToolOutcome::permanent_error(format!("Unknown tool: {}", name)),
         }
+    }
+    
+    /// Execute a browser tool with session recovery on failure.
+    async fn execute_browser_tool(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
+        // Parse action from input (permanent error if params invalid)
+        let action = match Self::parse_browser_action(name, input) {
+            Ok(a) => a,
+            Err(msg) => return ToolOutcome::permanent_error(msg),
+        };
+        
+        let mut session_lock = self.browser_session.lock().await;
+        
+        // Ensure session exists
+        if session_lock.is_none() {
+            match Self::create_browser_session() {
+                Ok(client) => { *session_lock = Some(client); },
+                Err(e) => return ToolOutcome::transient_error(
+                    format!("Failed to launch browser: {}", e)
+                ),
+            }
+        }
+        
+        // First attempt
+        if let Some(client) = session_lock.as_mut() {
+            match client.execute_action(action.clone()) {
+                Ok(out) => return ToolOutcome::ok(out),
+                Err(e) => {
+                    tracing::warn!("Browser action failed, attempting session recovery: {}", e);
+                    // Drop old session and try to recover
+                    *session_lock = None;
+                }
+            }
+        }
+        
+        // Recovery attempt: create fresh session and retry
+        match Self::create_browser_session() {
+            Ok(mut client) => {
+                let result = client.execute_action(action);
+                *session_lock = Some(client);
+                match result {
+                    Ok(out) => ToolOutcome::ok(out),
+                    Err(e) => ToolOutcome::transient_error(
+                        format!("Browser action failed after recovery: {}", e)
+                    ),
+                }
+            }
+            Err(e) => ToolOutcome::transient_error(
+                format!("Browser session recovery failed: {}", e)
+            ),
+        }
+    }
+    
+    /// Parse a BrowserAction from tool name + JSON input.
+    fn parse_browser_action(name: &str, input: &serde_json::Value) -> std::result::Result<mneme_browser::BrowserAction, String> {
+        use mneme_browser::BrowserAction;
+        match name {
+            "browser_goto" => input.get("url").and_then(|u| u.as_str())
+                .map(|url| BrowserAction::Goto { url: url.to_string() })
+                .ok_or_else(|| format!("Missing 'url' for {}", name)),
+            "browser_click" => input.get("selector").and_then(|s| s.as_str())
+                .map(|sel| BrowserAction::Click { selector: sel.to_string() })
+                .ok_or_else(|| format!("Missing 'selector' for {}", name)),
+            "browser_type" => {
+                let sel = input.get("selector").and_then(|s| s.as_str());
+                let txt = input.get("text").and_then(|t| t.as_str());
+                match (sel, txt) {
+                    (Some(s), Some(t)) => Ok(BrowserAction::Type { selector: s.to_string(), text: t.to_string() }),
+                    _ => Err(format!("Missing 'selector' or 'text' for {}", name)),
+                }
+            },
+            "browser_screenshot" => Ok(BrowserAction::Screenshot),
+            "browser_get_html" => Ok(BrowserAction::GetHtml),
+            _ => Err(format!("Unknown browser tool: {}", name)),
+        }
+    }
+    
+    /// Create and launch a new browser session.
+    fn create_browser_session() -> Result<mneme_browser::BrowserClient> {
+        let mut client = mneme_browser::BrowserClient::new(true)?;
+        client.launch()?;
+        Ok(client)
     }
 }
 

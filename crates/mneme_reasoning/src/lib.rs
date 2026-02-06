@@ -8,3 +8,4 @@ pub mod providers;
 pub mod retry;
 
 pub use engine::ReasoningEngine;
+pub use engine::{ToolOutcome, ToolErrorKind};
