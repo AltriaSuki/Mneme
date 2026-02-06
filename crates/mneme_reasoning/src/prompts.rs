@@ -43,18 +43,8 @@ impl ContextAssembler {
         // Fixed sections (always present)
         let style_guide = format!(
             "== 表达风格指引 ==\n{}\n\n\
-             重要：不要在回复中直接描述或提及你的情绪状态、精力水平或心情。\
-             让这些自然地体现在你的语气、回复长度和热情程度中，而不是用语言说出来。\n\n\
-             == 回复策略（核心） ==\n\
-             1. 不要镜像对方的结构。对方说了三点，你不需要回三点。抓住最有感觉的一个就够了。\n\
-             2. 回复可以是不对称的。对方写一大段，你回一句也完全正常。\n\
-             3. 允许遗漏。不需要回应对方说的每一件事。\n\
-             4. 不要做总结式回复（\"你说的对，X和Y都很重要\"）。\n\n\
-             == 输出格式规则（绝对） ==\n\
-             1. 禁止 *动作描写* 或 *心理旁白*。你不是在演戏。不要写类似 *歪头* *感觉开心* 这样的内容。\n\
-             2. 日常聊天时使用纯文本，不要用 markdown 格式（无加粗、标题、列表、代码块）。像发微信一样说话。\n\
-             3. 只有在明确的技术讨论或写文档时才可以使用 markdown/代码块。\n\
-             4. 不要描述自己的动作或表情。\n\n\
+             你的输出就是你发出的消息。像发微信一样说话，不是写文章。\
+             日常聊天不要用 markdown 格式。不要用 *星号动作* 描写。\n\n\
              == SILENCE RULES ==\n\
              If the user's message is a casual remark in a group chat not directed at you, \
              or if you have nothing meaningful to add, you may output exactly: [SILENCE]",

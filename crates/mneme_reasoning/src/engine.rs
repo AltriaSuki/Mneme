@@ -285,6 +285,12 @@ impl ReasoningEngine {
             final_content.clear();
         }
 
+        // Sanitize output: strip roleplay asterisks and casual markdown
+        // This is a code-level defense — we don't rely on the LLM to follow formatting rules.
+        if !final_content.is_empty() {
+            final_content = sanitize_chat_output(&final_content);
+        }
+
         // Save history
         {
             let mut history = self.history.lock().await;
@@ -462,4 +468,36 @@ impl Reasoning for ReasoningEngine {
             }
         }
     }
+}
+
+/// Post-process LLM output to strip non-human formatting artifacts.
+///
+/// This is a structural defense: instead of telling the LLM "don't use markdown",
+/// we just strip it. Same principle as ModulationVector — constrain structurally,
+/// not with instructions.
+fn sanitize_chat_output(text: &str) -> String {
+    let mut result = text.to_string();
+    
+    // 1. Strip roleplay asterisks: *action* or *心理描写*
+    //    Matches *some text* but not **bold** (which has its own rule)
+    let roleplay_re = Regex::new(r"(?<!\*)\*([^*\n]+)\*(?!\*)").unwrap();
+    result = roleplay_re.replace_all(&result, "$1").to_string();
+    
+    // 2. Strip markdown bold: **text**
+    let bold_re = Regex::new(r"\*\*([^*]+)\*\*").unwrap();
+    result = bold_re.replace_all(&result, "$1").to_string();
+    
+    // 3. Strip markdown headers: # text, ## text, etc.
+    let header_re = Regex::new(r"(?m)^#{1,6}\s+").unwrap();
+    result = header_re.replace_all(&result, "").to_string();
+    
+    // 4. Strip markdown bullet lists: - text or * text (at line start)
+    let bullet_re = Regex::new(r"(?m)^[\-\*]\s+").unwrap();
+    result = bullet_re.replace_all(&result, "").to_string();
+    
+    // 5. Clean up excess whitespace from stripping
+    let multi_newline = Regex::new(r"\n{3,}").unwrap();
+    result = multi_newline.replace_all(&result, "\n\n").to_string();
+    
+    result.trim().to_string()
 }

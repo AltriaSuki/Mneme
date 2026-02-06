@@ -520,25 +520,34 @@ proptest! {
 ---
 
 ### 34. 🧬 输出自然化：上下文感知的格式与表达
-**模块**: `persona/broca.md`, `mneme_reasoning/src/prompts.rs`  
+**模块**: `persona/broca.md`, `mneme_reasoning/src/engine.rs`, `mneme_reasoning/src/prompts.rs`  
 **问题**: LLM 输出存在明显的"AI味"，不符合人类在不同场景下的实际输出习惯。
 
 **已知问题**:
-1. **心理描写/动作旁白**：输出 `*感觉有点熟悉*` `*歪头*` 等 roleplay 式的星号动作描写。人类聊天不会给自己写旁白。
-2. **无差别使用 Markdown**：日常聊天中使用加粗、标题、列表、代码块等格式。人类发微信/QQ 不会用 markdown。
-3. **格式应随场景变化**：
-   - 日常聊天 → 纯文本，口语化
-   - 技术讨论 → 可用代码块
-   - 写文档/笔记 → 可用 markdown
-   - 群聊 → 更短更口语
+1. **心理描写/动作旁白**：输出 `*感觉有点熟悉*` `*歪头*` 等 roleplay 式的星号动作描写
+2. **无差别使用 Markdown**：日常聊天中使用加粗、标题、列表、代码块
+3. **镜像回复**：用户说三点，LLM 也逐点回三条——人类不会这样
+4. **总结式回复**："你说的对，X 和 Y 都很重要"这种 AI 特有的句式
 
-**当前修复**:
-- [x] `broca.md` 新增"输出格式（绝对规则）"章节 ✅
-- [x] `prompts.rs` style guide 增加格式规则（禁 roleplay、日常禁 markdown） ✅
+**设计哲学**:  
+> 不要用规则去约束不自然——用示例和结构性后处理。规则越多越像 AI。
+
+**三层防御**:
+
+| 层 | 机制 | 可靠性 |
+|---|---|---|
+| Persona few-shot | `broca.md` 对话示例，LLM 模仿风格 | 中（LLM 擅长模仿示例） |
+| System prompt | 极简原则，不列"不要做 X" | 低（LLM 可能无视） |
+| **代码后处理** | `sanitize_chat_output()` 剥离格式 | **高（确定性）** |
+
+**已完成**:
+- [x] `broca.md` 改为 few-shot 示例驱动，删除大量"不要"规则 ✅
+- [x] `prompts.rs` style guide 精简为 1-2 句核心原则 ✅
+- [x] `engine.rs` 新增 `sanitize_chat_output()` 后处理：剥离 `*roleplay*`、`**bold**`、`# headers`、`- bullets` ✅
 
 **后续改进**:
-- [ ] 上下文感知的格式策略（根据 `Content.source` 判断场景：cli/qq/群聊/文档）
-- [ ] 输出后处理：自动剥离日常聊天中的 markdown 标记（防御性措施）
+- [ ] 上下文感知：根据 `Content.source`（cli/qq/群聊）决定是否启用 sanitize
+- [ ] 技术讨论时自动跳过 sanitize（保留代码块等）
 - [ ] 🧬 不同实例的表达风格差异（有的简洁有的啰嗦，作为可学习参数）
 
 ---
