@@ -21,3 +21,5 @@ mneme_onebot = { path = "../mneme_onebot" }
 mneme_browser = { path = "../mneme_browser" }
 chrono = "0.4"
 dotenv = "0.15"
+rustyline = { version = "14.0", features = ["derive"] }
+dirs = "5.0"

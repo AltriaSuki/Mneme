@@ -5,17 +5,18 @@ use mneme_limbic::LimbicSystem;
 use mneme_reasoning::ReasoningEngine;
 use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler, Humanizer};
 use std::sync::Arc;
-use std::io::{self, Write};
 use tracing::{info, error};
 use uuid::Uuid;
 
 use mneme_perception::{SourceManager, rss::RssSource};
-use tokio::io::AsyncBufReadExt;
 
 use mneme_core::ReasoningOutput;
 use mneme_onebot::OneBotClient;
 use std::env;
 use mneme_reasoning::{llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
+
+use rustyline::error::ReadlineError;
+use rustyline::{DefaultEditor, Config, EditMode};
 
 async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
     println!(""); // Spacer
@@ -132,8 +133,6 @@ async fn main() -> anyhow::Result<()> {
     let mut lifecycle_rx = coordinator.subscribe_lifecycle();
     
     println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
-    print!("> ");
-    io::stdout().flush()?;
 
     // --- ONEBOT MODE ---
     let onebot_url = env::var("ONEBOT_WS_URL").ok();
@@ -164,34 +163,70 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    // Stdin loop (always active for local debugging)
+    // Stdin loop using rustyline (line editing, history, CJK support)
     let tx_stdin = event_tx.clone();
     let coordinator_for_stdin = coordinator.clone();
-    tokio::spawn(async move {
-        let stdin = tokio::io::stdin();
-        let mut reader = tokio::io::BufReader::new(stdin).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            
-            if trimmed == "quit" || trimmed == "exit" {
-                // Graceful shutdown with consolidation
-                println!("Shutting down gracefully...");
-                coordinator_for_stdin.shutdown().await;
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                std::process::exit(0);
-            }
-            
-            let content = Content {
-                id: Uuid::new_v4(),
-                source: "cli".to_string(), 
-                author: "User".to_string(),
-                body: line, // Preserve whitespace for normal chat
-                timestamp: chrono::Utc::now().timestamp(),
-                modality: Modality::Text,
-            };
-            if let Err(_) = tx_stdin.send(Event::UserMessage(content)).await {
-                break;
+    tokio::task::spawn_blocking(move || {
+        // Set up rustyline with history
+        let config = Config::builder()
+            .edit_mode(EditMode::Emacs)
+            .auto_add_history(true)
+            .build();
+        let mut rl = DefaultEditor::with_config(config).expect("Failed to init rustyline");
+        
+        // Load history from ~/.mneme_history
+        let history_path = dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("mneme_history");
+        let _ = rl.load_history(&history_path);
+        
+        loop {
+            match rl.readline("> ") {
+                Ok(line) => {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() { continue; }
+                    
+                    if trimmed == "quit" || trimmed == "exit" {
+                        println!("Shutting down gracefully...");
+                        // Use a tokio runtime handle to run async shutdown
+                        let rt = tokio::runtime::Handle::current();
+                        rt.block_on(coordinator_for_stdin.shutdown());
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        // Save history before exit
+                        let _ = rl.save_history(&history_path);
+                        std::process::exit(0);
+                    }
+                    
+                    let content = Content {
+                        id: Uuid::new_v4(),
+                        source: "cli".to_string(),
+                        author: "User".to_string(),
+                        body: line.clone(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        modality: Modality::Text,
+                    };
+                    if tx_stdin.blocking_send(Event::UserMessage(content)).is_err() {
+                        break;
+                    }
+                }
+                Err(ReadlineError::Interrupted) => {
+                    // Ctrl-C: graceful shutdown
+                    println!("\nShutting down...");
+                    let _ = rl.save_history(&history_path);
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(coordinator_for_stdin.shutdown());
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    std::process::exit(0);
+                }
+                Err(ReadlineError::Eof) => {
+                    // Ctrl-D: exit
+                    let _ = rl.save_history(&history_path);
+                    break;
+                }
+                Err(err) => {
+                    tracing::error!("Readline error: {:?}", err);
+                    break;
+                }
             }
         }
     });
@@ -291,8 +326,6 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Err(e) => error!("Sleep consolidation failed: {}", e),
                 }
-                print!("> ");
-                io::stdout().flush()?;
                 continue;
              } else if content.source == "cli" && content.body.trim() == "status" {
                 // Show organism status
@@ -306,8 +339,6 @@ async fn main() -> anyhow::Result<()> {
                 println!("Affect: {}", state.fast.affect.describe());
                 println!("Attachment: {:?}", state.medium.attachment.style());
                 println!("=======================");
-                print!("> ");
-                io::stdout().flush()?;
                 continue;
              } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
                 let cmd = content.body.trim_start_matches("os-exec ").trim();
@@ -325,8 +356,6 @@ async fn main() -> anyhow::Result<()> {
                     },
                     Err(e) => error!("Execution failed: {:?}", e),
                 }
-                print!("> ");
-                io::stdout().flush()?;
                 continue;
              } else if content.source == "cli" && content.body.trim().starts_with("browser-test ") {
                 let url = content.body.trim_start_matches("browser-test ").trim();
@@ -352,9 +381,6 @@ async fn main() -> anyhow::Result<()> {
                     },
                     Err(e) => error!("Failed to init browser client: {}", e),
                 }
-                
-                print!("> ");
-                io::stdout().flush()?;
                 continue;
              }
         }
@@ -405,8 +431,6 @@ async fn main() -> anyhow::Result<()> {
                      } else {
                          // Reply via CLI
                          print_response(&response, &humanizer, None).await;
-                         print!("> ");
-                         io::stdout().flush()?;
                      }
                     }
                  }

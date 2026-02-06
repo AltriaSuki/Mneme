@@ -987,8 +987,8 @@ rustyline = "14.0"
 ```
 
 **需要实现**:
-- [ ] 集成 rustyline 替换 BufReader
-- [ ] 命令历史持久化
+- [x] 集成 rustyline 替换 BufReader
+- [x] 命令历史持久化（~/.local/share/mneme_history）
 - [ ] 自定义 prompt（显示状态信息）
 - [ ] 基础命令补全（quit, exit, status 等）
 
@@ -1006,7 +1006,7 @@ rustyline = "14.0"
 - ~~API 重试机制 (#1)~~ ✅
 - ~~数值边界检查 (#4)~~ ✅
 - ~~输出自然化：禁 roleplay、日常禁 markdown (#34)~~ ✅
-- CLI rustyline 集成 (#25)
+- ~~CLI rustyline 集成 (#25)~~ ✅
 
 ### v0.3.0 - 稳定性与可测试版本
 > **目标**: 建立工程质量基线。
