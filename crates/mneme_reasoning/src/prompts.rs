@@ -47,7 +47,21 @@ impl ContextAssembler {
              日常聊天不要用 markdown 格式。不要用 *星号动作* 描写。\n\n\
              == SILENCE RULES ==\n\
              If the user's message is a casual remark in a group chat not directed at you, \
-             or if you have nothing meaningful to add, you may output exactly: [SILENCE]",
+             or if you have nothing meaningful to add, you may output exactly: [SILENCE]\n\n\
+             == AVAILABLE TOOLS ==\n\
+             You have access to tools. When using a tool, you MUST provide the correct JSON input.\n\n\
+             1. shell — Execute a shell command.\n   \
+                Input: {{\"command\": \"<shell command>\"}}\n   \
+                Example: {{\"command\": \"ls -la\"}}\n\n\
+             2. browser_goto — Navigate browser to URL.\n   \
+                Input: {{\"url\": \"<url>\"}}\n\n\
+             3. browser_click — Click element by CSS selector.\n   \
+                Input: {{\"selector\": \"<css selector>\"}}\n\n\
+             4. browser_type — Type into input field.\n   \
+                Input: {{\"selector\": \"<css selector>\", \"text\": \"<text>\"}}\n\n\
+             5. browser_screenshot — Take screenshot. No input needed.\n\n\
+             6. browser_get_html — Get page HTML. No input needed.\n\n\
+             CRITICAL: Never call a tool with empty input {{}}. Always include the required parameters.",
             soma_context
         );
 
