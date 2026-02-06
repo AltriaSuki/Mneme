@@ -10,6 +10,16 @@
 use serde::{Deserialize, Serialize};
 use crate::affect::Affect;
 
+/// Guard against NaN and Infinity in state values.
+/// If the value is NaN or Inf, replace with the provided fallback (homeostatic default).
+#[inline]
+fn sanitize_f32(v: f32, fallback: f32) -> f32 {
+    if v.is_finite() { v } else {
+        tracing::warn!("NaN/Inf detected in state, resetting to fallback {}", fallback);
+        fallback
+    }
+}
+
 /// Complete organism state: s = (s_fast, s_medium, s_slow)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganismState {
@@ -154,10 +164,12 @@ impl Default for FastState {
 impl FastState {
     /// Clamp all values to valid ranges
     pub fn normalize(&mut self) {
-        self.energy = self.energy.clamp(0.0, 1.0);
-        self.stress = self.stress.clamp(0.0, 1.0);
-        self.curiosity = self.curiosity.clamp(0.0, 1.0);
-        self.social_need = self.social_need.clamp(0.0, 1.0);
+        self.energy = sanitize_f32(self.energy, 0.7).clamp(0.0, 1.0);
+        self.stress = sanitize_f32(self.stress, 0.2).clamp(0.0, 1.0);
+        self.curiosity = sanitize_f32(self.curiosity, 0.3).clamp(0.0, 1.0);
+        self.social_need = sanitize_f32(self.social_need, 0.5).clamp(0.0, 1.0);
+        self.affect.valence = sanitize_f32(self.affect.valence, 0.0).clamp(-1.0, 1.0);
+        self.affect.arousal = sanitize_f32(self.affect.arousal, 0.3).clamp(0.0, 1.0);
     }
 }
 
@@ -194,6 +206,17 @@ impl Default for MediumState {
             openness: 0.6,  // Moderately open by default
             hunger: 0.2,
         }
+    }
+}
+
+impl MediumState {
+    /// Sanitize and clamp all fields to valid ranges.
+    pub fn normalize(&mut self) {
+        self.mood_bias = sanitize_f32(self.mood_bias, 0.0).clamp(-1.0, 1.0);
+        self.openness = sanitize_f32(self.openness, 0.6).clamp(0.0, 1.0);
+        self.hunger = sanitize_f32(self.hunger, 0.2).clamp(0.0, 1.0);
+        self.attachment.anxiety = sanitize_f32(self.attachment.anxiety, 0.3).clamp(0.0, 1.0);
+        self.attachment.avoidance = sanitize_f32(self.attachment.avoidance, 0.3).clamp(0.0, 1.0);
     }
 }
 

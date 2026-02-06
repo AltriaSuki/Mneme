@@ -80,8 +80,15 @@ pub enum Trigger {
 
 #[async_trait]
 pub trait Memory: Send + Sync {
+    /// Recall relevant episodes via vector search.
     async fn recall(&self, query: &str) -> anyhow::Result<String>;
+    /// Store a new content item.
     async fn memorize(&self, content: &Content) -> anyhow::Result<()>;
+    /// Recall known facts formatted for prompt injection.
+    /// Default: returns empty string (no facts store available).
+    async fn recall_facts_formatted(&self, _query: &str) -> anyhow::Result<String> {
+        Ok(String::new())
+    }
 }
 
 #[async_trait]

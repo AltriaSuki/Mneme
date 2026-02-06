@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mneme_core::{Content, Memory, SocialGraph, Person};
+use serde::{Serialize, Deserialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::path::Path;
 use uuid::Uuid;
@@ -68,13 +69,31 @@ impl SqliteMemory {
                 subject TEXT NOT NULL,
                 predicate TEXT NOT NULL,
                 object TEXT NOT NULL,
-                confidence REAL NOT NULL
+                confidence REAL NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
             );
             "#
         )
         .execute(&self.pool)
         .await
         .context("Failed to create facts table")?;
+
+        // Index for fast subject lookup
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject)"
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create facts subject index")?;
+
+        // Index for fast predicate lookup (useful for querying "all likes", "all knows", etc.)
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_facts_predicate ON facts(predicate)"
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create facts predicate index")?;
 
         sqlx::query(
             r#"
@@ -234,6 +253,11 @@ impl Memory for SqliteMemory {
         }
 
         Ok(context)
+    }
+
+    async fn recall_facts_formatted(&self, query: &str) -> Result<String> {
+        let facts = self.recall_facts(query).await?;
+        Ok(Self::format_facts_for_prompt(&facts))
     }
 
     async fn memorize(&self, content: &Content) -> Result<()> {
@@ -549,5 +573,227 @@ impl SqliteMemory {
         q.execute(&self.pool).await?;
 
         Ok(())
+    }
+}
+
+// =============================================================================
+// Semantic Facts (Knowledge Base)
+// =============================================================================
+
+/// A semantic fact triple: (subject, predicate, object) with confidence.
+/// Examples:
+///   ("用户", "喜欢", "红色苹果", 0.9)
+///   ("用户", "住在", "上海", 0.8)
+///   ("用户", "讨厌", "蟑螂", 1.0)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticFact {
+    pub id: i64,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub confidence: f32,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl SqliteMemory {
+    /// Store a new fact triple, or update confidence if (subject, predicate, object) already exists.
+    pub async fn store_fact(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f32,
+    ) -> Result<i64> {
+        let now = Utc::now().timestamp();
+
+        // Check if this exact triple already exists
+        let existing = sqlx::query(
+            "SELECT id, confidence FROM facts WHERE subject = ? AND predicate = ? AND object = ?"
+        )
+        .bind(subject)
+        .bind(predicate)
+        .bind(object)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to check existing fact")?;
+
+        if let Some(row) = existing {
+            let id: i64 = row.get("id");
+            let old_confidence: f64 = row.get("confidence");
+            // Bayesian-ish update: reinforce confidence when seen again
+            let new_confidence = (old_confidence as f32 * 0.3 + confidence * 0.7).clamp(0.0, 1.0);
+
+            sqlx::query(
+                "UPDATE facts SET confidence = ?, updated_at = ? WHERE id = ?"
+            )
+            .bind(new_confidence)
+            .bind(now)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to update fact confidence")?;
+
+            tracing::debug!("Updated fact #{}: ({}, {}, {}) confidence {} → {}", id, subject, predicate, object, old_confidence, new_confidence);
+            Ok(id)
+        } else {
+            let result = sqlx::query(
+                "INSERT INTO facts (subject, predicate, object, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+            )
+            .bind(subject)
+            .bind(predicate)
+            .bind(object)
+            .bind(confidence)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert fact")?;
+
+            let id = result.last_insert_rowid();
+            tracing::debug!("Stored fact #{}: ({}, {}, {}) confidence={}", id, subject, predicate, object, confidence);
+            Ok(id)
+        }
+    }
+
+    /// Recall facts relevant to a query by keyword matching on subject/predicate/object.
+    /// Returns facts sorted by confidence descending.
+    pub async fn recall_facts(&self, query: &str) -> Result<Vec<SemanticFact>> {
+        // Split query into keywords for flexible matching
+        let keywords: Vec<&str> = query.split_whitespace()
+            .filter(|w| w.len() >= 2) // skip very short words
+            .collect();
+
+        if keywords.is_empty() {
+            // Fall back to returning recent high-confidence facts
+            return self.get_top_facts(20).await;
+        }
+
+        // Build a query that matches any keyword in subject, predicate, or object
+        let mut conditions = Vec::new();
+        let mut binds = Vec::new();
+        for kw in &keywords {
+            conditions.push("(subject LIKE ? OR predicate LIKE ? OR object LIKE ?)");
+            let pattern = format!("%{}%", kw);
+            binds.push(pattern.clone());
+            binds.push(pattern.clone());
+            binds.push(pattern);
+        }
+
+        let where_clause = conditions.join(" OR ");
+        let sql = format!(
+            "SELECT id, subject, predicate, object, confidence, \
+                    COALESCE(created_at, 0) as created_at, COALESCE(updated_at, 0) as updated_at \
+             FROM facts WHERE ({}) AND confidence > 0.1 ORDER BY confidence DESC LIMIT 30",
+            where_clause
+        );
+
+        let mut q = sqlx::query(&sql);
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+
+        let rows = q.fetch_all(&self.pool).await
+            .context("Failed to recall facts")?;
+
+        let facts = rows.iter().map(|row| {
+            SemanticFact {
+                id: row.get("id"),
+                subject: row.get("subject"),
+                predicate: row.get("predicate"),
+                object: row.get("object"),
+                confidence: row.get::<f64, _>("confidence") as f32,
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }
+        }).collect();
+
+        Ok(facts)
+    }
+
+    /// Get all facts about a specific subject.
+    pub async fn get_facts_about(&self, subject: &str) -> Result<Vec<SemanticFact>> {
+        let rows = sqlx::query(
+            "SELECT id, subject, predicate, object, confidence, \
+                    COALESCE(created_at, 0) as created_at, COALESCE(updated_at, 0) as updated_at \
+             FROM facts WHERE subject = ? AND confidence > 0.1 ORDER BY confidence DESC"
+        )
+        .bind(subject)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get facts about subject")?;
+
+        let facts = rows.iter().map(|row| {
+            SemanticFact {
+                id: row.get("id"),
+                subject: row.get("subject"),
+                predicate: row.get("predicate"),
+                object: row.get("object"),
+                confidence: row.get::<f64, _>("confidence") as f32,
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }
+        }).collect();
+
+        Ok(facts)
+    }
+
+    /// Get top N facts by confidence (a general "what do I know" query).
+    pub async fn get_top_facts(&self, limit: u32) -> Result<Vec<SemanticFact>> {
+        let rows = sqlx::query(
+            "SELECT id, subject, predicate, object, confidence, \
+                    COALESCE(created_at, 0) as created_at, COALESCE(updated_at, 0) as updated_at \
+             FROM facts WHERE confidence > 0.1 ORDER BY confidence DESC, updated_at DESC LIMIT ?"
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get top facts")?;
+
+        let facts = rows.iter().map(|row| {
+            SemanticFact {
+                id: row.get("id"),
+                subject: row.get("subject"),
+                predicate: row.get("predicate"),
+                object: row.get("object"),
+                confidence: row.get::<f64, _>("confidence") as f32,
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }
+        }).collect();
+
+        Ok(facts)
+    }
+
+    /// Decay a fact's confidence (called when contradicting information appears).
+    pub async fn decay_fact(&self, fact_id: i64, decay_factor: f32) -> Result<()> {
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "UPDATE facts SET confidence = confidence * ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(decay_factor)
+        .bind(now)
+        .bind(fact_id)
+        .execute(&self.pool)
+        .await
+        .context("Failed to decay fact")?;
+        Ok(())
+    }
+
+    /// Format facts for prompt injection (compact representation).
+    pub fn format_facts_for_prompt(facts: &[SemanticFact]) -> String {
+        if facts.is_empty() {
+            return String::new();
+        }
+
+        let mut output = String::from("== KNOWN FACTS ==\n");
+        for fact in facts {
+            output.push_str(&format!(
+                "- {} {} {} (确信度: {:.0}%)\n",
+                fact.subject, fact.predicate, fact.object,
+                fact.confidence * 100.0
+            ));
+        }
+        output
     }
 }

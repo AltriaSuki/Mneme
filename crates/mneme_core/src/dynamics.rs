@@ -164,6 +164,9 @@ impl DefaultDynamics {
             let was_positive = input.content_valence > 0.0;
             medium.attachment.update_from_interaction(was_positive, input.response_delay_factor);
         }
+        
+        // Sanitize all medium state values (NaN/Inf guard)
+        medium.normalize();
     }
 
     /// Slow dynamics: only called on crisis events
@@ -189,6 +192,7 @@ impl DefaultDynamics {
         // Normal slow update: rigidity increases over time (belief solidification)
         slow.rigidity += 0.001 * (1.0 - slow.rigidity);
         slow.rigidity = slow.rigidity.clamp(0.0, 1.0);
+        slow.narrative_bias = slow.narrative_bias.clamp(-1.0, 1.0);
         
         false
     }
@@ -268,5 +272,58 @@ mod tests {
         dynamics.step(&mut state, &input, Duration::from_secs(1));
         
         assert!(state.fast.stress > initial_stress);
+    }
+
+    #[test]
+    fn test_nan_resistance() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+        
+        // Inject NaN into various state fields
+        state.fast.energy = f32::NAN;
+        state.fast.stress = f32::INFINITY;
+        state.fast.curiosity = f32::NEG_INFINITY;
+        state.fast.affect.valence = f32::NAN;
+        state.medium.mood_bias = f32::NAN;
+        state.medium.openness = f32::INFINITY;
+        
+        let input = SensoryInput::default();
+        
+        // Step should not panic, and should recover all values to finite
+        dynamics.step(&mut state, &input, Duration::from_secs(1));
+        
+        assert!(state.fast.energy.is_finite(), "energy should be finite, got {}", state.fast.energy);
+        assert!(state.fast.stress.is_finite(), "stress should be finite, got {}", state.fast.stress);
+        assert!(state.fast.curiosity.is_finite(), "curiosity should be finite, got {}", state.fast.curiosity);
+        assert!(state.fast.affect.valence.is_finite(), "valence should be finite, got {}", state.fast.affect.valence);
+        assert!(state.fast.affect.arousal.is_finite(), "arousal should be finite, got {}", state.fast.affect.arousal);
+        assert!(state.medium.mood_bias.is_finite(), "mood_bias should be finite, got {}", state.medium.mood_bias);
+        assert!(state.medium.openness.is_finite(), "openness should be finite, got {}", state.medium.openness);
+        
+        // All should be in valid ranges
+        assert!(state.fast.energy >= 0.0 && state.fast.energy <= 1.0);
+        assert!(state.fast.stress >= 0.0 && state.fast.stress <= 1.0);
+        assert!(state.medium.mood_bias >= -1.0 && state.medium.mood_bias <= 1.0);
+    }
+
+    #[test]
+    fn test_extreme_dt_stability() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+        
+        // Very large dt (simulating long pause)
+        let input = SensoryInput {
+            content_valence: -1.0,
+            content_intensity: 1.0,
+            surprise: 1.0,
+            ..Default::default()
+        };
+        
+        // 24 hours in one step — shouldn't produce NaN or out-of-range
+        dynamics.step(&mut state, &input, Duration::from_secs(86400));
+        
+        assert!(state.fast.energy.is_finite() && state.fast.energy >= 0.0 && state.fast.energy <= 1.0);
+        assert!(state.fast.stress.is_finite() && state.fast.stress >= 0.0 && state.fast.stress <= 1.0);
+        assert!(state.medium.mood_bias.is_finite() && state.medium.mood_bias >= -1.0 && state.medium.mood_bias <= 1.0);
     }
 }

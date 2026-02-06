@@ -7,6 +7,46 @@
 use serde::{Deserialize, Serialize};
 use mneme_core::{OrganismState, Affect, AttachmentStyle};
 
+/// Structural modulation vector — the "neuromodulatory signal" that physically
+/// changes how the LLM processes information, rather than telling it how to feel.
+///
+/// This is the core of the "embodied" paradigm: instead of injecting text hints
+/// like "语气可能略急", we adjust LLM parameters and context budget so that
+/// the behavior emerges naturally from structural constraints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModulationVector {
+    /// Factor applied to max_tokens (0.3 - 1.5). Low energy → shorter responses.
+    pub max_tokens_factor: f32,
+    
+    /// Delta applied to temperature (-0.3 to +0.4). High stress/arousal → more unpredictable.
+    pub temperature_delta: f32,
+    
+    /// Factor applied to context budget (0.4 - 1.2). Low energy → less context fed to LLM.
+    pub context_budget_factor: f32,
+    
+    /// Mood bias for memory recall (-1.0 to 1.0). Negative mood → recall skews negative.
+    pub recall_mood_bias: f32,
+    
+    /// Silence inclination (0.0 - 1.0). High value → more likely to output [SILENCE].
+    pub silence_inclination: f32,
+    
+    /// Typing speed factor for humanizer (0.5 - 2.0). High arousal → faster typing.
+    pub typing_speed_factor: f32,
+}
+
+impl Default for ModulationVector {
+    fn default() -> Self {
+        Self {
+            max_tokens_factor: 1.0,
+            temperature_delta: 0.0,
+            context_budget_factor: 1.0,
+            recall_mood_bias: 0.0,
+            silence_inclination: 0.0,
+            typing_speed_factor: 1.0,
+        }
+    }
+}
+
 /// A somatic marker - compressed state for System 2 injection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SomaticMarker {
@@ -114,41 +154,65 @@ impl SomaticMarker {
     }
 
     /// Format for LLM system prompt injection
-    /// Focus on behavioral guidance, not state description
+    /// Now uses minimal numeric state as an auxiliary signal — the primary
+    /// mechanism is the ModulationVector which structurally constrains the LLM.
     pub fn format_for_prompt(&self) -> String {
-        let mut guidance = Vec::new();
+        format!(
+            "[内部状态: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]",
+            self.energy, self.stress, self.mood_bias,
+            self.affect.valence, self.affect.arousal,
+        )
+    }
+    
+    /// Convert somatic marker to a structural modulation vector.
+    /// 
+    /// This is the "neuromodulatory" pathway: instead of telling the LLM
+    /// "you're tired", we actually give it less context and limit its output length.
+    /// The behavior emerges from the constraint, not from instruction.
+    pub fn to_modulation_vector(&self) -> ModulationVector {
+        // === max_tokens_factor: energy → response length capacity ===
+        // Low energy = physically cannot produce long responses
+        // Range: 0.3 (exhausted) to 1.2 (energetic, expansive)
+        let max_tokens_factor = lerp(0.3, 1.2, self.energy);
         
-        // Energy -> response length/depth
-        if self.energy < 0.3 {
-            guidance.push("简洁回复");
-        }
+        // === temperature_delta: stress + arousal → unpredictability ===
+        // High stress or arousal = more erratic, impulsive responses
+        // Range: -0.1 (calm, focused) to +0.4 (agitated)
+        let stress_temp = self.stress * 0.3;
+        let arousal_temp = self.affect.arousal * 0.15;
+        let calm_bonus = if self.stress < 0.2 && self.affect.arousal < 0.3 { -0.1 } else { 0.0 };
+        let temperature_delta = (stress_temp + arousal_temp + calm_bonus).clamp(-0.1, 0.4);
         
-        // Stress -> tone sensitivity
-        if self.stress > 0.7 {
-            guidance.push("语气可能略急");
-        }
+        // === context_budget_factor: energy + stress → working memory capacity ===
+        // Tired or stressed = can't process as much information
+        // Range: 0.4 (overwhelmed) to 1.2 (sharp, absorbing everything)
+        let energy_context = lerp(0.5, 1.1, self.energy);
+        let stress_penalty = self.stress * 0.3;
+        let context_budget_factor = (energy_context - stress_penalty).clamp(0.4, 1.2);
         
-        // Social need -> engagement level
-        if self.social_need > 0.7 {
-            guidance.push("愿意多聊");
-        }
+        // === recall_mood_bias: mood → what memories surface ===
+        // Negative mood = negative memories float up (mood-congruent recall)
+        // Range: -1.0 to 1.0
+        let recall_mood_bias = self.mood_bias.clamp(-1.0, 1.0);
         
-        // Curiosity -> exploration
-        if self.curiosity > 0.7 {
-            guidance.push("对新话题感兴趣");
-        }
+        // === silence_inclination: low social need + low energy → don't want to talk ===
+        // Range: 0.0 to 1.0
+        let energy_silence = (1.0 - self.energy) * 0.3;
+        let social_silence = (1.0 - self.social_need) * 0.4;
+        let stress_silence = if self.stress > 0.8 { 0.2 } else { 0.0 }; // extreme stress → withdraw
+        let silence_inclination = (energy_silence + social_silence + stress_silence).clamp(0.0, 1.0);
         
-        // Mood -> positivity
-        if self.mood_bias < -0.3 {
-            guidance.push("语气偏淡");
-        } else if self.mood_bias > 0.3 {
-            guidance.push("语气偏积极");
-        }
+        // === typing_speed_factor: arousal → urgency of expression ===
+        // Range: 0.5 (slow, deliberate) to 2.0 (rapid-fire)
+        let typing_speed_factor = lerp(0.6, 1.8, self.affect.arousal);
         
-        if guidance.is_empty() {
-            "以自然方式回应".to_string()
-        } else {
-            guidance.join("，")
+        ModulationVector {
+            max_tokens_factor,
+            temperature_delta,
+            context_budget_factor,
+            recall_mood_bias,
+            silence_inclination,
+            typing_speed_factor,
         }
     }
 
@@ -173,6 +237,11 @@ impl SomaticMarker {
         
         ((social_factor + curiosity_factor) * energy_gate - stress_penalty).clamp(0.0, 1.0)
     }
+}
+
+/// Linear interpolation helper
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t.clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -217,5 +286,126 @@ mod tests {
         state.fast.curiosity = 0.6;
         let marker = SomaticMarker::from_state(&state);
         assert!(marker.proactivity_urgency() > 0.3);
+    }
+
+    #[test]
+    fn test_modulation_vector_default_state() {
+        // Default state should produce near-neutral modulation
+        let state = OrganismState::default();
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        
+        // Default energy ~0.7 → max_tokens_factor should be above 0.8
+        assert!(mv.max_tokens_factor > 0.8, "max_tokens_factor={}", mv.max_tokens_factor);
+        // Default low stress → temperature_delta should be small
+        assert!(mv.temperature_delta < 0.2, "temperature_delta={}", mv.temperature_delta);
+        // Context budget should be close to 1.0
+        assert!(mv.context_budget_factor > 0.7, "context_budget_factor={}", mv.context_budget_factor);
+        // Silence should be low
+        assert!(mv.silence_inclination < 0.5, "silence_inclination={}", mv.silence_inclination);
+    }
+    
+    #[test]
+    fn test_modulation_vector_exhausted_state() {
+        // Exhausted + stressed → short responses, high temp, low context
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.05;
+        state.fast.stress = 0.95;
+        state.medium.mood_bias = -0.8;
+        state.fast.social_need = 0.1;
+        
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        
+        // Very low energy → very short max_tokens
+        assert!(mv.max_tokens_factor < 0.5, "max_tokens_factor={}", mv.max_tokens_factor);
+        // High stress → elevated temperature
+        assert!(mv.temperature_delta > 0.2, "temperature_delta={}", mv.temperature_delta);
+        // Low energy + high stress → small context budget
+        assert!(mv.context_budget_factor < 0.7, "context_budget_factor={}", mv.context_budget_factor);
+        // Negative mood → negative recall bias
+        assert!(mv.recall_mood_bias < -0.5, "recall_mood_bias={}", mv.recall_mood_bias);
+        // Low energy + low social need → high silence inclination
+        assert!(mv.silence_inclination > 0.5, "silence_inclination={}", mv.silence_inclination);
+    }
+    
+    #[test]
+    fn test_modulation_vector_energetic_state() {
+        // Energetic + curious + happy → long responses, stable temp, full context
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.95;
+        state.fast.stress = 0.1;
+        state.fast.curiosity = 0.9;
+        state.fast.social_need = 0.8;
+        state.medium.mood_bias = 0.7;
+        state.fast.affect.arousal = 0.6;
+        
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        
+        // High energy → long responses
+        assert!(mv.max_tokens_factor > 1.0, "max_tokens_factor={}", mv.max_tokens_factor);
+        // Low stress → modest temperature
+        assert!(mv.temperature_delta < 0.2, "temperature_delta={}", mv.temperature_delta);
+        // High energy, low stress → big context budget
+        assert!(mv.context_budget_factor > 0.9, "context_budget_factor={}", mv.context_budget_factor);
+        // Positive mood → positive recall
+        assert!(mv.recall_mood_bias > 0.5, "recall_mood_bias={}", mv.recall_mood_bias);
+        // High social need → low silence
+        assert!(mv.silence_inclination < 0.3, "silence_inclination={}", mv.silence_inclination);
+        // Moderate arousal → typing speed above baseline
+        assert!(mv.typing_speed_factor > 1.0, "typing_speed_factor={}", mv.typing_speed_factor);
+    }
+    
+    #[test]
+    fn test_modulation_vector_bounds() {
+        // Extreme edge: all zeros
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.0;
+        state.fast.stress = 0.0;
+        state.fast.curiosity = 0.0;
+        state.fast.social_need = 0.0;
+        state.fast.affect.arousal = 0.0;
+        state.fast.affect.valence = 0.0;
+        state.medium.mood_bias = 0.0;
+        
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        
+        assert!(mv.max_tokens_factor >= 0.3);
+        assert!(mv.temperature_delta >= -0.1);
+        assert!(mv.context_budget_factor >= 0.4);
+        assert!(mv.silence_inclination >= 0.0 && mv.silence_inclination <= 1.0);
+        assert!(mv.typing_speed_factor >= 0.5);
+        
+        // Extreme edge: all maxed out
+        state.fast.energy = 1.0;
+        state.fast.stress = 1.0;
+        state.fast.social_need = 1.0;
+        state.fast.affect.arousal = 1.0;
+        state.medium.mood_bias = 1.0;
+        
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        
+        assert!(mv.max_tokens_factor <= 1.5);
+        assert!(mv.temperature_delta <= 0.4);
+        assert!(mv.context_budget_factor <= 1.2);
+        assert!(mv.silence_inclination >= 0.0 && mv.silence_inclination <= 1.0);
+        assert!(mv.typing_speed_factor <= 2.0);
+    }
+    
+    #[test]
+    fn test_format_for_prompt_minimal() {
+        let state = OrganismState::default();
+        let marker = SomaticMarker::from_state(&state);
+        let prompt = marker.format_for_prompt();
+        
+        // Should be compact numeric format, not verbose Chinese text
+        assert!(prompt.starts_with("[内部状态:"));
+        assert!(prompt.contains("E="));
+        assert!(prompt.contains("S="));
+        assert!(prompt.contains("M="));
+        assert!(prompt.contains("A="));
     }
 }

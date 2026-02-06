@@ -97,3 +97,108 @@ async fn test_semantic_recall() {
     println!("Recall result for 'processor': {}", recall_tech);
     assert!(recall_tech.contains("computer"));
 }
+
+#[tokio::test]
+async fn test_store_and_recall_facts() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    
+    // Store some facts
+    let id1 = memory.store_fact("用户", "喜欢", "红色苹果", 0.9)
+        .await.expect("Failed to store fact 1");
+    let id2 = memory.store_fact("用户", "住在", "上海", 0.8)
+        .await.expect("Failed to store fact 2");
+    let id3 = memory.store_fact("用户", "讨厌", "蟑螂", 1.0)
+        .await.expect("Failed to store fact 3");
+    let id4 = memory.store_fact("猫咪", "名字是", "小花", 0.95)
+        .await.expect("Failed to store fact 4");
+    
+    assert!(id1 > 0);
+    assert!(id2 > 0);
+    assert!(id3 > 0);
+    assert!(id4 > 0);
+    
+    // Recall facts about "用户"
+    let user_facts = memory.get_facts_about("用户").await.expect("Failed to get facts about user");
+    assert_eq!(user_facts.len(), 3);
+    // Sorted by confidence desc
+    assert_eq!(user_facts[0].predicate, "讨厌"); // confidence 1.0
+    
+    // Recall facts by keyword "苹果"
+    let apple_facts = memory.recall_facts("苹果").await.expect("Failed to recall apple facts");
+    assert_eq!(apple_facts.len(), 1);
+    assert_eq!(apple_facts[0].object, "红色苹果");
+    
+    // Recall facts by keyword "猫咪"
+    let cat_facts = memory.recall_facts("猫咪 小花").await.expect("Failed to recall cat facts");
+    assert!(!cat_facts.is_empty());
+    assert!(cat_facts.iter().any(|f| f.subject == "猫咪"));
+    
+    // Get top facts
+    let top = memory.get_top_facts(10).await.expect("Failed to get top facts");
+    assert_eq!(top.len(), 4);
+}
+
+#[tokio::test]
+async fn test_fact_confidence_update() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    
+    // Store a fact
+    memory.store_fact("用户", "喜欢", "编程", 0.5)
+        .await.expect("Failed to store");
+    
+    // Store the same fact again with higher confidence — should merge, not duplicate
+    memory.store_fact("用户", "喜欢", "编程", 0.9)
+        .await.expect("Failed to update");
+    
+    let facts = memory.get_facts_about("用户").await.expect("Failed to get");
+    assert_eq!(facts.len(), 1, "Should have merged duplicate, not created two rows");
+    
+    // Confidence should have been updated (0.5 * 0.3 + 0.9 * 0.7 = 0.78)
+    let fact = &facts[0];
+    assert!(fact.confidence > 0.7, "confidence={} should be > 0.7 after update", fact.confidence);
+    assert!(fact.confidence < 0.85, "confidence={} should be < 0.85", fact.confidence);
+}
+
+#[tokio::test]
+async fn test_fact_decay() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    
+    memory.store_fact("用户", "住在", "北京", 0.9)
+        .await.expect("Failed to store");
+    
+    let facts = memory.get_facts_about("用户").await.expect("get failed");
+    let fact_id = facts[0].id;
+    let original_confidence = facts[0].confidence;
+    
+    // Decay the fact (e.g., contradicting info came in)
+    memory.decay_fact(fact_id, 0.5).await.expect("decay failed");
+    
+    let facts_after = memory.get_facts_about("用户").await.expect("get failed");
+    assert!(facts_after[0].confidence < original_confidence, 
+        "confidence should decrease after decay: {} < {}", facts_after[0].confidence, original_confidence);
+    assert!((facts_after[0].confidence - original_confidence * 0.5).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn test_format_facts_for_prompt() {
+    let facts = vec![
+        crate::sqlite::SemanticFact {
+            id: 1,
+            subject: "用户".to_string(),
+            predicate: "喜欢".to_string(),
+            object: "音乐".to_string(),
+            confidence: 0.9,
+            created_at: 0,
+            updated_at: 0,
+        },
+    ];
+    
+    let formatted = SqliteMemory::format_facts_for_prompt(&facts);
+    assert!(formatted.contains("KNOWN FACTS"));
+    assert!(formatted.contains("用户 喜欢 音乐"));
+    assert!(formatted.contains("90%"));
+    
+    // Empty facts should produce empty string
+    let empty = SqliteMemory::format_facts_for_prompt(&[]);
+    assert!(empty.is_empty());
+}

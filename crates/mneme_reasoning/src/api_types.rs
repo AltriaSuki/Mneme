@@ -54,6 +54,8 @@ pub struct MessagesRequest {
     pub system: Option<String>,
     pub messages: Vec<Message>,
     pub max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
 }

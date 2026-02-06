@@ -1,4 +1,4 @@
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, CompletionParams};
 use crate::api_types::{Message, Tool, MessagesResponse, ContentBlock, Role};
 use anyhow::{Context, Result};
 use reqwest::Client;
@@ -40,6 +40,7 @@ impl LlmClient for OpenAiClient {
         system: &str,
         messages: Vec<Message>,
         tools: Vec<Tool>,
+        params: CompletionParams,
     ) -> Result<MessagesResponse> {
         if self.api_key == "mock" {
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -148,7 +149,8 @@ impl LlmClient for OpenAiClient {
         let mut payload = json!({
             "model": self.model,
             "messages": openai_messages,
-            "temperature": 0.7,
+            "temperature": params.temperature,
+            "max_tokens": params.max_tokens,
         });
         
         if !openai_tools.is_empty() {
@@ -157,17 +159,24 @@ impl LlmClient for OpenAiClient {
 
         let url = format!("{}/chat/completions", self.base_url);
         
-        let response = self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed to send request to OpenAI")?;
+        tracing::debug!(
+            "LLM params: max_tokens={}, temperature={:.2}",
+            params.max_tokens, params.temperature
+        );
+        
+        let retry_config = crate::retry::RetryConfig::default();
+        let client = &self.client;
+        let api_key = &self.api_key;
 
-        if !response.status().is_success() {
-             let error_text = response.text().await.unwrap_or_default();
-             anyhow::bail!("OpenAI API Error: {}", error_text);
-        }
+        let response = crate::retry::with_retry(&retry_config, "OpenAI", || async {
+            let resp = client.post(&url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .json(&payload)
+                .send()
+                .await
+                .context("Failed to send request to OpenAI")?;
+            Ok(resp)
+        }).await?;
         
         // Parse Response
         let resp_json: Value = response.json().await?;

@@ -1,7 +1,7 @@
 use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion};
 use mneme_limbic::LimbicSystem;
 use mneme_memory::{OrganismCoordinator, LifecycleState, SignalType};
-use crate::{prompts::ContextAssembler, llm::LlmClient};
+use crate::{prompts::{ContextAssembler, ContextLayers}, llm::{LlmClient, CompletionParams}};
 use anyhow::Result;
 use std::sync::Arc;
 use regex::Regex;
@@ -157,8 +157,32 @@ impl ReasoningEngine {
         
         let somatic_marker = interaction_result.somatic_marker;
         
-        // 1. Recall
-        let context = self.memory.recall(input_text).await?;
+        // === Compute Modulation Vector (the "neuromodulatory" signal) ===
+        let modulation = somatic_marker.to_modulation_vector();
+        
+        tracing::info!(
+            "Modulation: max_tokens×{:.2}, temp_delta={:+.2}, context×{:.2}, silence={:.2}",
+            modulation.max_tokens_factor,
+            modulation.temperature_delta,
+            modulation.context_budget_factor,
+            modulation.silence_inclination,
+        );
+        
+        // Apply modulation to LLM parameters
+        let base_max_tokens: u32 = 4096;
+        let base_temperature: f32 = 0.7;
+        let completion_params = CompletionParams {
+            max_tokens: ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32).max(256),
+            temperature: (base_temperature + modulation.temperature_delta).clamp(0.0, 2.0),
+        };
+        
+        // 1. Recall episodes + facts in parallel
+        let (episodes, user_facts) = tokio::join!(
+            self.memory.recall(input_text),
+            self.memory.recall_facts_formatted(input_text),
+        );
+        let episodes = episodes?;
+        let user_facts = user_facts.unwrap_or_default();
         
         // 2. Prepare Tools
         let tools = vec![
@@ -170,11 +194,21 @@ impl ReasoningEngine {
             crate::tools::browser_get_html_tool(),
         ];
         
-        // 3. Prepare System Prompt with Somatic Marker (System 1 → System 2)
-        let system_prompt = ContextAssembler::build_system_prompt_with_soma(
-            &self.psyche, 
-            &context, 
-            &somatic_marker
+        // 3. Assemble 6-layer context with modulated budget
+        let base_budget: usize = 32_000; // ~8k tokens worth of chars
+        let context_budget = (base_budget as f32 * modulation.context_budget_factor) as usize;
+        
+        let context_layers = ContextLayers {
+            user_facts,
+            recalled_episodes: episodes,
+            feed_digest: String::new(), // TODO: Layer 3 — social feed digest
+        };
+        
+        let system_prompt = ContextAssembler::build_full_system_prompt(
+            &self.psyche,
+            &somatic_marker,
+            &context_layers,
+            context_budget,
         );
 
         // Current messages serves as the "Scratchpad" for the ReAct loop
@@ -193,7 +227,8 @@ impl ReasoningEngine {
             let response = self.client.complete(
                 &system_prompt,
                 scratchpad_messages.clone(),
-                tools.clone()
+                tools.clone(),
+                completion_params.clone(),
             ).await?;
 
             let assistant_msg = Message {

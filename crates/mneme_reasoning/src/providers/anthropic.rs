@@ -9,7 +9,7 @@ pub struct AnthropicClient {
     model: String,
 }
 
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, CompletionParams};
 
 #[async_trait::async_trait]
 impl LlmClient for AnthropicClient {
@@ -18,6 +18,7 @@ impl LlmClient for AnthropicClient {
         system: &str,
         messages: Vec<crate::api_types::Message>,
         tools: Vec<crate::api_types::Tool>,
+        params: CompletionParams,
     ) -> Result<crate::api_types::MessagesResponse> {
         use crate::api_types::{MessagesRequest, ContentBlock, MessagesResponse};
 
@@ -66,7 +67,8 @@ impl LlmClient for AnthropicClient {
             model: self.model.clone(),
             system: system_field,
             messages: final_messages,
-            max_tokens: 4096, // Increased as requested
+            max_tokens: params.max_tokens,
+            temperature: Some(params.temperature),
             tools,
         };
 
@@ -74,20 +76,27 @@ impl LlmClient for AnthropicClient {
         if env::var("DEBUG_PAYLOAD").map(|v| v == "true").unwrap_or(false) {
             tracing::info!("Anthropic request: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
         }
+        
+        tracing::debug!(
+            "LLM params: max_tokens={}, temperature={:.2}",
+            params.max_tokens, params.temperature
+        );
 
-        let response = self.client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&request_body)
-            .send()
-            .await
-            .context("Failed to send request to Anthropic")?;
+        let retry_config = crate::retry::RetryConfig::default();
+        let client = &self.client;
+        let api_key = &self.api_key;
 
-        if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API Error: {}", error_text);
-        }
+        let response = crate::retry::with_retry(&retry_config, "Anthropic", || async {
+            let resp = client
+                .post(&url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&request_body)
+                .send()
+                .await
+                .context("Failed to send request to Anthropic")?;
+            Ok(resp)
+        }).await?;
 
         let api_response: MessagesResponse = response.json().await?;
         Ok(api_response)
