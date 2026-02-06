@@ -243,20 +243,19 @@ if !response.status().is_success() {
 
 ---
 
-### 2. 🏗️ 工具执行错误处理
+### 2. ✅ 工具执行错误处理
 **模块**: `mneme_reasoning/src/engine.rs`  
 **问题**: 工具执行失败时，错误信息可能不够清晰，且没有重试机制。
 
-**当前问题**:
-- 浏览器操作失败时只返回简单错误字符串
-- shell 命令超时后无法恢复
-- 没有工具执行的统一错误类型
-
-**需要实现**:
-- [ ] 工具执行重试机制（对于临时性失败）
-- [ ] 结构化错误返回 (`ToolResult.is_error`)
-- [ ] 工具执行超时可配置化
-- [ ] 浏览器会话恢复机制
+**已完成** (commit `fcf5602`):
+- [x] 工具执行重试机制（对于临时性失败） ✅ — `execute_tool_with_retry()` + `TOOL_MAX_RETRIES=1`，仅重试 `Transient` 类型错误
+- [x] 结构化错误返回 (`ToolResult.is_error`) ✅ — `ToolOutcome { content, is_error, error_kind }` + `ToolErrorKind::Transient/Permanent`
+- [x] 工具执行超时可配置化 ✅ — `LocalExecutor::with_timeout()` 已存在，timeout → Transient 自动重试
+- [x] 浏览器会话恢复机制 ✅ — `execute_browser_tool()` 失败时 drop session → `create_browser_session()` 重建
+- [x] 错误分类：timeout/spawn → Transient（重试），exit code/missing param/unknown tool → Permanent（不重试）
+- [x] `is_error: Some(true/false)` 传递给 LLM，让模型知道工具是否失败
+- [x] `BrowserAction` derive `Clone` 支持 recovery 重试
+- [x] 9 个新测试 + 全部 33 integration tests 通过 ✅
 
 ---
 
