@@ -467,21 +467,19 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 7. 🏗️ 浏览器工具稳定性
-**模块**: `mneme_browser/src/client.rs`  
+### 7. ✅ 浏览器工具稳定性
+**模块**: `mneme_browser/src/client.rs`, `mneme_reasoning/src/engine.rs`  
 **问题**: headless_chrome 可能不稳定，没有健康检查和会话恢复。
 
-**当前问题**:
-- 浏览器崩溃后无法自动恢复
-- 长时间无操作后连接可能失效
-- 没有超时处理
-
-**需要实现**:
-- [ ] 浏览器健康检查 (heartbeat)
-- [ ] 自动重启崩溃的浏览器
-- [ ] 操作级别的超时配置
-- [ ] 考虑切换到 `chromiumoxide`（更活跃维护）
-- [ ] 可选的非 headless 模式用于调试
+**已完成** (commit `d566528`):
+- [x] 迁移 deprecated `wait_for_initial_tab()` → `new_tab()` ✅ — 消除编译警告，headless_chrome v1.0.4+ 推荐方式
+- [x] `BrowserConfig` 配置结构体 ✅ — headless 模式、element_timeout、navigation_timeout，`debug()` 构造器用于非 headless 调试
+- [x] `is_alive()` 健康检查 ✅ — 通过 `tab.get_target_info()` CDP 调用探测浏览器存活
+- [x] `tab()` DRY helper ✅ — 替代所有方法中重复的 `if let Some(tab) = &self.current_tab` 模式
+- [x] Proactive session recovery ✅ — `execute_browser_tool()` 执行前检查 `is_alive()`，死亡会话自动丢弃重建
+- [x] HTML 截断 ✅ — `GetHtml` action 限制返回 8KB，防止巨型页面撑爆 context
+- [x] `set_default_timeout()` ✅ — 新建 tab 时设置可配置超时
+- [x] 3 个新单元测试（BrowserConfig default/debug/custom）✅
 
 ---
 
