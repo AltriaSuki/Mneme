@@ -466,6 +466,14 @@ impl ReasoningEngine {
         
         let mut session_lock = self.browser_session.lock().await;
         
+        // Proactive health check: if session exists but is dead, drop it
+        if let Some(client) = session_lock.as_ref() {
+            if !client.is_alive() {
+                tracing::warn!("Browser session is stale, will recreate");
+                *session_lock = None;
+            }
+        }
+        
         // Ensure session exists
         if session_lock.is_none() {
             match Self::create_browser_session() {
