@@ -446,7 +446,10 @@ impl ReasoningEngine {
                         }
                     }
                 } else {
-                    ToolOutcome::permanent_error("Missing 'command' parameter".to_string())
+                    ToolOutcome::permanent_error(format!(
+                        "Missing 'command' parameter. Expected input: {{\"command\": \"<shell command>\"}}. Got: {}",
+                        input
+                    ))
                 }
             },
             "browser_goto" | "browser_click" | "browser_type" | "browser_screenshot" | "browser_get_html" => {
@@ -520,16 +523,16 @@ impl ReasoningEngine {
         match name {
             "browser_goto" => input.get("url").and_then(|u| u.as_str())
                 .map(|url| BrowserAction::Goto { url: url.to_string() })
-                .ok_or_else(|| format!("Missing 'url' for {}", name)),
+                .ok_or_else(|| format!("Missing 'url' for {}. Expected: {{\"url\": \"https://...\"}}", name)),
             "browser_click" => input.get("selector").and_then(|s| s.as_str())
                 .map(|sel| BrowserAction::Click { selector: sel.to_string() })
-                .ok_or_else(|| format!("Missing 'selector' for {}", name)),
+                .ok_or_else(|| format!("Missing 'selector' for {}. Expected: {{\"selector\": \"#id\"}}", name)),
             "browser_type" => {
                 let sel = input.get("selector").and_then(|s| s.as_str());
                 let txt = input.get("text").and_then(|t| t.as_str());
                 match (sel, txt) {
                     (Some(s), Some(t)) => Ok(BrowserAction::Type { selector: s.to_string(), text: t.to_string() }),
-                    _ => Err(format!("Missing 'selector' or 'text' for {}", name)),
+                    _ => Err(format!("Missing 'selector' or 'text' for {}. Expected: {{\"selector\": \"#id\", \"text\": \"...\"}}", name)),
                 }
             },
             "browser_screenshot" => Ok(BrowserAction::Screenshot),

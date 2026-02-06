@@ -199,10 +199,24 @@ impl LlmClient for OpenAiClient {
                 let id = call["id"].as_str().unwrap_or_default().to_string();
                 let func = &call["function"];
                 let name = func["name"].as_str().unwrap_or_default().to_string();
-                let args_str = func["arguments"].as_str().unwrap_or("{}");
-                
-                let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
-                
+
+                // OpenAI returns arguments as a JSON string, but some compatible APIs
+                // (DeepSeek, local models, etc.) may return a parsed JSON object directly.
+                let input: Value = if let Some(args_str) = func["arguments"].as_str() {
+                    // Standard OpenAI: arguments is a JSON-encoded string
+                    serde_json::from_str(args_str).unwrap_or_else(|e| {
+                        tracing::warn!("Failed to parse tool arguments string: {e}. Raw: {args_str}");
+                        json!({})
+                    })
+                } else if func["arguments"].is_object() {
+                    // Compatible API: arguments is already a JSON object
+                    func["arguments"].clone()
+                } else {
+                    tracing::warn!("Unexpected arguments type for tool '{}': {:?}", name, func["arguments"]);
+                    json!({})
+                };
+
+                tracing::debug!("Parsed tool_call: name={}, input={}", name, input);
                 content_blocks.push(ContentBlock::ToolUse {
                     id,
                     name,
@@ -215,5 +229,118 @@ impl LlmClient for OpenAiClient {
             content: content_blocks,
             stop_reason: finish_reason,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Helper: simulate parsing tool_calls from a raw OpenAI-style response JSON.
+    fn parse_tool_calls_from(resp_json: &Value) -> Vec<ContentBlock> {
+        let message = &resp_json["choices"][0]["message"];
+        let mut blocks = Vec::new();
+        if let Some(tool_calls) = message["tool_calls"].as_array() {
+            for call in tool_calls {
+                let func = &call["function"];
+                let name = func["name"].as_str().unwrap_or_default().to_string();
+                let input: Value = if let Some(args_str) = func["arguments"].as_str() {
+                    serde_json::from_str(args_str).unwrap_or(json!({}))
+                } else if func["arguments"].is_object() {
+                    func["arguments"].clone()
+                } else {
+                    json!({})
+                };
+                blocks.push(ContentBlock::ToolUse {
+                    id: call["id"].as_str().unwrap_or_default().to_string(),
+                    name,
+                    input,
+                });
+            }
+        }
+        blocks
+    }
+
+    #[test]
+    fn test_parse_arguments_string() {
+        // Standard OpenAI: arguments is a JSON string
+        let resp = json!({
+            "choices": [{ "message": {
+                "tool_calls": [{ "id": "tc1", "function": {
+                    "name": "shell",
+                    "arguments": "{\"command\": \"ls -la\"}"
+                }}]
+            }}]
+        });
+        let blocks = parse_tool_calls_from(&resp);
+        assert_eq!(blocks.len(), 1);
+        if let ContentBlock::ToolUse { name, input, .. } = &blocks[0] {
+            assert_eq!(name, "shell");
+            assert_eq!(input["command"], "ls -la");
+        } else {
+            panic!("Expected ToolUse");
+        }
+    }
+
+    #[test]
+    fn test_parse_arguments_object() {
+        // Compatible API (DeepSeek etc.): arguments is already a JSON object
+        let resp = json!({
+            "choices": [{ "message": {
+                "tool_calls": [{ "id": "tc2", "function": {
+                    "name": "shell",
+                    "arguments": { "command": "git status" }
+                }}]
+            }}]
+        });
+        let blocks = parse_tool_calls_from(&resp);
+        assert_eq!(blocks.len(), 1);
+        if let ContentBlock::ToolUse { name, input, .. } = &blocks[0] {
+            assert_eq!(name, "shell");
+            assert_eq!(input["command"], "git status");
+        } else {
+            panic!("Expected ToolUse");
+        }
+    }
+
+    #[test]
+    fn test_parse_arguments_malformed_string() {
+        // Malformed JSON string → fallback to {}
+        let resp = json!({
+            "choices": [{ "message": {
+                "tool_calls": [{ "id": "tc3", "function": {
+                    "name": "shell",
+                    "arguments": "{not valid json"
+                }}]
+            }}]
+        });
+        let blocks = parse_tool_calls_from(&resp);
+        assert_eq!(blocks.len(), 1);
+        if let ContentBlock::ToolUse { input, .. } = &blocks[0] {
+            assert!(input.as_object().unwrap().is_empty());
+        } else {
+            panic!("Expected ToolUse");
+        }
+    }
+
+    #[test]
+    fn test_parse_arguments_null() {
+        // Arguments is null → fallback to {}
+        let resp = json!({
+            "choices": [{ "message": {
+                "tool_calls": [{ "id": "tc4", "function": {
+                    "name": "shell",
+                    "arguments": null
+                }}]
+            }}]
+        });
+        let blocks = parse_tool_calls_from(&resp);
+        assert_eq!(blocks.len(), 1);
+        if let ContentBlock::ToolUse { input, .. } = &blocks[0] {
+            assert!(input.as_object().unwrap().is_empty());
+        } else {
+            panic!("Expected ToolUse");
+        }
     }
 }
