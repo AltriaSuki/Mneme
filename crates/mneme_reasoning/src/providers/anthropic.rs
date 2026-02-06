@@ -72,9 +72,13 @@ impl LlmClient for AnthropicClient {
             tools,
         };
 
-        // Debug: log the request body
+        // Debug: log the request body (always at debug level; full dump with DEBUG_PAYLOAD=true)
         if env::var("DEBUG_PAYLOAD").map(|v| v == "true").unwrap_or(false) {
             tracing::info!("Anthropic request: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+        } else if tracing::enabled!(tracing::Level::DEBUG) {
+            // At least log tool definitions so we can diagnose schema issues
+            let tools_json = serde_json::to_string(&request_body.tools).unwrap_or_default();
+            tracing::debug!("Anthropic tools payload ({}): {}", request_body.tools.len(), tools_json);
         }
         
         tracing::debug!(
