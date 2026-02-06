@@ -445,42 +445,23 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 6. 🏗️ 属性测试 (Property-Based Testing)
+### 6. 🏗️ 属性测试 (Property-Based Testing) ✅
 **模块**: 全局  
-**问题**: 当前只有基础单元测试，缺乏随机化测试来发现边界问题。
+**问题**: ~~当前只有基础单元测试，缺乏随机化测试来发现边界问题。~~
 
-**需要实现**:
-- [ ] 引入 `proptest` 或 `quickcheck`
-- [ ] 状态演化的属性测试：
-  - 状态值始终在有效范围内
-  - 单调性属性（如 rigidity 不会突然降低）
-  - 收敛性属性（系统最终趋向稳态）
+**已完成** (41 proptest tests across 3 crates):
+
+| Crate | Tests | 覆盖内容 |
+|-------|-------|----------|
+| mneme_core | 21 | ODE 任意状态/输入/dt 稳定性, NaN 注入恢复, normalize() 幂等性, Affect 边界/lerp/polar, Emotion roundtrip, 依恋更新边界, 道德成本边界 |
+| mneme_limbic | 8 | ModulationVector 6 字段边界验证, energy→max_tokens 单调性, stress→temperature 单调性, SomaticMarker 格式验证, proactivity_urgency 边界 |
+| mneme_reasoning | 12 | sanitize_chat_output 幂等性, 任意 Unicode 不 panic, header/bullet/bold 移除, 中文保留, 2000 cases |
+
+**Bug found**: `sanitize_chat_output` 对重叠 `*` 模式 (如 `**0*text*`) 不幂等。已修复。
+
+**待后续补充**:
 - [ ] 序列化/反序列化往返测试
 - [ ] 并发安全测试
-
-**示例**:
-```rust
-proptest! {
-    #[test]
-    fn state_always_valid(
-        energy in 0.0f32..=1.0,
-        stress in 0.0f32..=1.0,
-        iterations in 1..1000usize
-    ) {
-        let mut state = OrganismState::default();
-        state.fast.energy = energy;
-        state.fast.stress = stress;
-        
-        let dynamics = DefaultDynamics::default();
-        for _ in 0..iterations {
-            dynamics.step(&mut state, &SensoryInput::default(), Duration::from_secs(1));
-        }
-        
-        assert!(state.fast.energy >= 0.0 && state.fast.energy <= 1.0);
-        assert!(!state.fast.energy.is_nan());
-    }
-}
-```
 
 ---
 
@@ -1019,7 +1000,7 @@ rustyline = "14.0"
 > **目标**: 建立工程质量基线。
 
 - ~~Reasoning Engine 测试覆盖 (#32)~~ ✅ 24 integration tests (Mock LLM/Memory/Executor, 8 categories)
-- 属性测试引入 (#6)
+- ~~属性测试引入 (#6)~~ ✅ 41 proptest tests (ODE stability, ModulationVector bounds, sanitize idempotency)
 - 状态历史记录 (#3)
 - 工具执行错误处理 (#2)
 - LLM 响应解析健壮性 (#8)
