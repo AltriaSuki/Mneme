@@ -202,3 +202,84 @@ async fn test_format_facts_for_prompt() {
     let empty = SqliteMemory::format_facts_for_prompt(&[]);
     assert!(empty.is_empty());
 }
+
+// =============================================================================
+// State History Integration Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_state_history_record_and_query() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let state = mneme_core::OrganismState::default();
+
+    // Record several snapshots
+    memory.record_state_snapshot(&state, "tick", None).await.unwrap();
+
+    let mut modified = state.clone();
+    modified.fast.energy = 0.3;
+    memory.record_state_snapshot(&modified, "interaction", Some(&state)).await.unwrap();
+
+    modified.fast.stress = 0.9;
+    memory.record_state_snapshot(&modified, "consolidation", Some(&state)).await.unwrap();
+
+    // Query all history
+    let history = memory.query_state_history(0, i64::MAX, 100).await.unwrap();
+    assert_eq!(history.len(), 3);
+
+    // Check triggers are correct
+    assert_eq!(history[0].trigger, "tick");
+    assert_eq!(history[1].trigger, "interaction");
+    assert_eq!(history[2].trigger, "consolidation");
+
+    // First snapshot has no diff (no prev_state)
+    assert!(history[0].diff_summary.is_none());
+
+    // Second snapshot should have a diff mentioning energy
+    let diff = history[1].diff_summary.as_ref().unwrap();
+    assert!(diff.contains('E'), "diff should mention energy change: {}", diff);
+
+    // Verify state was deserialized correctly
+    assert!((history[1].state.fast.energy - 0.3).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn test_state_history_recent() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let state = mneme_core::OrganismState::default();
+
+    // Record 5 snapshots
+    for i in 0..5 {
+        let mut s = state.clone();
+        s.fast.energy = i as f32 * 0.1 + 0.3;
+        memory.record_state_snapshot(&s, "tick", None).await.unwrap();
+    }
+
+    // Get recent 3
+    let recent = memory.recent_state_history(3).await.unwrap();
+    assert_eq!(recent.len(), 3);
+
+    // Should be in chronological order (oldest first)
+    assert!(recent[0].state.fast.energy < recent[2].state.fast.energy);
+}
+
+#[tokio::test]
+async fn test_state_history_prune() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let state = mneme_core::OrganismState::default();
+
+    // Record 20 snapshots
+    for _ in 0..20 {
+        memory.record_state_snapshot(&state, "tick", None).await.unwrap();
+    }
+
+    // Verify all 20 exist
+    let all = memory.query_state_history(0, i64::MAX, 100).await.unwrap();
+    assert_eq!(all.len(), 20);
+
+    // Prune to keep only 10
+    let pruned = memory.prune_state_history(10, i64::MAX).await.unwrap();
+    assert_eq!(pruned, 10);
+
+    let remaining = memory.query_state_history(0, i64::MAX, 100).await.unwrap();
+    assert_eq!(remaining.len(), 10);
+}

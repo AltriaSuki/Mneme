@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use mneme_core::{Content, Memory, SocialGraph, Person};
+use mneme_core::{Content, Memory, SocialGraph, Person, OrganismState};
 use serde::{Serialize, Deserialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::path::Path;
@@ -201,6 +201,29 @@ impl SqliteMemory {
         .await
         .context("Failed to create feedback_signals table")?;
 
+        // Organism state history (time series for debug/replay)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS organism_state_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                state_json TEXT NOT NULL,
+                trigger TEXT NOT NULL,
+                diff_summary TEXT
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create organism_state_history table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_state_history_timestamp ON organism_state_history(timestamp)"
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create state history timestamp index")?;
+
         Ok(())
     }
 }
@@ -389,7 +412,6 @@ impl SocialGraph for SqliteMemory {
 // Organism State Persistence
 // =============================================================================
 
-use mneme_core::OrganismState;
 use crate::narrative::NarrativeChapter;
 use crate::feedback_buffer::{FeedbackSignal, SignalType};
 use chrono::{DateTime, Utc};
@@ -430,6 +452,148 @@ impl SqliteMemory {
 
         tracing::debug!("Organism state saved");
         Ok(())
+    }
+
+    // =========================================================================
+    // State History (time series for debug/replay)
+    // =========================================================================
+
+    /// Record a state snapshot into the history table.
+    ///
+    /// `trigger` indicates what caused the snapshot:
+    /// - `"tick"` — periodic background save
+    /// - `"interaction"` — after processing a user message
+    /// - `"consolidation"` — after sleep consolidation
+    /// - `"manual"` — explicit debug snapshot
+    ///
+    /// An optional `prev_state` can be provided to compute a diff summary.
+    pub async fn record_state_snapshot(
+        &self,
+        state: &OrganismState,
+        trigger: &str,
+        prev_state: Option<&OrganismState>,
+    ) -> Result<()> {
+        let json = serde_json::to_string(state)
+            .context("Failed to serialize state for history")?;
+        let now = chrono::Utc::now().timestamp();
+
+        let diff_summary = prev_state.map(|prev| compute_state_diff(prev, state));
+
+        sqlx::query(
+            "INSERT INTO organism_state_history (timestamp, state_json, trigger, diff_summary) VALUES (?, ?, ?, ?)"
+        )
+        .bind(now)
+        .bind(&json)
+        .bind(trigger)
+        .bind(&diff_summary)
+        .execute(&self.pool)
+        .await
+        .context("Failed to record state snapshot")?;
+
+        tracing::trace!("State snapshot recorded (trigger={})", trigger);
+        Ok(())
+    }
+
+    /// Query state history within a time range.
+    ///
+    /// Returns snapshots ordered by timestamp ascending (oldest first).
+    /// `limit` caps the number of results (default reasonable: 100).
+    pub async fn query_state_history(
+        &self,
+        from_ts: i64,
+        to_ts: i64,
+        limit: i64,
+    ) -> Result<Vec<StateSnapshot>> {
+        let rows = sqlx::query(
+            "SELECT id, timestamp, state_json, trigger, diff_summary \
+             FROM organism_state_history \
+             WHERE timestamp >= ? AND timestamp <= ? \
+             ORDER BY timestamp ASC LIMIT ?"
+        )
+        .bind(from_ts)
+        .bind(to_ts)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query state history")?;
+
+        let mut snapshots = Vec::with_capacity(rows.len());
+        for row in rows {
+            let state_json: String = row.get("state_json");
+            let state: OrganismState = serde_json::from_str(&state_json)
+                .context("Failed to deserialize historical state")?;
+            snapshots.push(StateSnapshot {
+                id: row.get("id"),
+                timestamp: row.get("timestamp"),
+                state,
+                trigger: row.get("trigger"),
+                diff_summary: row.get("diff_summary"),
+            });
+        }
+        Ok(snapshots)
+    }
+
+    /// Get the most recent N state snapshots (for quick debug view).
+    pub async fn recent_state_history(&self, count: i64) -> Result<Vec<StateSnapshot>> {
+        let rows = sqlx::query(
+            "SELECT id, timestamp, state_json, trigger, diff_summary \
+             FROM organism_state_history \
+             ORDER BY timestamp DESC LIMIT ?"
+        )
+        .bind(count)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query recent state history")?;
+
+        let mut snapshots = Vec::with_capacity(rows.len());
+        for row in rows {
+            let state_json: String = row.get("state_json");
+            let state: OrganismState = serde_json::from_str(&state_json)
+                .context("Failed to deserialize historical state")?;
+            snapshots.push(StateSnapshot {
+                id: row.get("id"),
+                timestamp: row.get("timestamp"),
+                state,
+                trigger: row.get("trigger"),
+                diff_summary: row.get("diff_summary"),
+            });
+        }
+        // Reverse so oldest is first (chronological order)
+        snapshots.reverse();
+        Ok(snapshots)
+    }
+
+    /// Prune old history entries, keeping at most `keep_count` most recent rows.
+    ///
+    /// Also removes entries older than `max_age_secs` seconds.
+    /// Returns the number of rows deleted.
+    pub async fn prune_state_history(&self, keep_count: i64, max_age_secs: i64) -> Result<u64> {
+        let cutoff_ts = chrono::Utc::now().timestamp() - max_age_secs;
+
+        // Delete by age
+        let age_result = sqlx::query(
+            "DELETE FROM organism_state_history WHERE timestamp < ?"
+        )
+        .bind(cutoff_ts)
+        .execute(&self.pool)
+        .await
+        .context("Failed to prune old state history")?;
+
+        // Delete excess rows (keep only `keep_count` most recent)
+        let excess_result = sqlx::query(
+            "DELETE FROM organism_state_history WHERE id NOT IN \
+             (SELECT id FROM organism_state_history ORDER BY timestamp DESC LIMIT ?)"
+        )
+        .bind(keep_count)
+        .execute(&self.pool)
+        .await
+        .context("Failed to prune excess state history")?;
+
+        let total = age_result.rows_affected() + excess_result.rows_affected();
+        if total > 0 {
+            tracing::debug!("Pruned {} state history entries", total);
+        }
+        Ok(total)
     }
 
     /// Load all narrative chapters
@@ -801,5 +965,102 @@ impl SqliteMemory {
             ));
         }
         output
+    }
+}
+
+// =============================================================================
+// State History Types
+// =============================================================================
+
+/// A recorded snapshot of OrganismState at a point in time.
+#[derive(Debug, Clone)]
+pub struct StateSnapshot {
+    pub id: i64,
+    pub timestamp: i64,
+    pub state: OrganismState,
+    pub trigger: String,
+    pub diff_summary: Option<String>,
+}
+
+/// Compute a human-readable diff summary between two OrganismState instances.
+/// Only reports fields that changed by more than a small epsilon (0.01).
+fn compute_state_diff(prev: &OrganismState, curr: &OrganismState) -> String {
+    let mut changes = Vec::new();
+    let eps = 0.01;
+
+    // Fast state
+    let de = curr.fast.energy - prev.fast.energy;
+    if de.abs() > eps { changes.push(format!("E{:+.2}", de)); }
+
+    let ds = curr.fast.stress - prev.fast.stress;
+    if ds.abs() > eps { changes.push(format!("S{:+.2}", ds)); }
+
+    let dv = curr.fast.affect.valence - prev.fast.affect.valence;
+    if dv.abs() > eps { changes.push(format!("V{:+.2}", dv)); }
+
+    let da = curr.fast.affect.arousal - prev.fast.affect.arousal;
+    if da.abs() > eps { changes.push(format!("Ar{:+.2}", da)); }
+
+    let dc = curr.fast.curiosity - prev.fast.curiosity;
+    if dc.abs() > eps { changes.push(format!("C{:+.2}", dc)); }
+
+    let dsn = curr.fast.social_need - prev.fast.social_need;
+    if dsn.abs() > eps { changes.push(format!("SN{:+.2}", dsn)); }
+
+    // Medium state
+    let dm = curr.medium.mood_bias - prev.medium.mood_bias;
+    if dm.abs() > eps { changes.push(format!("M{:+.2}", dm)); }
+
+    let do_ = curr.medium.openness - prev.medium.openness;
+    if do_.abs() > eps { changes.push(format!("O{:+.2}", do_)); }
+
+    if changes.is_empty() {
+        "no significant change".to_string()
+    } else {
+        changes.join(" ")
+    }
+}
+
+#[cfg(test)]
+mod state_history_tests {
+    use super::*;
+    use mneme_core::OrganismState;
+
+    #[test]
+    fn test_compute_state_diff_no_change() {
+        let s = OrganismState::default();
+        let diff = compute_state_diff(&s, &s);
+        assert_eq!(diff, "no significant change");
+    }
+
+    #[test]
+    fn test_compute_state_diff_energy_change() {
+        let prev = OrganismState::default();
+        let mut curr = prev.clone();
+        curr.fast.energy = 0.3;
+        let diff = compute_state_diff(&prev, &curr);
+        assert!(diff.contains("E-0.40"), "diff was: {}", diff);
+    }
+
+    #[test]
+    fn test_compute_state_diff_multiple_changes() {
+        let prev = OrganismState::default();
+        let mut curr = prev.clone();
+        curr.fast.energy = 0.3;
+        curr.fast.stress = 0.8;
+        curr.medium.mood_bias = -0.5;
+        let diff = compute_state_diff(&prev, &curr);
+        assert!(diff.contains('E'));
+        assert!(diff.contains('S'));
+        assert!(diff.contains('M'));
+    }
+
+    #[test]
+    fn test_compute_state_diff_ignores_tiny_changes() {
+        let prev = OrganismState::default();
+        let mut curr = prev.clone();
+        curr.fast.energy += 0.005; // Below epsilon
+        let diff = compute_state_diff(&prev, &curr);
+        assert_eq!(diff, "no significant change");
     }
 }

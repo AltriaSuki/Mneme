@@ -104,6 +104,9 @@ pub struct OrganismCoordinator {
     
     /// Optional database for persistence
     db: Option<Arc<SqliteMemory>>,
+
+    /// Previous state snapshot for computing diffs in state history
+    prev_snapshot: Arc<RwLock<Option<OrganismState>>>,
 }
 
 impl OrganismCoordinator {
@@ -135,6 +138,7 @@ impl OrganismCoordinator {
             interaction_count: Arc::new(RwLock::new(0)),
             episode_buffer: Arc::new(RwLock::new(Vec::new())),
             db,
+            prev_snapshot: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -246,7 +250,10 @@ impl OrganismCoordinator {
             *count += 1;
         }
 
-        // 6. Check if we should transition to drowsy/sleep
+        // 6. Record state history snapshot (after state update)
+        self.save_state_with_trigger("interaction").await;
+
+        // 7. Check if we should transition to drowsy/sleep
         self.check_lifecycle_transition().await;
 
         Ok(InteractionResult {
@@ -351,7 +358,7 @@ impl OrganismCoordinator {
         }
 
         // Save state after consolidation
-        self.save_state().await;
+        self.save_state_with_trigger("consolidation").await;
 
         // Transition back to awake
         self.set_lifecycle_state(LifecycleState::Awake).await;
@@ -359,13 +366,31 @@ impl OrganismCoordinator {
         Ok(result)
     }
 
-    /// Save current state to database (if persistence is enabled)
+    /// Save current state to database (if persistence is enabled).
+    /// Also records a snapshot into the state history table.
     pub async fn save_state(&self) {
+        self.save_state_with_trigger("tick").await;
+    }
+
+    /// Save state with a specific trigger label for the history record.
+    pub async fn save_state_with_trigger(&self, trigger: &str) {
         if let Some(ref db) = self.db {
             let state = self.state.read().await.clone();
+
+            // Save the singleton current state
             if let Err(e) = db.save_organism_state(&state).await {
                 tracing::error!("Failed to save organism state: {}", e);
+                return;
             }
+
+            // Record history snapshot with diff
+            let prev = self.prev_snapshot.read().await.clone();
+            if let Err(e) = db.record_state_snapshot(&state, trigger, prev.as_ref()).await {
+                tracing::error!("Failed to record state history: {}", e);
+            }
+
+            // Update prev_snapshot for next diff
+            *self.prev_snapshot.write().await = Some(state);
         }
     }
 
@@ -389,6 +414,14 @@ impl OrganismCoordinator {
                 // Save state every 6 ticks (60 seconds if tick interval is 10s)
                 if tick % 6 == 0 {
                     self.save_state().await;
+                }
+
+                // Prune state history once every 360 ticks (~1 hour if tick = 10s)
+                // Keep max 10,000 snapshots and discard anything older than 7 days
+                if tick % 360 == 0 {
+                    if let Some(ref db) = self.db {
+                        let _ = db.prune_state_history(10_000, 7 * 86400).await;
+                    }
                 }
             }
             LifecycleState::Drowsy => {
@@ -420,7 +453,7 @@ impl OrganismCoordinator {
         }
         
         // Final state save
-        self.save_state().await;
+        self.save_state_with_trigger("shutdown").await;
         tracing::info!("Organism state saved before shutdown");
     }
 
