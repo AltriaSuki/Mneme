@@ -435,3 +435,108 @@ async fn test_format_self_knowledge_for_prompt() {
     let empty = SqliteMemory::format_self_knowledge_for_prompt(&[]);
     assert!(empty.is_empty());
 }
+
+// =============================================================================
+// Episode Strength Tests (B-10 Three-Layer Forgetting Model)
+// =============================================================================
+
+#[tokio::test]
+async fn test_episode_default_strength() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let content = Content {
+        id: Uuid::new_v4(),
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "Hello world".to_string(),
+        timestamp: 100,
+        modality: Modality::Text,
+    };
+    memory.memorize(&content).await.unwrap();
+
+    let strength = memory.get_episode_strength(&content.id.to_string()).await.unwrap();
+    assert!(strength.is_some());
+    assert!((strength.unwrap() - 0.5).abs() < 0.01, "Default strength should be 0.5");
+}
+
+#[tokio::test]
+async fn test_episode_update_strength() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let content = Content {
+        id: Uuid::new_v4(),
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "An emotionally intense memory".to_string(),
+        timestamp: 100,
+        modality: Modality::Text,
+    };
+    memory.memorize(&content).await.unwrap();
+
+    // Simulate encoding layer: high emotional intensity → high strength
+    memory.update_episode_strength(&content.id.to_string(), 0.9).await.unwrap();
+
+    let strength = memory.get_episode_strength(&content.id.to_string()).await.unwrap().unwrap();
+    assert!((strength - 0.9).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn test_episode_decay() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let id1 = Uuid::new_v4();
+    let id2 = Uuid::new_v4();
+    for (id, strength) in [(&id1, 0.8f32), (&id2, 0.3)] {
+        let content = Content {
+            id: *id,
+            source: "test".to_string(),
+            author: "User".to_string(),
+            body: format!("Memory {}", id),
+            timestamp: 100,
+            modality: Modality::Text,
+        };
+        memory.memorize(&content).await.unwrap();
+        memory.update_episode_strength(&id.to_string(), strength).await.unwrap();
+    }
+
+    // Decay all by 0.5
+    let affected = memory.decay_episode_strengths(0.5).await.unwrap();
+    assert_eq!(affected, 2);
+
+    let s1 = memory.get_episode_strength(&id1.to_string()).await.unwrap().unwrap();
+    assert!((s1 - 0.4).abs() < 0.01, "0.8 * 0.5 = 0.4, got {}", s1);
+
+    let s2 = memory.get_episode_strength(&id2.to_string()).await.unwrap().unwrap();
+    assert!((s2 - 0.15).abs() < 0.01, "0.3 * 0.5 = 0.15, got {}", s2);
+}
+
+#[tokio::test]
+async fn test_episode_rehearsal_boost() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let id = Uuid::new_v4();
+    let content = Content {
+        id,
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "Original memory content".to_string(),
+        timestamp: 100,
+        modality: Modality::Text,
+    };
+    memory.memorize(&content).await.unwrap();
+    // Start at 0.5 (default)
+
+    // Rehearsal without reconstruction — just boost
+    memory.boost_episode_on_recall(&id.to_string(), 0.1, None).await.unwrap();
+    let s = memory.get_episode_strength(&id.to_string()).await.unwrap().unwrap();
+    assert!((s - 0.6).abs() < 0.01, "0.5 + 0.1 = 0.6, got {}", s);
+
+    // Rehearsal WITH reconstruction — boost + overwrite body (B-10: 直接覆写)
+    memory.boost_episode_on_recall(
+        &id.to_string(), 0.15,
+        Some("Reconstructed: I remember it was a warm day"),
+    ).await.unwrap();
+
+    let s2 = memory.get_episode_strength(&id.to_string()).await.unwrap().unwrap();
+    assert!((s2 - 0.75).abs() < 0.01, "0.6 + 0.15 = 0.75, got {}", s2);
+}

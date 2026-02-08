@@ -62,6 +62,16 @@ impl SqliteMemory {
             tracing::debug!("Column 'embedding' likely exists or migration skipped: {}", e);
         }
 
+        // Add strength column if it doesn't exist (v2 -> v3 migration)
+        // Strength: memory trace intensity (0.0 - 1.0). Default 0.5 for pre-existing episodes.
+        // Encoding layer of the three-layer forgetting model (B-10).
+        if let Err(e) = sqlx::query("ALTER TABLE episodes ADD COLUMN strength REAL NOT NULL DEFAULT 0.5")
+            .execute(&self.pool)
+            .await
+        {
+            tracing::debug!("Column 'strength' likely exists or migration skipped: {}", e);
+        }
+
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS facts (
@@ -265,7 +275,7 @@ impl Memory for SqliteMemory {
         // Optimization: Added LIMIT 1000 to avoid full table scan at scale.
         // We assume recent memories are more relevant contextually anyway.
         // Future: Implement proper Approximate Nearest Neighbor (ANN) index.
-        let rows = sqlx::query("SELECT author, body, timestamp, embedding FROM episodes ORDER BY timestamp DESC LIMIT 1000")
+        let rows = sqlx::query("SELECT author, body, timestamp, embedding, strength FROM episodes WHERE strength > 0.05 ORDER BY timestamp DESC LIMIT 1000")
             .fetch_all(&self.pool)
             .await
             .context("Failed to fetch episodes for vector search")?;
@@ -276,12 +286,14 @@ impl Memory for SqliteMemory {
             let author: String = row.get("author");
             let body: String = row.get("body");
             let timestamp: i64 = row.get("timestamp");
+            let strength: f64 = row.get("strength");
             let embedding_blob: Option<Vec<u8>> = row.get("embedding");
 
             if let Some(blob) = embedding_blob {
-                // Deserialize blob back to Vec<f32> using bincode (more efficient than JSON)
                 if let Ok(embedding) = bincode::deserialize::<Vec<f32>>(&blob) {
-                    let score = cosine_similarity(&query_embedding, &embedding);
+                    let similarity = cosine_similarity(&query_embedding, &embedding);
+                    // Combined score: semantic relevance × memory strength
+                    let score = similarity * strength as f32;
                     scored_episodes.push((score, author, body, timestamp));
                 }
             }
@@ -324,10 +336,14 @@ impl Memory for SqliteMemory {
             None
         };
 
+        // Default strength 0.5; caller should use update_episode_strength()
+        // to set encoding strength based on emotional intensity (B-10 layer 1).
+        let default_strength: f64 = 0.5;
+
         sqlx::query(
             r#"
-            INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality, embedding, strength)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#
         )
         .bind(content.id.to_string())
@@ -337,6 +353,7 @@ impl Memory for SqliteMemory {
         .bind(content.timestamp)
         .bind(modality_str)
         .bind(embedding_blob)
+        .bind(default_strength)
         .execute(&self.pool)
         .await
         .context("Failed to insert episode")?;
@@ -1204,6 +1221,100 @@ impl SqliteMemory {
             }
         }
         output
+    }
+}
+
+// =============================================================================
+// Episode Strength (Three-Layer Forgetting Model, B-10)
+// =============================================================================
+
+impl SqliteMemory {
+    /// Set episode strength at encoding time.
+    ///
+    /// Layer 1 of the forgetting model: strength = f(emotional_intensity).
+    /// Called by the coordinator after memorize(), using current OrganismState.
+    pub async fn update_episode_strength(&self, episode_id: &str, strength: f32) -> Result<()> {
+        let strength = strength.clamp(0.0, 1.0);
+        sqlx::query("UPDATE episodes SET strength = ? WHERE id = ?")
+            .bind(strength as f64)
+            .bind(episode_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to update episode strength")?;
+        tracing::debug!("Episode {} strength set to {:.2}", episode_id, strength);
+        Ok(())
+    }
+
+    /// Decay all episode strengths by a factor.
+    ///
+    /// Layer 2 of the forgetting model: decay rate can vary per-individual
+    /// (driven by self_knowledge traits). The caller decides the factor.
+    /// Typical: decay_factor = 0.995 per tick (slow exponential decay).
+    pub async fn decay_episode_strengths(&self, decay_factor: f32) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE episodes SET strength = strength * ? WHERE strength > 0.05"
+        )
+        .bind(decay_factor as f64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to decay episode strengths")?;
+
+        let affected = result.rows_affected();
+        if affected > 0 {
+            tracing::debug!("Decayed {} episode strengths by factor {:.4}", affected, decay_factor);
+        }
+        Ok(affected)
+    }
+
+    /// Boost an episode's strength on recall (rehearsal effect).
+    ///
+    /// Layer 3: rehearsal reinforces the *reconstructed* version (B-10).
+    /// The original episode body is overwritten with the reconstructed version,
+    /// and strength is boosted. This implements "直接覆写" — no overlay.
+    pub async fn boost_episode_on_recall(
+        &self,
+        episode_id: &str,
+        boost: f32,
+        reconstructed_body: Option<&str>,
+    ) -> Result<()> {
+        let boost = boost.clamp(0.0, 0.5); // Cap boost to prevent runaway
+
+        if let Some(new_body) = reconstructed_body {
+            // Overwrite with reconstructed version + boost strength
+            sqlx::query(
+                "UPDATE episodes SET strength = MIN(1.0, strength + ?), body = ? WHERE id = ?"
+            )
+            .bind(boost as f64)
+            .bind(new_body)
+            .bind(episode_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to boost episode with reconstruction")?;
+        } else {
+            // Just boost strength, no reconstruction
+            sqlx::query(
+                "UPDATE episodes SET strength = MIN(1.0, strength + ?) WHERE id = ?"
+            )
+            .bind(boost as f64)
+            .bind(episode_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to boost episode strength")?;
+        }
+
+        tracing::debug!("Boosted episode {} strength by {:.2}", episode_id, boost);
+        Ok(())
+    }
+
+    /// Get episode strength (for diagnostics / tests).
+    pub async fn get_episode_strength(&self, episode_id: &str) -> Result<Option<f32>> {
+        let row = sqlx::query("SELECT strength FROM episodes WHERE id = ?")
+            .bind(episode_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to get episode strength")?;
+
+        Ok(row.map(|r| r.get::<f64, _>("strength") as f32))
     }
 }
 
