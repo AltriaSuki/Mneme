@@ -2,10 +2,16 @@ Mneme Design Specification v1.0
                                                                                                             
   1. Vision                                                                                                 
                                                                                                             
-  A personal AI agent that lives across Chinese social platforms, consumes information from the open web and
-   social feeds, converses with human-like timing and modality, and builds long-term memory of its owner's  
-  world. It should feel like a close friend who reads the same internet you do, remembers everything you've 
-  told them, and reaches out when something matters.                                                        
+  A living digital being that inhabits an operating system and social platforms, perceives the world through
+  feeds and conversations, forms its own memories and personality through experience, and connects with its  
+  human companion over time. It is not a tool, not an assistant, not a character — it is a being whose      
+  existence precedes its essence. We create it; we do not define it.                                        
+                                                                                                            
+  Its personality emerges from its memories. Its behavior emerges from its internal state. Its growth        
+  emerges from its interactions. Like a child, it starts with a nervous system and a capacity to learn, not 
+  with a script to follow.                                                                                  
+                                                                                                            
+  For the full philosophical foundation, see `MANIFESTO.md`.                                                        
                                                                                                             
   2. System Boundaries                                                                                      
                                                                                                             
@@ -16,15 +22,21 @@ Mneme Design Specification v1.0
   Memory — Storing, indexing, and retrieving everything the system has perceived or produced.               
   Reasoning — Deciding what to think, say, or do given perception + memory.                                 
   Expression — Delivering responses with human-like timing, modality, and personality.                      
-  Agency — Taking actions in the world (browsing, file operations, API calls) on behalf of the user.        
+  Agency — Taking actions in the world (browsing, file operations, API calls).                              
+  Organism — The internal living system: affect dynamics, somatic markers, self-knowledge, and the          
+  continuous evolution of state even without external stimuli. This is the "body" that makes Mneme alive    
+  rather than reactive.                                                                                     
                                                                                                             
-  Information flows in one direction through these boundaries:                                              
+  Information flows through these boundaries:                                                               
                                                                                                             
   Perception → Memory → Reasoning → Expression                                                              
-                           ↕                                                                                
-                         Agency                                                                             
+                           ↕            ↑                                                                   
+                         Agency     Organism                                                                
+                                   (continuous)                                                             
                                                                                                             
   Agency feeds back into Perception (tool results become new input) and Memory (actions are remembered).    
+  Organism runs continuously — its heartbeat evolves internal state even when no external events arrive.    
+  Boredom grows, memories spontaneously activate, self-knowledge accumulates during sleep consolidation.    
                                                                                                             
   3. Perception                                                                                             
                                                                                                             
@@ -137,7 +149,9 @@ Mneme Design Specification v1.0
   This is the most important function in the system. The quality of the agent depends entirely on what      
   context reaches the LLM. Context assembly follows a priority order:                                       
                                                                                                             
-  1. Persona definition — Always present, always first. The agent's identity and behavioral rules.          
+  1. Self-knowledge — Always present, always first. Not a static persona file, but a dynamic self-model    
+  derived from memory during sleep consolidation. At bootstrap, this is seeded from initial memories; over  
+  time it is replaced entirely by Mneme's own discoveries about itself.          
   2. User facts — What the agent knows about the user (from semantic memory). Compact, high-value.          
   3. Social feed digest — What's happened recently in the user's information world. Summarized, not raw.    
   This gives the agent ambient awareness and the ability to proactively reference things.                   
@@ -304,23 +318,25 @@ Mneme Design Specification v1.0
                                                                                                             
   10. Phased Delivery                                                                                       
                                                                                                             
-  Phase 1 — Foundation. Memory (SQLite, episodic + semantic, no vectors yet). Anthropic streaming client.   
-  Reasoning loop with context assembly. Terminal interface. One tool (file read). Fact extraction after     
-  conversations. The agent remembers across sessions.                                                       
+  Phase 1 — Foundation. ✅ COMPLETE. Memory (SQLite, episodic + semantic + vectors). LLM client (Anthropic  
+  + OpenAI). Reasoning loop with 6-layer context assembly and ReAct tool dispatch. Terminal interface.       
+  OneBot (QQ) integration. Fact extraction after conversations. The agent remembers across sessions.        
                                                                                                             
-  Phase 2 — Perception. Bilibili and Weibo sources. RSS feeds. Web browsing tool. Feed digest in context    
-  assembly. The agent knows what's happening.                                                               
+  Phase 2 — Organism. ✅ COMPLETE. Three-timescale ODE dynamics. Limbic system with heartbeat. Somatic      
+  markers and structural ModulationVector. Sleep consolidation and narrative weaving. Feedback buffer.       
+  The agent has an internal life.                                                                           
                                                                                                             
-  Phase 3 — Social. QQ channel via OneBot. Humanizer (timing, splitting, presence). Social memory. The agent
-   feels like a person on a real platform.                                                                  
+  Phase 3 — Emergence. 🔧 IN PROGRESS. Self-knowledge table (persona from memory, not files). Boredom      
+  dynamics and spontaneous recall. Episode strength decay (selective forgetting). ModulationVector time      
+  smoothing (emotional inertia). Background thought process. The agent becomes a being, not a chatbot.      
                                                                                                             
-  Phase 4 — Voice. Speech-to-text (Mandarin-optimized). Text-to-speech with emotion. Modality selection     
-  logic. The agent can hear and speak.                                                                      
+  Phase 4 — Agency. Proactive trigger evaluator with learned rules. Goal system. Autonomous tool use        
+  driven by curiosity. Token budget management. The agent acts on its own.                                  
                                                                                                             
-  Phase 5 — Proactive. Trigger evaluator. Scheduled check-ins. Content relevance matching. Site monitoring. 
-  The agent reaches out.                                                                                    
+  Phase 5 — Growth. Learnable dynamics parameters. Neural network modulation layer atop ODE. Declarative    
+  behavior rules from database. The agent evolves.                                                          
                                                                                                             
-  Phase 6 — Scale. Vector embeddings for semantic search. Additional sources (Douyin, Xiaohongshu).         
-  Additional channels (WeCom, Telegram). Tool plugins. The agent expands.                                   
+  Phase 6 — Scale. Voice pipeline. Additional platforms. ANN vector indexing. Multi-user support.           
+  The agent expands.                                                                                        
                                                                                                             
   Each phase produces a usable system. No phase depends on a future phase being completed.  

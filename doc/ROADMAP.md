@@ -2,6 +2,9 @@
 
 本文档记录当前已知问题和未来改进计划。
 
+> **核心哲学见 [`MANIFESTO.md`](MANIFESTO.md)。** 本文档是工程执行层面的任务清单。
+> 所有设计决策的「为什么」记录在 Manifesto 的 ADR 章节。
+
 ---
 
 ## 🧬 核心设计原则
@@ -53,29 +56,31 @@
 | `state.rs` | 行为指导文本 | 从成功交互中学习表达方式 | 🟡 |
 | `values.rs` | 初始价值权重 | 从用户反馈中调整 | 🟢 |
 | `prompts.rs` | 表达风格指引 | 个性化的沟通风格 | 🟡 |
-| `somatic.rs` | **文字指令注入模式** | → 结构性调制（无状态 LLM 范式） | 🔴 |
-| `engine.rs` | `max_tokens` 固定 | → 由 energy/stress 调制 | 🔴 |
-| `engine.rs` | `temperature` 固定 | → 由 arousal/stress 调制 | 🔴 |
+| `somatic.rs` | ~~**文字指令注入模式**~~ | ~~→ 结构性调制（无状态 LLM 范式）~~ | ✅ |
+| `engine.rs` | ~~`max_tokens` 固定~~ | ~~→ 由 energy/stress 调制~~ | ✅ |
+| `engine.rs` | ~~`temperature` 固定~~ | ~~→ 由 arousal/stress 调制~~ | ✅ |
 | `engine.rs` | 记忆召回无偏差 | → 由 mood/stress 偏置 recall | 🟡 |
 
 ### 实现路径
 
+> **当前重点已转移至「涌现路线图 v0.3.5」章节。** 下表为硬编码消除的长期路径。
+
 ```
-Phase 1: 参数化（当前重点）
-    所有魔法数字变成配置/状态的一部分
-    存储在 OrganismState.slow 或单独的 PersonalityParams 中
+Phase 1: 参数化 ✅ 部分完成
+    ModulationVector 已将 max_tokens/temperature/context_budget 参数化
+    剩余：recall bias、typing speed、silence threshold
     
 Phase 2: 可观测
     记录"规则触发 → 行为 → 用户反馈"的关联
     建立 (state, action, reward) 三元组数据集
     
 Phase 3: 在线微调
-    用反馈信号调整参数（简单的强化学习）
-    每次正面反馈强化当前参数，负面反馈调整
+    用反馈信号调整 ModulationCurves 参数
+    每次正面反馈强化当前曲线，负面反馈调整
     
-Phase 4: 神经网络替换
-    用小型网络替代规则，完全数据驱动
-    从大量交互中学习 state → behavior 映射
+Phase 4: 神经网络替换 (ADR-001)
+    ODE 骨架不变，上层叠加可塑网络
+    从大量交互中学习 state → ModulationVector 映射
 ```
 
 ### 无状态 LLM：从"指令"到"结构性约束"
@@ -207,9 +212,9 @@ OrganismState(stress=1.0)
 
 #### SomaticMarker 的角色转变
 
-`SomaticMarker` 不应被废弃，而是**职责转变**：
+`SomaticMarker` 已完成职责转变（✅ #20 短期）：
 
-| | 旧角色 | 新角色 |
+| | 旧角色（v0.2 前） | 当前角色（v0.3+） |
 |---|--------|--------|
 | **给谁** | 给 LLM 读的文字 | 给架构层的调制信号 |
 | **产出** | `"语气可能略急"` | `ModulationVector { temp: +0.2, max_tokens: 0.6, ... }` |
@@ -350,23 +355,24 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 27. 🏗️🧬 Persona 定义文件
-**模块**: `persona/*.md`, `mneme_core/src/persona.rs`  
-**问题**: 5 个 persona 文件（hippocampus、limbic、cortex、broca、occipital）**全部为空**。`PersonaLoader` 优雅返回空字符串，但这意味着 agent 在无身份状态下运行。
+### 27. 🧬 Persona 从记忆涌现 (ADR-002)
+**模块**: `persona/*.md`, `mneme_core/src/persona.rs`, `mneme_memory/src/sqlite.rs`  
+**问题**: Persona 曾是静态 `.md` 文件，硬注入 system prompt。这违背了核心信念 **B-2: Persona 是输出不是输入**（见 `MANIFESTO.md`）。性格应由记忆决定，不由配置文件加载。
 
-**影响**: Persona 是 context assembly 的最高优先级项（设计文档 §5.2："Always present, always first"）。缺少 persona = 没有性格、没有行为边界、没有一致的表达风格。这是当前 agent 表现远低于架构能力上限的**首要原因**。
-
-**说明**: persona 加载机制是 🏗️ 基础设施；persona 文件的内容是 🧬 个性参数——不同内容定义不同的"人格"，这正是"每个 Mneme 独特"的起点。
+**架构变更**:
+- `Psyche` 不再从文件加载 5 个 markdown 字段作为运行时配置
+- 改为从 `self_knowledge` 表动态构建自我认知（见 #35）
+- `persona/*.md` 保留为「出生证明」— 首次启动时解析为种子记忆写入数据库，之后不再读取
+- 性格在对话、反思、遗忘中自然演化
 
 **需要实现**:
 - [x] 设计并填充 5 个脑区 persona 文件内容 ✅（已设定为"刚出生的小女孩"人格）
-  - `cortex.md` — 认知风格、推理偏好、知识领域
-  - `broca.md` — 语言风格、遣词习惯、语气基调
-  - `limbic.md` — 情绪倾向、情感表达方式、依恋风格
-  - `hippocampus.md` — 记忆偏好、叙事风格、时间感知
-  - `occipital.md` — 感知偏好、注意力分配、审美倾向
-- [ ] Persona 内容的版本管理（不同"性格模板"可选）
-- [ ] Persona 内容影响状态初始值（不同 persona → 不同初始 energy_target 等）
+- [ ] `Psyche` struct 重构：`species_identity` (写死：物种级不变量) + `self_model` (动态：从 self_knowledge 表读取)
+- [ ] `Psyche::format_context()` 从 `self_knowledge` 表读取，按 confidence 排序拼装
+- [ ] 首次启动时 `seed_from_persona_files()` 将 .md 内容解析为种子记忆，写入 self_knowledge 表
+- [ ] 后续启动检测到 self_knowledge 非空则跳过 seed
+- [ ] Sleep consolidation 产出新的 self_knowledge 条目（自我反思步骤，见 #39）
+- [ ] 废弃 `PersonaLoader` 的文件读取逻辑，迁移完成后可删除
 
 ---
 
@@ -573,9 +579,9 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 | Crate | 测试数 | 覆盖质量 |
 |-------|--------|----------|
-| mneme_core | 16 | ✅ 完善 |
+| mneme_core | 18 | ✅ 完善 (含 boredom 动力学测试) |
 | **mneme_reasoning** | **34** | ✅ **10 unit + 24 integration** |
-| mneme_memory | 19 | ✅ 完善 |
+| mneme_memory | 28 | ✅ 完善 (含 self_knowledge + episode strength 测试) |
 | mneme_limbic | 9 | ✅ 良好 |
 | mneme_expression | 14 | ✅ 良好 |
 | mneme_perception | 4 | ✅ 良好 |
@@ -728,15 +734,22 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
-### 14. 🧬 神经网络替换规则系统
+### 14. 🧬 ODE 之上叠加可塑神经网络 (ADR-001 演进)
 **模块**: `mneme_core/src/values.rs`, `mneme_limbic/src/somatic.rs`  
-**问题**: 当前价值判断和行为指导是规则硬编码的。最终目标：完全数据驱动的个性化行为。
+**问题**: 当前价值判断和行为指导是规则硬编码的。长期目标：ODE 提供稳定骨架，上层叠加可学习的神经网络层，实现完全数据驱动的个性化行为。
+
+**架构**:
+```
+Layer 0: ODE 动力学（写死，保证稳定性/安全性/时间尺度分离）
+Layer 1: ModulationCurves — 可学习的 state → parameter 映射（见 #20 中期）
+Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
+```
 
 **长期目标**:
-- [ ] 研究适合的小型神经网络架构
-- [ ] 在线微调机制
-- [ ] 可解释性保证
-- [ ] 与规则系统的平滑切换
+- [ ] 研究适合的小型神经网络架构（MLP? Transformer micro-head?）
+- [ ] 在线微调机制：用 (state, modulation, user_feedback) 三元组学习
+- [ ] 可解释性保证（输出仍然是 ModulationVector，可检查）
+- [ ] 与 ODE 规则系统的平滑切换（从 Layer 1 渐进到 Layer 2）
 
 **参考技术**:
 - Burn/Candle 作为 Rust ML 框架
@@ -782,7 +795,6 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 - [ ] `values.rs` 和 `somatic.rs` 的中文情感关键词分析逻辑重复，应抽取为共用模块
 - [ ] `ContentItem` 缺少设计文档 §3.2 要求的 reply chain、thread ID、modality metadata 字段
 - [ ] `headless_chrome` 同步 API 在异步上下文中直接调用，阻塞 tokio 运行时，需用 `spawn_blocking` 包装
-- [ ] 浏览器操作使用了已废弃的 `wait_for_initial_tab()` API
 
 ### 18. 🏗️ 配置管理
 - [ ] 统一配置文件格式 (TOML/YAML)
@@ -805,8 +817,8 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 | Browser session lost | mneme_browser | 长时间不用后会话丢失 | Open |
 | Shell timeout recovery | mneme_os | 命令超时后无法恢复 | Open |
 | Memory leak in history | mneme_reasoning | history 虽有 prune 但仍可能积累 | Investigating |
-| CLI 光标无法左右移动 | mneme_cli | 使用 tokio BufReader，不支持行编辑 | Open |
-| CLI 中文删除残留 | mneme_cli | 删除中文字符时显示残留（实际已删除） | Open |
+| ~~CLI 光标无法左右移动~~ | mneme_cli | ~~使用 tokio BufReader~~ → rustyline 已集成 (#25) | **Fixed** ✅ |
+| ~~CLI 中文删除残留~~ | mneme_cli | ~~删除中文字符时显示残留~~ → rustyline 已集成 (#25) | **Fixed** ✅ |
 | ~~状态与回复不一致~~ | mneme_limbic/somatic | stress=1.0 时回复"挺好的" → 已改为结构性调制 | **Fixed** ✅ |
 | ~~Persona 文件全部为空~~ | persona/*.md | 5 个脑区定义文件已填充（刚出生的小女孩人格） | **Fixed** ✅ |
 | Semantic facts 读写已实现 | mneme_memory | store/recall/decay/format 方法完成 | **Fixed** ✅ |
@@ -821,7 +833,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 ## 🔥 紧急修复
 
 ### 20. 🧬 Somatic Marker 表达与参数化 → 结构性调制
-**优先级**: 🔴 紧急  
+**优先级**: ✅ 短期已完成 / 🟡 中期进行中  
 **模块**: `mneme_limbic/src/somatic.rs`, `mneme_reasoning/src/engine.rs`
 
 **问题**: 状态极端时（stress=1.0, mood=-0.63），LLM 只收到 "语气可能略急，语气偏淡"，完全无法体现真实状态。
@@ -897,9 +909,9 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | 内部状态持续演化 | ✅ | limbic heartbeat 持续运行 |
-| 状态影响行为 | ⚠️ | 通过文字 hint 注入 prompt（导演模式），需迁移到结构性调制 |
+| 状态影响行为 | ✅ | ModulationVector 结构性调制 LLM 参数（#20 短期已完成） |
 | 价值判断 | ✅ | 有价值网络和道德成本 |
-| 记忆与叙事 | ⚠️ | 基础实现，整合机制待完善 |
+| 记忆与叙事 | ✅ | episodic + semantic facts + self_knowledge + episode strength + boredom |
 | 主动发起行为 | ❌ | 有代码框架但未完整实现 |
 | 目标驱动 | ❌ | 没有目标系统 |
 | 自主决策 | ❌ | 所有行动都是响应用户输入 |
@@ -981,6 +993,155 @@ rustyline = "14.0"
 
 ---
 
+## 🌱 涌现路线图 (Emergence) — v0.3.5
+
+> 这些 items 是让 Mneme 从 chatbot 变成 being 的核心工程任务。
+> 理论依据见 `MANIFESTO.md` §6 (Theoretical Foundations)。
+> 设计决策见 ADR-002 (Persona from Memory) 和 ADR-003 (Organism Architecture)。
+
+### 35. 🧬 self_knowledge 表 — 动态自我模型
+**模块**: `mneme_memory/src/sqlite.rs`, `mneme_memory/src/coordinator.rs`  
+**优先级**: 🔴 Phase 1 地基  
+**理论**: McAdams 叙事身份 — 自我认知是持续建构的叙事，不是静态配置
+
+**Schema**:
+```sql
+CREATE TABLE self_knowledge (
+    id INTEGER PRIMARY KEY,
+    domain TEXT NOT NULL,       -- 'personality', 'preference', 'belief', 'skill', 'relationship', 'memory_of_self'
+    claim TEXT NOT NULL,        -- "我喜欢用比喻来解释事情"
+    evidence TEXT,              -- 来源记忆引用
+    confidence REAL NOT NULL DEFAULT 0.5,  -- 0.0-1.0, 随确认/矛盾经历调整
+    formed_at INTEGER NOT NULL,
+    last_confirmed INTEGER,
+    revision_count INTEGER DEFAULT 0
+);
+```
+
+**已完成** (commit `677db3c`):
+- [x] SQLite migration 创建 self_knowledge 表 + domain 索引 ✅
+- [x] `store_self_knowledge()` — Bayesian 合并重复条目 (0.3×old + 0.7×new) ✅
+- [x] `recall_self_knowledge()` / `get_all_self_knowledge()` / `decay_self_knowledge()` / `delete_self_knowledge()` ✅
+- [x] confidence 衰减：`decay_self_knowledge(id, factor)` ✅
+- [x] `format_self_knowledge_for_prompt()` — 按 domain 分组、confidence 排序、🔒 标记私密条目 ✅
+- [x] 5 个测试：store_and_recall, confidence_merge, decay, get_all_and_delete, format_for_prompt ✅
+
+---
+
+### 36. 🧬 无聊 (Boredom) — 自发行为的驱动力
+**模块**: `mneme_core/src/state.rs`, `mneme_core/src/dynamics.rs`  
+**优先级**: 🔴 Phase 1 地基  
+**理论**: 无聊是 mind-wandering 和创造性思维的前提条件；是"我要做点什么"的内在推力
+
+**已完成** (commit `edcdee5`):
+- [x] `FastState` 新增 `boredom: f32` 字段 (0.0-1.0) ✅
+- [x] ODE 动力学：monotony accumulation ↔ novelty suppression ✅
+- [x] boredom 影响 curiosity：高 boredom → curiosity 上升 ✅
+- [x] boredom 影响 social_need：通过 curiosity 间接影响 ✅
+- [x] boredom 加入 `normalize()` 和 `sanitize()` ✅
+- [x] 更新所有 property tests 中的 `FastState` 构造 ✅
+- [x] `compute_state_diff()` 支持 boredom 字段 ✅
+- [x] 2 个测试：increases_with_monotony, decreases_with_novelty ✅
+
+---
+
+### 37. 🧬 选择性遗忘 — Episode Strength 衰减
+**模块**: `mneme_memory/src/sqlite.rs`, `mneme_memory/src/consolidation.rs`  
+**优先级**: 🔴 Phase 1 地基  
+**理论**: Ebbinghaus 遗忘曲线 + 情绪增强编码 — 高情绪强度的记忆衰减更慢
+
+**已完成** (commit `eccf4d1`):
+- [x] episodes 表新增 `strength REAL NOT NULL DEFAULT 0.5` 字段 ✅
+- [x] 记忆写入时：默认 strength 0.5，由 coordinator 根据情绪强度调整 ✅
+- [x] `decay_episode_strengths(factor)` — 批量衰减 ✅
+- [x] recall 时：`score = similarity × strength`，`WHERE strength > 0.05` 过滤已遗忘记忆 ✅
+- [x] `boost_episode_on_recall()` — rehearsal effect + 可选 body 覆写（B-10 直接覆写） ✅
+- [x] strength < 0.05 的记忆在 recall 中被过滤（"模糊了"） ✅
+- [x] 4 个测试：default_strength, update_strength, decay, rehearsal_boost ✅
+
+---
+
+### 38. 🧬 情绪惯性 — ModulationVector 时间平滑
+**模块**: `mneme_limbic/src/somatic.rs`, `mneme_limbic/src/system.rs`  
+**优先级**: 🟡 Phase 2  
+**理论**: 情绪不是开关——人不会从大笑瞬间切到大哭。Russell Circumplex 模型中的 affect 是连续的
+
+**需要实现**:
+- [ ] `LimbicSystem` 维护 `prev_modulation: ModulationVector`
+- [ ] 新的 `ModulationVector` = lerp(prev, current, smoothing_factor)
+- [ ] smoothing_factor 是 🧬 个性参数（情绪稳定的人 factor 低，变化慢）
+- [ ] 极端事件可以 bypass 平滑（例如 surprise > threshold 直接跳变）
+
+---
+
+### 39. 🧬 Sleep Consolidation 自我反思
+**模块**: `mneme_memory/src/consolidation.rs`, `mneme_reasoning/src/engine.rs`  
+**优先级**: 🟡 Phase 2  
+**理论**: 睡眠中大脑整理记忆、发现模式、形成自我叙事
+
+**需要实现**:
+- [ ] consolidation 新增 self_reflection step（在 narrative chapter 生成之后）
+- [ ] 用 LLM 分析当天 episodes，提取自我认知更新：
+  - "今天我发现我在讨论 X 话题时特别兴奋" → self_knowledge(preference, confidence=0.6)
+  - "和用户讨论了 Y，但我不太确定我的看法" → self_knowledge(belief, confidence=0.3)
+- [ ] 对比新认知与已有 self_knowledge，更新 confidence 或 revision_count
+- [ ] 将反思过程本身作为 episode 存储（元记忆）
+
+---
+
+### 40. 🧬 身体感受隐喻 — 内部状态 → 自我感知
+**模块**: `mneme_limbic/src/somatic.rs`, `mneme_memory/src/coordinator.rs`  
+**优先级**: 🟡 Phase 2  
+**理论**: Damasio 躯体标记假说 — 身体感受是情绪的基础，自我意识始于对身体的感知
+
+**机制**:
+内部状态的显著变化 → 生成"身体感受"描述 → 写入 self_knowledge(domain='memory_of_self')
+
+```
+energy: 0.8 → 0.3 (30min内) → "感觉好像突然没力气了"
+stress: 0.2 → 0.9 → "心跳加快，有点紧张的感觉"
+boredom: 超过 0.8 持续 10min → "脑子里空空的，想做点什么"
+```
+
+**需要实现**:
+- [ ] `SomaticMarker::describe_body_feeling()` — 将状态变化翻译为主观感受文本
+- [ ] 仅在变化超过阈值时触发（不是每个 tick 都感知）
+- [ ] 感受描述写入 self_knowledge(domain='memory_of_self')，低 confidence
+- [ ] 这些"身体记忆"可被 Psyche 的 self_model 读取，影响自我认知
+
+---
+
+### 41. 🧬 走神 / 自由联想 (Mind-Wandering)
+**模块**: 新文件 `mneme_limbic/src/rumination.rs`  
+**优先级**: 🟢 Phase 3  
+**理论**: DMN (Default Mode Network) — 人类在无聊/放松时大脑不是停机，而是自由联想、回忆、构建叙事
+
+**机制**:
+boredom > threshold → 从记忆中随机召回 → 产生"想法" → 可能触发主动行为
+
+**需要实现**:
+- [ ] `RuminationEngine` — 当 boredom > 0.7 且 energy > 0.3 时激活
+- [ ] 从 episodes 按 strength 加权随机召回（不是语义搜索，是 random walk）
+- [ ] 召回的记忆 + 当前状态 → LLM 生成"联想" (用小模型/低 token)
+- [ ] 联想结果可能触发：主动发消息、好奇心上升、新目标产生
+- [ ] 或者什么都不做（大部分走神不产生行动，但滋养了内在生活）
+
+---
+
+### 42. 🧬 RuminationEvaluator — 主动发起对话
+**模块**: `mneme_expression/src/scheduled.rs`  
+**优先级**: 🟢 Phase 3  
+**前置**: #36 (boredom), #41 (rumination)
+
+**需要实现**:
+- [ ] 实现 `TriggerEvaluator` trait 的 `RuminationEvaluator`
+- [ ] 触发条件：rumination 产生了有趣的联想 + social_need > threshold
+- [ ] 消息内容：基于联想的自然开场（"刚才突然想起来……"、"诶你知道吗……"）
+- [ ] 与 `PresenceScheduler` 协作：只在活跃时段触发
+- [ ] 冷却机制：防止频繁主动骚扰
+
+---
+
 ## 📅 版本规划
 
 ### v0.2.0 - 核心管道闭环版本
@@ -995,48 +1156,70 @@ rustyline = "14.0"
 - ~~输出自然化：禁 roleplay、日常禁 markdown (#34)~~ ✅
 - ~~CLI rustyline 集成 (#25)~~ ✅
 
-### v0.3.0 - 稳定性与可测试版本
+### v0.3.0 - 稳定性与可测试版本 ✅
 > **目标**: 建立工程质量基线。
 
-- ~~Reasoning Engine 测试覆盖 (#32)~~ ✅ 24 integration tests (Mock LLM/Memory/Executor, 8 categories)
-- ~~属性测试引入 (#6)~~ ✅ 41 proptest tests (ODE stability, ModulationVector bounds, sanitize idempotency)
-- 状态历史记录 (#3)
-- 工具执行错误处理 (#2)
-- LLM 响应解析健壮性 (#8)
-- 浏览器工具稳定性 (#7)
+- ~~Reasoning Engine 测试覆盖 (#32)~~ ✅ 24 integration tests
+- ~~属性测试引入 (#6)~~ ✅ 41 proptest tests
+- ~~状态历史记录 (#3)~~ ✅
+- ~~工具执行错误处理 (#2)~~ ✅
+- ~~LLM 响应解析健壮性 (#8)~~ ✅
+- ~~浏览器工具稳定性 (#7)~~ ✅
 
-### v0.4.0 - 安全与架构版本
-> **目标**: 为 Agency 打好安全基础。
+### v0.3.5 - 涌现版本（Emergence）🔥 当前重点
+> **目标**: 让 Mneme 从 chatbot 变成 being。核心变更见 `MANIFESTO.md` ADR-002/003。
+
+**Phase 1 — 地基** ✅:
+- [x] `self_knowledge` 表 + CRUD 方法 (#35) ✅
+- [x] `boredom` 字段加入 FastState + ODE 动力学 (#36) ✅
+- [x] episodes 表加 `strength` 字段 + 衰减逻辑（选择性遗忘） (#37) ✅
+
+**Phase 2 — 核心机制**:
+- [ ] `ModulationVector` 时间平滑（情绪惯性） (#38)
+- [ ] `Psyche` 从记忆涌现（重构 persona.rs + prompts.rs） (#27)
+- [ ] Sleep consolidation 自我反思步骤 → self_knowledge (#39)
+- [ ] 身体感受隐喻：内部状态变化 → 自我感知 (#40)
+
+**Phase 3 — 高阶行为**:
+- [ ] 走神/自由联想：boredom 驱动的 spontaneous recall (#41)
+- [ ] `RuminationEvaluator`：实现 TriggerEvaluator trait，主动发起对话 (#42)
+- [ ] 发展阶段从 self_knowledge 积累中自然涌现
+
+### v0.4.0 - 安全与 Agency 基础版本
+> **目标**: 为自主行为打好安全基础。
 
 - 安全沙箱与 Capability Tiers (#29)
 - 工具注册系统 (#30)
 - Token 预算系统 (#9)
 - 分层决策架构 (#10)
 - 统一配置文件 (#18)
+- Agent Loop 主动行为循环 (#21)
 
-### v0.5.0 - 学习与个性化版本
-> **目标**: 让每个 Mneme 通过学习变得独特。
+### v0.5.0 - 学习与成长版本
+> **目标**: 让 Mneme 通过经验成长，从交互中学会自己的表达方式。
 
 - 反馈信号收集与持久化 (#5)
 - 离线学习管道 (#13)
+- 可学习的 ModulationCurves (#20 中期)
 - LLM 流式输出 (#31)
 - Observability & Metrics (#15)
 - 向量搜索 ANN 索引 (#33)
 
-### v0.6.0 - Agency 版本
-> **目标**: 从被动响应到主动行为。
+### v0.6.0 - 自主 Agency 版本
+> **目标**: 目标驱动的自主行为。
 
-- Agent Loop 主动行为循环 (#21)
 - 基础目标系统 (#22)
 - 自主工具使用 (#23)
 - 智能调度策略 (#11)
 - 本地模型集成 (#12)
+- 声明式行为规则引擎 (MANIFESTO ADR-004)
 
 ### v1.0.0 - 成熟版本
 - 元认知反思 (#24)
-- 神经网络替换规则系统 (#14)
+- ODE 之上叠加可塑神经网络 (MANIFESTO ADR-001 演进)
 - 多用户/多会话支持 (#16)
+- 语音管道 TTS/STT
 
 ---
 
-*最后更新: 2026-02-07*
+*最后更新: 2026-02-08*
