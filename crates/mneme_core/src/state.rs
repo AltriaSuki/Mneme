@@ -92,6 +92,13 @@ impl OrganismState {
         if self.fast.curiosity > 0.7 {
             behaviors.push("对新事物感兴趣，愿意追问");
         }
+
+        // Boredom affects engagement
+        if self.fast.boredom > 0.7 {
+            behaviors.push("感到无聊，渴望新鲜话题");
+        } else if self.fast.boredom > 0.5 {
+            behaviors.push("对当前话题兴趣不大");
+        }
         
         // Affect (valence + arousal) - the core emotional tone
         let affect_behavior = match (self.fast.affect.valence > 0.2, self.fast.affect.arousal > 0.5) {
@@ -143,10 +150,15 @@ pub struct FastState {
     
     /// Curiosity (0.0 - 1.0): drive for exploration and topic divergence
     pub curiosity: f32,
-    
+
     /// Social need (0.0 - 1.0): drive for proactive interaction
     /// Increases when alone, decreases after interaction
     pub social_need: f32,
+
+    /// Boredom (0.0 - 1.0): monotony accumulator
+    /// Increases with low-surprise, low-intensity input; decreases with novelty.
+    /// Feeds back into curiosity drive and energy restlessness.
+    pub boredom: f32,
 }
 
 impl Default for FastState {
@@ -157,6 +169,7 @@ impl Default for FastState {
             stress: 0.2,      // Low baseline stress
             curiosity: 0.5,   // Moderate curiosity
             social_need: 0.4, // Moderate social need
+            boredom: 0.2,    // Low baseline boredom
         }
     }
 }
@@ -168,6 +181,7 @@ impl FastState {
         self.stress = sanitize_f32(self.stress, 0.2).clamp(0.0, 1.0);
         self.curiosity = sanitize_f32(self.curiosity, 0.3).clamp(0.0, 1.0);
         self.social_need = sanitize_f32(self.social_need, 0.5).clamp(0.0, 1.0);
+        self.boredom = sanitize_f32(self.boredom, 0.2).clamp(0.0, 1.0);
         self.affect.valence = sanitize_f32(self.affect.valence, 0.0).clamp(-1.0, 1.0);
         self.affect.arousal = sanitize_f32(self.affect.arousal, 0.3).clamp(0.0, 1.0);
     }

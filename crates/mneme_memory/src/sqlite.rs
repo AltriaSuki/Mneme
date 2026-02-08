@@ -1357,6 +1357,9 @@ fn compute_state_diff(prev: &OrganismState, curr: &OrganismState) -> String {
     let dsn = curr.fast.social_need - prev.fast.social_need;
     if dsn.abs() > eps { changes.push(format!("SN{:+.2}", dsn)); }
 
+    let db = curr.fast.boredom - prev.fast.boredom;
+    if db.abs() > eps { changes.push(format!("B{:+.2}", db)); }
+
     // Medium state
     let dm = curr.medium.mood_bias - prev.medium.mood_bias;
     if dm.abs() > eps { changes.push(format!("M{:+.2}", dm)); }

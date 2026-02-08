@@ -23,13 +23,14 @@ fn arb_affect() -> impl Strategy<Value = Affect> {
 
 /// Generate an arbitrary FastState with values in [0, 1] range.
 fn arb_fast_state() -> impl Strategy<Value = FastState> {
-    (arb_affect(), 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
-        .prop_map(|(affect, energy, stress, curiosity, social_need)| FastState {
+    (arb_affect(), 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
+        .prop_map(|(affect, energy, stress, curiosity, social_need, boredom)| FastState {
             affect,
             energy,
             stress,
             curiosity,
             social_need,
+            boredom,
         })
 }
 
@@ -207,11 +208,12 @@ proptest! {
         stress in prop::num::f32::ANY,
         curiosity in prop::num::f32::ANY,
         social_need in prop::num::f32::ANY,
+        boredom in prop::num::f32::ANY,
         valence in prop::num::f32::ANY,
         arousal in prop::num::f32::ANY,
     ) {
         let mut fast = FastState {
-            energy, stress, curiosity, social_need,
+            energy, stress, curiosity, social_need, boredom,
             affect: Affect { valence, arousal },
         };
         fast.normalize();
@@ -220,6 +222,7 @@ proptest! {
         prop_assert!(fast.stress >= 0.0 && fast.stress <= 1.0, "stress: {}", fast.stress);
         prop_assert!(fast.curiosity >= 0.0 && fast.curiosity <= 1.0, "curiosity: {}", fast.curiosity);
         prop_assert!(fast.social_need >= 0.0 && fast.social_need <= 1.0, "social_need: {}", fast.social_need);
+        prop_assert!(fast.boredom >= 0.0 && fast.boredom <= 1.0, "boredom: {}", fast.boredom);
         prop_assert!(fast.affect.valence >= -1.0 && fast.affect.valence <= 1.0, "valence: {}", fast.affect.valence);
         prop_assert!(fast.affect.arousal >= 0.0 && fast.affect.arousal <= 1.0, "arousal: {}", fast.affect.arousal);
     }

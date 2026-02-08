@@ -116,11 +116,13 @@ impl DefaultDynamics {
         
         // === Curiosity dynamics ===
         // Curiosity increases with positive surprise, decreases with stress
-        let d_curiosity = input.surprise * 0.1 * input.content_valence.max(0.0) 
+        // Boredom also drives curiosity up (seeking novelty)
+        let d_curiosity = input.surprise * 0.1 * input.content_valence.max(0.0)
             - fast.stress * 0.05
-            + medium.openness * 0.02;
+            + medium.openness * 0.02
+            + fast.boredom * 0.03;
         fast.curiosity += d_curiosity * dt;
-        
+
         // === Social need dynamics ===
         // Increases when alone, decreases after social interaction
         let d_social = if input.is_social {
@@ -129,6 +131,15 @@ impl DefaultDynamics {
             self.social_need_growth_rate * (self.social_need_target - fast.social_need)
         };
         fast.social_need += d_social * dt;
+
+        // === Boredom dynamics ===
+        // Increases with low-surprise, low-intensity input (monotony).
+        // Decreases sharply with novel/surprising stimuli.
+        let novelty = input.surprise * 0.5 + input.content_intensity * 0.3;
+        let d_boredom = 0.01 * (1.0 - novelty)  // Monotony accumulation
+            - novelty * 0.15                      // Novelty suppression
+            - fast.stress * 0.01;                 // Stress also suppresses boredom
+        fast.boredom += d_boredom * dt;
         
         // Normalize
         fast.normalize();
@@ -325,5 +336,49 @@ mod tests {
         assert!(state.fast.energy.is_finite() && state.fast.energy >= 0.0 && state.fast.energy <= 1.0);
         assert!(state.fast.stress.is_finite() && state.fast.stress >= 0.0 && state.fast.stress <= 1.0);
         assert!(state.medium.mood_bias.is_finite() && state.medium.mood_bias >= -1.0 && state.medium.mood_bias <= 1.0);
+    }
+
+    #[test]
+    fn test_boredom_increases_with_monotony() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+        let initial_boredom = state.fast.boredom;
+
+        // Low surprise, low intensity = monotony
+        let input = SensoryInput {
+            content_valence: 0.0,
+            content_intensity: 0.1,
+            surprise: 0.0,
+            ..Default::default()
+        };
+
+        for _ in 0..100 {
+            dynamics.step(&mut state, &input, Duration::from_secs(1));
+        }
+
+        assert!(state.fast.boredom > initial_boredom,
+            "Boredom should increase with monotony: {} > {}", state.fast.boredom, initial_boredom);
+    }
+
+    #[test]
+    fn test_boredom_decreases_with_novelty() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+        state.fast.boredom = 0.8; // Start bored
+
+        // High surprise = novelty
+        let input = SensoryInput {
+            content_valence: 0.5,
+            content_intensity: 0.8,
+            surprise: 0.9,
+            ..Default::default()
+        };
+
+        for _ in 0..50 {
+            dynamics.step(&mut state, &input, Duration::from_secs(1));
+        }
+
+        assert!(state.fast.boredom < 0.5,
+            "Boredom should decrease with novelty: {}", state.fast.boredom);
     }
 }
