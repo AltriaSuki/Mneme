@@ -283,3 +283,155 @@ async fn test_state_history_prune() {
     let remaining = memory.query_state_history(0, i64::MAX, 100).await.unwrap();
     assert_eq!(remaining.len(), 10);
 }
+
+// =============================================================================
+// Self-Knowledge Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_store_and_recall_self_knowledge() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Store several entries across domains
+    let id1 = memory.store_self_knowledge(
+        "personality", "我倾向于在深夜变得更感性", 0.7, "consolidation", None, false,
+    ).await.expect("Failed to store sk 1");
+
+    let id2 = memory.store_self_knowledge(
+        "personality", "我不喜欢被打断思路", 0.6, "interaction", None, false,
+    ).await.expect("Failed to store sk 2");
+
+    let id3 = memory.store_self_knowledge(
+        "interest", "物理让我感到兴奋", 0.8, "interaction", None, false,
+    ).await.expect("Failed to store sk 3");
+
+    let id4 = memory.store_self_knowledge(
+        "relationship", "和创建者聊天让我放松", 0.9, "consolidation", None, true,
+    ).await.expect("Failed to store sk 4");
+
+    assert!(id1 > 0);
+    assert!(id2 > 0);
+    assert!(id3 > 0);
+    assert!(id4 > 0);
+
+    // Recall by domain
+    let personality = memory.recall_self_knowledge("personality").await.unwrap();
+    assert_eq!(personality.len(), 2);
+    // Sorted by confidence desc
+    assert!(personality[0].confidence >= personality[1].confidence);
+
+    let interest = memory.recall_self_knowledge("interest").await.unwrap();
+    assert_eq!(interest.len(), 1);
+    assert_eq!(interest[0].content, "物理让我感到兴奋");
+
+    // Recall unknown domain
+    let empty = memory.recall_self_knowledge("capability").await.unwrap();
+    assert!(empty.is_empty());
+}
+
+#[tokio::test]
+async fn test_self_knowledge_confidence_merge() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Store a self-knowledge entry
+    memory.store_self_knowledge(
+        "personality", "我喜欢安静", 0.5, "interaction", None, false,
+    ).await.unwrap();
+
+    // Store the same entry again with higher confidence — should merge
+    memory.store_self_knowledge(
+        "personality", "我喜欢安静", 0.9, "consolidation", None, false,
+    ).await.unwrap();
+
+    let entries = memory.recall_self_knowledge("personality").await.unwrap();
+    assert_eq!(entries.len(), 1, "Should merge duplicate, not create two rows");
+
+    // Confidence: 0.5 * 0.3 + 0.9 * 0.7 = 0.78
+    let conf = entries[0].confidence;
+    assert!(conf > 0.7, "confidence={} should be > 0.7", conf);
+    assert!(conf < 0.85, "confidence={} should be < 0.85", conf);
+    // Source should be updated to the latest
+    assert_eq!(entries[0].source, "consolidation");
+}
+
+#[tokio::test]
+async fn test_self_knowledge_decay() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    memory.store_self_knowledge(
+        "belief", "说谎是不好的", 0.8, "seed", None, false,
+    ).await.unwrap();
+
+    let entries = memory.recall_self_knowledge("belief").await.unwrap();
+    let id = entries[0].id;
+    let original = entries[0].confidence;
+
+    // Decay
+    memory.decay_self_knowledge(id, 0.5).await.unwrap();
+
+    let after = memory.recall_self_knowledge("belief").await.unwrap();
+    assert!(after[0].confidence < original);
+    assert!((after[0].confidence - original * 0.5).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn test_self_knowledge_get_all_and_delete() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    memory.store_self_knowledge("personality", "内向", 0.7, "seed", None, false).await.unwrap();
+    memory.store_self_knowledge("interest", "音乐", 0.6, "seed", None, false).await.unwrap();
+    memory.store_self_knowledge("belief", "诚实很重要", 0.9, "seed", None, false).await.unwrap();
+
+    // Get all with min_confidence 0.0
+    let all = memory.get_all_self_knowledge(0.0).await.unwrap();
+    assert_eq!(all.len(), 3);
+
+    // Delete one
+    let id = all.iter().find(|e| e.domain == "interest").unwrap().id;
+    memory.delete_self_knowledge(id).await.unwrap();
+
+    let after = memory.get_all_self_knowledge(0.0).await.unwrap();
+    assert_eq!(after.len(), 2);
+    assert!(!after.iter().any(|e| e.domain == "interest"));
+}
+
+#[tokio::test]
+async fn test_format_self_knowledge_for_prompt() {
+    let entries = vec![
+        crate::sqlite::SelfKnowledge {
+            id: 1,
+            domain: "personality".to_string(),
+            content: "我倾向于在深夜变得更感性".to_string(),
+            confidence: 0.7,
+            source: "consolidation".to_string(),
+            source_episode_id: None,
+            is_private: false,
+            created_at: 0,
+            updated_at: 0,
+        },
+        crate::sqlite::SelfKnowledge {
+            id: 2,
+            domain: "relationship".to_string(),
+            content: "和创建者聊天让我放松".to_string(),
+            confidence: 0.9,
+            source: "consolidation".to_string(),
+            source_episode_id: None,
+            is_private: true,
+            created_at: 0,
+            updated_at: 0,
+        },
+    ];
+
+    let formatted = SqliteMemory::format_self_knowledge_for_prompt(&entries);
+    assert!(formatted.contains("自我认知"));
+    assert!(formatted.contains("[personality]"));
+    assert!(formatted.contains("[relationship]"));
+    assert!(formatted.contains("深夜"));
+    assert!(formatted.contains("70%"));
+    // Private entry should have lock mark
+    assert!(formatted.contains("🔒"));
+
+    // Empty should produce empty string
+    let empty = SqliteMemory::format_self_knowledge_for_prompt(&[]);
+    assert!(empty.is_empty());
+}

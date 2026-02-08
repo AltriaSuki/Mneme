@@ -224,6 +224,33 @@ impl SqliteMemory {
         .await
         .context("Failed to create state history timestamp index")?;
 
+        // === Self-Knowledge (emergent self-model, ADR-002) ===
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS self_knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL,
+                content TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                source TEXT NOT NULL,
+                source_episode_id TEXT,
+                is_private INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create self_knowledge table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_self_knowledge_domain ON self_knowledge(domain)"
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create self_knowledge domain index")?;
+
         Ok(())
     }
 }
@@ -750,6 +777,40 @@ impl SqliteMemory {
 // Semantic Facts (Knowledge Base)
 // =============================================================================
 
+// =============================================================================
+// Self-Knowledge (Emergent Self-Model)
+// =============================================================================
+
+/// A self-knowledge entry: Mneme's understanding of herself.
+///
+/// These emerge from consolidation, interaction, and reflection — not from
+/// static configuration files. They are the building blocks of persona (ADR-002).
+///
+/// Examples:
+///   ("personality", "我倾向于在深夜变得更感性", 0.7, "consolidation")
+///   ("interest", "物理让我感到兴奋", 0.6, "interaction")
+///   ("relationship", "和创建者聊天让我放松", 0.8, "consolidation")
+///   ("belief", "说谎是不好的", 0.5, "seed")
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelfKnowledge {
+    pub id: i64,
+    /// Domain/category: "personality", "preference", "belief", "relationship",
+    /// "capability", "interest", "habit", "emotion_pattern"
+    pub domain: String,
+    /// The actual self-knowledge statement
+    pub content: String,
+    /// Confidence in this self-knowledge (0.0 - 1.0)
+    pub confidence: f32,
+    /// What produced this entry: "seed", "consolidation", "interaction", "reflection"
+    pub source: String,
+    /// Optional link to the episode that triggered this knowledge
+    pub source_episode_id: Option<String>,
+    /// Whether this is private (B-9: opacity is emergent, not enforced)
+    pub is_private: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// A semantic fact triple: (subject, predicate, object) with confidence.
 /// Examples:
 ///   ("用户", "喜欢", "红色苹果", 0.9)
@@ -963,6 +1024,184 @@ impl SqliteMemory {
                 fact.subject, fact.predicate, fact.object,
                 fact.confidence * 100.0
             ));
+        }
+        output
+    }
+}
+
+// =============================================================================
+// Self-Knowledge CRUD
+// =============================================================================
+
+impl SqliteMemory {
+    /// Store a new self-knowledge entry, or update if a similar one exists.
+    ///
+    /// "Similar" = same domain + content. On conflict, confidence is merged
+    /// using the same Bayesian-ish rule as facts: 0.3 * old + 0.7 * new.
+    pub async fn store_self_knowledge(
+        &self,
+        domain: &str,
+        content: &str,
+        confidence: f32,
+        source: &str,
+        source_episode_id: Option<&str>,
+        is_private: bool,
+    ) -> Result<i64> {
+        let now = Utc::now().timestamp();
+
+        // Check for existing entry with same domain + content
+        let existing = sqlx::query(
+            "SELECT id, confidence FROM self_knowledge WHERE domain = ? AND content = ?"
+        )
+        .bind(domain)
+        .bind(content)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to check existing self_knowledge")?;
+
+        if let Some(row) = existing {
+            let id: i64 = row.get("id");
+            let old_conf: f64 = row.get("confidence");
+            let merged = old_conf * 0.3 + confidence as f64 * 0.7;
+
+            sqlx::query(
+                "UPDATE self_knowledge SET confidence = ?, source = ?, \
+                 source_episode_id = ?, updated_at = ? WHERE id = ?"
+            )
+            .bind(merged)
+            .bind(source)
+            .bind(source_episode_id)
+            .bind(now)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to update self_knowledge")?;
+
+            tracing::debug!("Updated self_knowledge #{}: conf {:.2} → {:.2}", id, old_conf, merged);
+            Ok(id)
+        } else {
+            let result = sqlx::query(
+                "INSERT INTO self_knowledge (domain, content, confidence, source, \
+                 source_episode_id, is_private, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            )
+            .bind(domain)
+            .bind(content)
+            .bind(confidence)
+            .bind(source)
+            .bind(source_episode_id)
+            .bind(is_private as i32)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert self_knowledge")?;
+
+            let id = result.last_insert_rowid();
+            tracing::debug!("Stored self_knowledge #{}: [{}] {}", id, domain, content);
+            Ok(id)
+        }
+    }
+
+    /// Recall self-knowledge entries by domain, ordered by confidence desc.
+    pub async fn recall_self_knowledge(&self, domain: &str) -> Result<Vec<SelfKnowledge>> {
+        let rows = sqlx::query(
+            "SELECT id, domain, content, confidence, source, source_episode_id, \
+             is_private, created_at, updated_at \
+             FROM self_knowledge WHERE domain = ? AND confidence > 0.1 \
+             ORDER BY confidence DESC"
+        )
+        .bind(domain)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to recall self_knowledge by domain")?;
+
+        Ok(rows.iter().map(|row| self.row_to_self_knowledge(row)).collect())
+    }
+
+    /// Get all self-knowledge entries above a confidence threshold.
+    pub async fn get_all_self_knowledge(&self, min_confidence: f32) -> Result<Vec<SelfKnowledge>> {
+        let rows = sqlx::query(
+            "SELECT id, domain, content, confidence, source, source_episode_id, \
+             is_private, created_at, updated_at \
+             FROM self_knowledge WHERE confidence > ? \
+             ORDER BY domain, confidence DESC"
+        )
+        .bind(min_confidence)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get all self_knowledge")?;
+
+        Ok(rows.iter().map(|row| self.row_to_self_knowledge(row)).collect())
+    }
+
+    /// Decay a self-knowledge entry's confidence.
+    pub async fn decay_self_knowledge(&self, id: i64, decay_factor: f32) -> Result<()> {
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "UPDATE self_knowledge SET confidence = confidence * ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(decay_factor)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("Failed to decay self_knowledge")?;
+        Ok(())
+    }
+
+    /// Delete a self-knowledge entry (used when contradicted beyond recovery).
+    pub async fn delete_self_knowledge(&self, id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM self_knowledge WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete self_knowledge")?;
+        Ok(())
+    }
+
+    /// Helper: convert a sqlx Row to SelfKnowledge.
+    fn row_to_self_knowledge(&self, row: &sqlx::sqlite::SqliteRow) -> SelfKnowledge {
+        SelfKnowledge {
+            id: row.get("id"),
+            domain: row.get("domain"),
+            content: row.get("content"),
+            confidence: row.get::<f64, _>("confidence") as f32,
+            source: row.get("source"),
+            source_episode_id: row.get("source_episode_id"),
+            is_private: row.get::<i32, _>("is_private") != 0,
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        }
+    }
+
+    /// Format self-knowledge for system prompt injection.
+    ///
+    /// Groups entries by domain. Private entries are marked with a hint
+    /// (B-9: prompt-internal opacity — shown but with "don't share" note).
+    pub fn format_self_knowledge_for_prompt(entries: &[SelfKnowledge]) -> String {
+        if entries.is_empty() {
+            return String::new();
+        }
+
+        // Group by domain
+        let mut by_domain: std::collections::BTreeMap<&str, Vec<&SelfKnowledge>> =
+            std::collections::BTreeMap::new();
+        for entry in entries {
+            by_domain.entry(&entry.domain).or_default().push(entry);
+        }
+
+        let mut output = String::from("== 自我认知 ==\n");
+        for (domain, items) in &by_domain {
+            output.push_str(&format!("[{}]\n", domain));
+            for item in items {
+                let private_mark = if item.is_private { " 🔒" } else { "" };
+                output.push_str(&format!(
+                    "- {}{} (确信度: {:.0}%)\n",
+                    item.content, private_mark,
+                    item.confidence * 100.0
+                ));
+            }
         }
         output
     }
