@@ -59,7 +59,7 @@
 | `somatic.rs` | ~~**文字指令注入模式**~~ | ~~→ 结构性调制（无状态 LLM 范式）~~ | ✅ |
 | `engine.rs` | ~~`max_tokens` 固定~~ | ~~→ 由 energy/stress 调制~~ | ✅ |
 | `engine.rs` | ~~`temperature` 固定~~ | ~~→ 由 arousal/stress 调制~~ | ✅ |
-| `engine.rs` | 记忆召回无偏差 | → 由 mood/stress 偏置 recall | 🟡 |
+| `engine.rs` | ~~记忆召回无偏差~~ | ~~→ 由 mood/stress 偏置 recall~~ | ✅ |
 
 ### 实现路径
 
@@ -367,12 +367,12 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 **需要实现**:
 - [x] 设计并填充 5 个脑区 persona 文件内容 ✅（已设定为"刚出生的小女孩"人格）
-- [ ] `Psyche` struct 重构：`species_identity` (写死：物种级不变量) + `self_model` (动态：从 self_knowledge 表读取)
-- [ ] `Psyche::format_context()` 从 `self_knowledge` 表读取，按 confidence 排序拼装
-- [ ] 首次启动时 `seed_from_persona_files()` 将 .md 内容解析为种子记忆，写入 self_knowledge 表
-- [ ] 后续启动检测到 self_knowledge 非空则跳过 seed
-- [ ] Sleep consolidation 产出新的 self_knowledge 条目（自我反思步骤，见 #39）
-- [ ] 废弃 `PersonaLoader` 的文件读取逻辑，迁移完成后可删除
+- [x] `Psyche` struct 重构：`species_identity` (写死：物种级不变量) + `self_model` (动态：从 self_knowledge 表读取) ✅
+- [x] `Psyche::format_context()` 从 `self_knowledge` 表读取，按 confidence 排序拼装 ✅
+- [x] 首次启动时 `seed_from_persona_files()` 将 .md 内容解析为种子记忆，写入 self_knowledge 表 ✅
+- [x] 后续启动检测到 self_knowledge 非空则跳过 seed ✅
+- [x] Sleep consolidation 产出新的 self_knowledge 条目（自我反思步骤，见 #39） ✅
+- [x] 废弃 `PersonaLoader` 的文件读取逻辑，迁移完成后可删除 ✅ — 已用 `SeedPersona` 替代
 
 ---
 
@@ -434,8 +434,8 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 - 没有主动收集用户反馈的机制
 
 **需要实现**:
-- [ ] 反馈信号实时持久化到 SQLite
-- [ ] 启动时加载未整合的信号
+- [x] 反馈信号实时持久化到 SQLite ✅
+- [x] 启动时加载未整合的信号 ✅
 - [ ] 用户显式反馈机制（点赞/点踩/纠正）
 - [ ] 隐式反馈推断（用户是否继续话题、回复速度等）
 
@@ -857,22 +857,23 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
   let adjusted_temperature = base_temperature + modulation.temperature_delta;
   ```
 - [x] 保留极简的状态数值注入 prompt 作为辅助信号（`"[内部状态: E=0.42 S=1.00 M=-0.63]"`），但**不再是主要机制** ✅
-- [ ] `ContextAssembler` 根据 `context_budget_factor` 裁剪上下文量
+- [x] `ContextAssembler` 根据 `context_budget_factor` 裁剪上下文量 ✅
 
 **中期：可学习的调制曲线（🧬 个性参数）**:
-- [ ] `ModulationCurves` 结构体：定义 state → parameter 的映射函数
+- [x] `ModulationCurves` 结构体：定义 state → parameter 的映射函数 ✅
   ```rust
   struct ModulationCurves {
-      // 每条曲线是 (input_state, output_delta) 的可学习映射
-      energy_to_max_tokens: CurveParams,    // 低精力 → 少 tokens
-      stress_to_temperature: CurveParams,    // 高压力 → 高 temperature
-      mood_to_recall_bias: CurveParams,      // 低情绪 → 偏向负面记忆
-      arousal_to_typing_speed: CurveParams,  // 高唤醒 → 快发送
-      social_need_to_silence: CurveParams,   // 低社交 → 易沉默
+      energy_to_max_tokens: (f32, f32),
+      stress_to_temperature: (f32, f32),
+      energy_to_context: (f32, f32),
+      mood_to_recall_bias: (f32, f32),
+      social_to_silence: (f32, f32),
+      arousal_to_typing: (f32, f32),
   }
   ```
-- [ ] 存储到 `OrganismState.slow` 或独立的 `PersonalityParams`
-- [ ] 不同实例的曲线不同（敏感型 vs 坚韧型 vs 戏剧化型）
+- [x] `LimbicSystem` 持有 curves，`to_modulation_vector_with_curves()` 使用 ✅
+- [x] 不同实例的曲线不同（敏感型 vs 坚韧型 vs 戏剧化型） ✅ — 通过 `set_curves()` 配置
+- [ ] 存储到 `OrganismState.slow` 或独立的 `PersonalityParams`（序列化已支持）
 - [ ] 从反馈中调整曲线参数
 
 **长期：完全数据驱动**:
@@ -1176,9 +1177,11 @@ CREATE TABLE self_knowledge (
 ### v0.5.0 - 学习与成长版本
 > **目标**: 让 Mneme 通过经验成长，从交互中学会自己的表达方式。
 
-- 反馈信号收集与持久化 (#5)
+- [x] 反馈信号实时持久化 + sleep 标记整合 (#5) ✅
+- [x] Sleep 时 episode 强度衰减（Ebbinghaus 遗忘曲线） ✅
+- [x] Recall 情绪偏置 — mood-congruent memory (#20) ✅
+- [x] 可学习的 ModulationCurves 基础结构 (#20 中期) ✅
 - 离线学习管道 (#13)
-- 可学习的 ModulationCurves (#20 中期)
 - LLM 流式输出 (#31)
 - Observability & Metrics (#15)
 - 向量搜索 ANN 索引 (#33)

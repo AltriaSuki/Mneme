@@ -339,6 +339,65 @@ impl Memory for SqliteMemory {
         Ok(context)
     }
 
+    async fn recall_with_bias(&self, query: &str, mood_bias: f32) -> Result<String> {
+        let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
+
+        let rows = sqlx::query("SELECT author, body, timestamp, embedding, strength FROM episodes WHERE strength > 0.05 ORDER BY timestamp DESC LIMIT 1000")
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to fetch episodes for biased recall")?;
+
+        if rows.is_empty() {
+            return Ok("No relevant memories found.".to_string());
+        }
+
+        // Collect timestamps for recency normalization
+        let timestamps: Vec<i64> = rows.iter().map(|r| r.get::<i64, _>("timestamp")).collect();
+        let oldest = *timestamps.iter().min().unwrap_or(&0);
+        let newest = *timestamps.iter().max().unwrap_or(&1);
+        let ts_range = (newest - oldest).max(1) as f32;
+
+        let mut scored: Vec<(f32, String, String, i64)> = Vec::new();
+
+        for row in &rows {
+            let author: String = row.get("author");
+            let body: String = row.get("body");
+            let timestamp: i64 = row.get("timestamp");
+            let strength: f64 = row.get("strength");
+            let embedding_blob: Option<Vec<u8>> = row.get("embedding");
+
+            if let Some(blob) = embedding_blob {
+                if let Ok(embedding) = bincode::deserialize::<Vec<f32>>(&blob) {
+                    let similarity = cosine_similarity(&query_embedding, &embedding);
+                    let base_score = similarity * strength as f32;
+
+                    // Mood-congruent recency bias
+                    // recency_score: 0.0 (oldest) to 1.0 (newest)
+                    let recency_score = (timestamp - oldest) as f32 / ts_range;
+                    // mood_bias > 0 → boost recent (positive mood recalls recent good times)
+                    // mood_bias < 0 → boost old (negative mood ruminates on past)
+                    let bias_factor = 1.0 + mood_bias * (recency_score - 0.5) * 0.6;
+                    let final_score = base_score * bias_factor.max(0.1);
+
+                    scored.push((final_score, author, body, timestamp));
+                }
+            }
+        }
+
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let top = scored.into_iter().take(5).collect::<Vec<_>>();
+
+        if top.is_empty() {
+            return Ok("No relevant memories found.".to_string());
+        }
+
+        let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
+        for (_score, author, body, ts) in top {
+            context.push_str(&format!("- [{}] {}: {}\n", ts, author, body));
+        }
+        Ok(context)
+    }
+
     async fn recall_facts_formatted(&self, query: &str) -> Result<String> {
         let facts = self.recall_facts(query).await?;
         Ok(Self::format_facts_for_prompt(&facts))

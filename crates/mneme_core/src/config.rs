@@ -332,6 +332,10 @@ degradation_strategy = { degrade = { max_tokens_cap = 1024 } }
 
     #[test]
     fn test_load_nonexistent_returns_defaults() {
+        // Clear env vars that test_env_overrides may have set (parallel test race)
+        std::env::remove_var("LLM_PROVIDER");
+        std::env::remove_var("ANTHROPIC_MODEL");
+
         let cfg = MnemeConfig::load_or_default("/nonexistent/path.toml");
         assert_eq!(cfg.llm.provider, "anthropic");
     }

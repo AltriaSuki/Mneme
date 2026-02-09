@@ -93,6 +93,13 @@ pub trait Memory: Send + Sync {
     async fn recall(&self, query: &str) -> anyhow::Result<String>;
     /// Store a new content item.
     async fn memorize(&self, content: &Content) -> anyhow::Result<()>;
+    /// Recall with mood-congruent bias. Default: ignores bias.
+    /// mood_bias > 0: favor recent memories (positive mood → recency boost)
+    /// mood_bias < 0: favor older memories (negative mood → rumination bias)
+    async fn recall_with_bias(&self, query: &str, mood_bias: f32) -> anyhow::Result<String> {
+        let _ = mood_bias;
+        self.recall(query).await
+    }
     /// Recall known facts formatted for prompt injection.
     /// Default: returns empty string (no facts store available).
     async fn recall_facts_formatted(&self, _query: &str) -> anyhow::Result<String> {

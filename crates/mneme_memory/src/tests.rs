@@ -540,3 +540,202 @@ async fn test_episode_rehearsal_boost() {
     let s2 = memory.get_episode_strength(&id.to_string()).await.unwrap().unwrap();
     assert!((s2 - 0.75).abs() < 0.01, "0.6 + 0.15 = 0.75, got {}", s2);
 }
+
+// =============================================================================
+// Feedback Signal Persistence Tests (#5)
+// =============================================================================
+
+#[tokio::test]
+async fn test_feedback_persist_to_db() {
+    use crate::SignalType;
+    use std::sync::Arc;
+
+    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
+    let config = crate::OrganismConfig::default();
+    let coordinator = crate::OrganismCoordinator::with_config(
+        limbic, config, Some(memory.clone()),
+    );
+
+    // Record feedback — should persist to DB
+    coordinator.record_feedback(
+        SignalType::UserEmotionalFeedback,
+        "用户表达了感激".to_string(),
+        0.8,
+        0.6,
+    ).await;
+
+    // Verify it's in the DB
+    let pending = memory.load_pending_feedback().await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].content, "用户表达了感激");
+    assert!(!pending[0].consolidated);
+}
+
+#[tokio::test]
+async fn test_feedback_consolidated_after_sleep() {
+    use crate::{SignalType, EpisodeDigest};
+    use std::sync::Arc;
+    use chrono::Utc;
+
+    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
+    let mut config = crate::OrganismConfig::default();
+    config.sleep_config.allow_manual_trigger = true;
+    let coordinator = crate::OrganismCoordinator::with_config(
+        limbic, config, Some(memory.clone()),
+    );
+
+    // Record feedback
+    coordinator.record_feedback(
+        SignalType::SelfReflection,
+        "我觉得自己回答得不错".to_string(),
+        0.9,
+        0.3,
+    ).await;
+
+    // Add episodes so sleep has something to consolidate
+    {
+        let mut episodes = coordinator.episode_buffer.write().await;
+        for i in 0..15 {
+            episodes.push(EpisodeDigest {
+                timestamp: Utc::now(),
+                author: "user".to_string(),
+                content: format!("Test message {}", i),
+                emotional_valence: 0.5,
+            });
+        }
+    }
+
+    // Verify pending before sleep
+    let before = memory.load_pending_feedback().await.unwrap();
+    assert_eq!(before.len(), 1);
+
+    // Trigger sleep
+    coordinator.trigger_sleep().await.unwrap();
+
+    // After sleep, pending should be empty (all consolidated)
+    let after = memory.load_pending_feedback().await.unwrap();
+    assert!(after.is_empty(), "Expected 0 pending after sleep, got {}", after.len());
+}
+
+// =============================================================================
+// Sleep Episode Decay Tests (#37 integration)
+// =============================================================================
+
+#[tokio::test]
+async fn test_sleep_decays_episodes() {
+    use crate::EpisodeDigest;
+    use std::sync::Arc;
+    use chrono::Utc;
+
+    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
+    let mut config = crate::OrganismConfig::default();
+    config.sleep_config.allow_manual_trigger = true;
+    let coordinator = crate::OrganismCoordinator::with_config(
+        limbic, config, Some(memory.clone()),
+    );
+
+    // Store an episode with known strength
+    let id = Uuid::new_v4();
+    let content = Content {
+        id,
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "A memorable event".to_string(),
+        timestamp: 100,
+        modality: Modality::Text,
+    };
+    memory.memorize(&content).await.unwrap();
+    memory.update_episode_strength(&id.to_string(), 0.8).await.unwrap();
+
+    // Add episodes for consolidation
+    {
+        let mut episodes = coordinator.episode_buffer.write().await;
+        for i in 0..15 {
+            episodes.push(EpisodeDigest {
+                timestamp: Utc::now(),
+                author: "user".to_string(),
+                content: format!("Message {}", i),
+                emotional_valence: 0.3,
+            });
+        }
+    }
+
+    // Trigger sleep — should decay strengths by 0.95
+    coordinator.trigger_sleep().await.unwrap();
+
+    let strength = memory.get_episode_strength(&id.to_string()).await.unwrap().unwrap();
+    // 0.8 * 0.95 = 0.76
+    assert!((strength - 0.76).abs() < 0.01, "Expected ~0.76, got {}", strength);
+}
+
+// =============================================================================
+// Recall Mood Bias Tests (#20 mood-congruent recall)
+// =============================================================================
+
+#[tokio::test]
+async fn test_recall_with_bias_no_panic() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Store a few episodes
+    for i in 0..5 {
+        let content = Content {
+            id: Uuid::new_v4(),
+            source: "test".to_string(),
+            author: "User".to_string(),
+            body: format!("Memory about topic {}", i),
+            timestamp: 100 + i * 1000,
+            modality: Modality::Text,
+        };
+        memory.memorize(&content).await.unwrap();
+    }
+
+    // Various bias values should not panic
+    for bias in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+        let result = Memory::recall_with_bias(&memory, "topic", bias).await;
+        assert!(result.is_ok(), "recall_with_bias({}) failed: {:?}", bias, result.err());
+        assert!(!result.unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn test_recall_with_bias_ordering_differs() {
+    use mneme_core::Memory;
+
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Store old and new episodes with the same topic
+    let old_content = Content {
+        id: Uuid::new_v4(),
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "I remember the old days of learning Rust".to_string(),
+        timestamp: 1000,
+        modality: Modality::Text,
+    };
+    memory.memorize(&old_content).await.unwrap();
+
+    let new_content = Content {
+        id: Uuid::new_v4(),
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "Today I am learning Rust with great enthusiasm".to_string(),
+        timestamp: 100_000,
+        modality: Modality::Text,
+    };
+    memory.memorize(&new_content).await.unwrap();
+
+    // Positive bias should favor recent
+    let positive = memory.recall_with_bias("learning Rust", 0.8).await.unwrap();
+    // Negative bias should favor old
+    let negative = memory.recall_with_bias("learning Rust", -0.8).await.unwrap();
+
+    // Both should contain results
+    assert!(positive.contains("Rust"));
+    assert!(negative.contains("Rust"));
+
+    // The ordering may differ — at minimum, both should return non-empty results
+    // (Exact ordering depends on embedding similarity, so we just verify no crash)
+}

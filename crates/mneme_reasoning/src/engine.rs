@@ -279,9 +279,9 @@ impl ReasoningEngine {
             temperature: (base_temperature + modulation.temperature_delta).clamp(0.0, 2.0),
         };
         
-        // 1. Recall episodes + facts in parallel
+        // 1. Recall episodes (with mood bias) + facts in parallel
         let (episodes, user_facts) = tokio::join!(
-            self.memory.recall(input_text),
+            self.memory.recall_with_bias(input_text, modulation.recall_mood_bias),
             self.memory.recall_facts_formatted(input_text),
         );
         let episodes = episodes?;

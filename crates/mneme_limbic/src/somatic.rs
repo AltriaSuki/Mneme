@@ -79,6 +79,41 @@ impl Default for ModulationVector {
     }
 }
 
+/// Learnable parameters for state → ModulationVector mapping.
+/// Each curve defines how a state dimension maps to a modulation parameter
+/// via a linear range (low_output, high_output).
+/// Default values match current hardcoded behavior exactly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModulationCurves {
+    /// energy → max_tokens_factor: (low_energy_output, high_energy_output)
+    pub energy_to_max_tokens: (f32, f32),
+    /// stress → temperature delta: (low_stress_output, high_stress_output)
+    pub stress_to_temperature: (f32, f32),
+    /// energy → context budget: (low_energy_output, high_energy_output)
+    pub energy_to_context: (f32, f32),
+    /// mood → recall bias: (low_mood_output, high_mood_output)
+    pub mood_to_recall_bias: (f32, f32),
+    /// social_need → silence: (high_social_output, low_social_output)
+    /// Note: high social need → low silence, so the mapping is inverted
+    pub social_to_silence: (f32, f32),
+    /// arousal → typing speed: (low_arousal_output, high_arousal_output)
+    pub arousal_to_typing: (f32, f32),
+}
+
+impl Default for ModulationCurves {
+    /// Default values match the original hardcoded behavior exactly.
+    fn default() -> Self {
+        Self {
+            energy_to_max_tokens: (0.3, 1.2),   // lerp(0.3, 1.2, energy)
+            stress_to_temperature: (0.0, 0.3),   // stress * 0.3
+            energy_to_context: (0.5, 1.1),       // lerp(0.5, 1.1, energy)
+            mood_to_recall_bias: (-1.0, 1.0),    // direct passthrough of mood_bias
+            social_to_silence: (0.4, 0.0),       // (1-social) * 0.4
+            arousal_to_typing: (0.6, 1.8),       // lerp(0.6, 1.8, arousal)
+        }
+    }
+}
+
 /// A somatic marker - compressed state for System 2 injection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SomaticMarker {
@@ -197,47 +232,52 @@ impl SomaticMarker {
     }
     
     /// Convert somatic marker to a structural modulation vector.
-    /// 
+    /// Uses default curves (matches original hardcoded behavior).
+    pub fn to_modulation_vector(&self) -> ModulationVector {
+        self.to_modulation_vector_with_curves(&ModulationCurves::default())
+    }
+
+    /// Convert somatic marker to a structural modulation vector using learnable curves.
+    ///
     /// This is the "neuromodulatory" pathway: instead of telling the LLM
     /// "you're tired", we actually give it less context and limit its output length.
     /// The behavior emerges from the constraint, not from instruction.
-    pub fn to_modulation_vector(&self) -> ModulationVector {
+    pub fn to_modulation_vector_with_curves(&self, curves: &ModulationCurves) -> ModulationVector {
         // === max_tokens_factor: energy → response length capacity ===
-        // Low energy = physically cannot produce long responses
-        // Range: 0.3 (exhausted) to 1.2 (energetic, expansive)
-        let max_tokens_factor = lerp(0.3, 1.2, self.energy);
-        
+        let max_tokens_factor = lerp(curves.energy_to_max_tokens.0, curves.energy_to_max_tokens.1, self.energy);
+
         // === temperature_delta: stress + arousal → unpredictability ===
-        // High stress or arousal = more erratic, impulsive responses
-        // Range: -0.1 (calm, focused) to +0.4 (agitated)
-        let stress_temp = self.stress * 0.3;
+        // curves.stress_to_temperature: lerp(low, high, stress) replaces `stress * 0.3`
+        let stress_temp = lerp(curves.stress_to_temperature.0, curves.stress_to_temperature.1, self.stress);
         let arousal_temp = self.affect.arousal * 0.15;
         let calm_bonus = if self.stress < 0.2 && self.affect.arousal < 0.3 { -0.1 } else { 0.0 };
         let temperature_delta = (stress_temp + arousal_temp + calm_bonus).clamp(-0.1, 0.4);
-        
+
         // === context_budget_factor: energy + stress → working memory capacity ===
-        // Tired or stressed = can't process as much information
-        // Range: 0.4 (overwhelmed) to 1.2 (sharp, absorbing everything)
-        let energy_context = lerp(0.5, 1.1, self.energy);
+        let energy_context = lerp(curves.energy_to_context.0, curves.energy_to_context.1, self.energy);
         let stress_penalty = self.stress * 0.3;
         let context_budget_factor = (energy_context - stress_penalty).clamp(0.4, 1.2);
-        
+
         // === recall_mood_bias: mood → what memories surface ===
-        // Negative mood = negative memories float up (mood-congruent recall)
-        // Range: -1.0 to 1.0
-        let recall_mood_bias = self.mood_bias.clamp(-1.0, 1.0);
-        
-        // === silence_inclination: low social need + low energy → don't want to talk ===
-        // Range: 0.0 to 1.0
+        // mood_bias is -1..1, normalize to 0..1 for lerp
+        let mood_t = (self.mood_bias + 1.0) / 2.0;
+        let recall_mood_bias = lerp(
+            curves.mood_to_recall_bias.0,
+            curves.mood_to_recall_bias.1,
+            mood_t,
+        ).clamp(-1.0, 1.0);
+
+        // === silence_inclination: social need + energy + stress → willingness to talk ===
+        // social_to_silence: lerp(low_social_output, high_social_output, social_need)
+        // Default (0.4, 0.0): low social → 0.4 silence, high social → 0.0
+        let social_silence = lerp(curves.social_to_silence.0, curves.social_to_silence.1, self.social_need);
         let energy_silence = (1.0 - self.energy) * 0.3;
-        let social_silence = (1.0 - self.social_need) * 0.4;
-        let stress_silence = if self.stress > 0.8 { 0.2 } else { 0.0 }; // extreme stress → withdraw
+        let stress_silence = if self.stress > 0.8 { 0.2 } else { 0.0 };
         let silence_inclination = (energy_silence + social_silence + stress_silence).clamp(0.0, 1.0);
-        
+
         // === typing_speed_factor: arousal → urgency of expression ===
-        // Range: 0.5 (slow, deliberate) to 2.0 (rapid-fire)
-        let typing_speed_factor = lerp(0.6, 1.8, self.affect.arousal);
-        
+        let typing_speed_factor = lerp(curves.arousal_to_typing.0, curves.arousal_to_typing.1, self.affect.arousal);
+
         ModulationVector {
             max_tokens_factor,
             temperature_delta,
@@ -608,12 +648,63 @@ mod tests {
         let state = OrganismState::default();
         let marker = SomaticMarker::from_state(&state);
         let prompt = marker.format_for_prompt();
-        
+
         // Should be compact numeric format, not verbose Chinese text
         assert!(prompt.starts_with("[内部状态:"));
         assert!(prompt.contains("E="));
         assert!(prompt.contains("S="));
         assert!(prompt.contains("M="));
         assert!(prompt.contains("A="));
+    }
+
+    #[test]
+    fn test_modulation_curves_default_matches_hardcoded() {
+        // Default curves must produce identical results to the old hardcoded behavior
+        let state = OrganismState::default();
+        let marker = SomaticMarker::from_state(&state);
+
+        let mv_default = marker.to_modulation_vector();
+        let mv_curves = marker.to_modulation_vector_with_curves(&ModulationCurves::default());
+
+        assert!((mv_default.max_tokens_factor - mv_curves.max_tokens_factor).abs() < 0.001);
+        assert!((mv_default.temperature_delta - mv_curves.temperature_delta).abs() < 0.001);
+        assert!((mv_default.context_budget_factor - mv_curves.context_budget_factor).abs() < 0.001);
+        assert!((mv_default.recall_mood_bias - mv_curves.recall_mood_bias).abs() < 0.001);
+        assert!((mv_default.silence_inclination - mv_curves.silence_inclination).abs() < 0.001);
+        assert!((mv_default.typing_speed_factor - mv_curves.typing_speed_factor).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_modulation_curves_different_curves_different_output() {
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.5;
+        state.fast.stress = 0.5;
+        let marker = SomaticMarker::from_state(&state);
+
+        let default_mv = marker.to_modulation_vector();
+
+        // "Sensitive" personality: small state changes → big modulation swings
+        let sensitive = ModulationCurves {
+            energy_to_max_tokens: (0.1, 1.5),
+            stress_to_temperature: (0.0, 0.5),
+            ..Default::default()
+        };
+        let sensitive_mv = marker.to_modulation_vector_with_curves(&sensitive);
+
+        // Sensitive should have lower max_tokens at same energy (wider range, lower floor)
+        assert!(
+            (sensitive_mv.max_tokens_factor - default_mv.max_tokens_factor).abs() > 0.01,
+            "Different curves should produce different max_tokens"
+        );
+    }
+
+    #[test]
+    fn test_modulation_curves_serialization_roundtrip() {
+        let curves = ModulationCurves::default();
+        let json = serde_json::to_string(&curves).unwrap();
+        let deserialized: ModulationCurves = serde_json::from_str(&json).unwrap();
+
+        assert!((curves.energy_to_max_tokens.0 - deserialized.energy_to_max_tokens.0).abs() < 0.001);
+        assert!((curves.stress_to_temperature.1 - deserialized.stress_to_temperature.1).abs() < 0.001);
     }
 }

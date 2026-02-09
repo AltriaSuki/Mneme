@@ -80,7 +80,7 @@ pub struct OrganismCoordinator {
     limbic: Arc<LimbicSystem>,
     
     /// Feedback buffer for buffered learning
-    feedback_buffer: Arc<RwLock<FeedbackBuffer>>,
+    pub(crate) feedback_buffer: Arc<RwLock<FeedbackBuffer>>,
     
     /// Sleep consolidator
     consolidator: Arc<SleepConsolidator>,
@@ -101,7 +101,7 @@ pub struct OrganismCoordinator {
     interaction_count: Arc<RwLock<u32>>,
     
     /// Episode buffer for narrative weaving
-    episode_buffer: Arc<RwLock<Vec<EpisodeDigest>>>,
+    pub(crate) episode_buffer: Arc<RwLock<Vec<EpisodeDigest>>>,
     
     /// Optional database for persistence
     db: Option<Arc<SqliteMemory>>,
@@ -330,8 +330,9 @@ impl OrganismCoordinator {
     }
 
     /// Record feedback from System 2 (LLM output)
-    /// 
-    /// This buffers interpretations for later consolidation
+    ///
+    /// This buffers interpretations for later consolidation.
+    /// If persistence is enabled, also writes to SQLite for crash recovery.
     pub async fn record_feedback(
         &self,
         signal_type: SignalType,
@@ -339,8 +340,28 @@ impl OrganismCoordinator {
         confidence: f32,
         emotional_context: f32,
     ) {
+        // Clone for DB persistence before buffer consumes them
+        let signal_type_clone = signal_type.clone();
+        let content_clone = content.clone();
+
         let mut buffer = self.feedback_buffer.write().await;
         buffer.add_signal(signal_type, content, confidence, emotional_context);
+
+        // Persist to DB for crash recovery
+        if let Some(ref db) = self.db {
+            let signal = crate::FeedbackSignal {
+                id: 0,
+                timestamp: chrono::Utc::now(),
+                signal_type: signal_type_clone,
+                content: content_clone,
+                confidence,
+                emotional_context,
+                consolidated: false,
+            };
+            if let Err(e) = db.save_feedback_signal(&signal).await {
+                tracing::warn!("Failed to persist feedback signal: {}", e);
+            }
+        }
     }
 
     /// Trigger sleep consolidation manually
@@ -415,6 +436,28 @@ impl OrganismCoordinator {
                 if let Err(e) = db.memorize(&meta_content).await {
                     tracing::warn!("Failed to store reflection meta-episode: {}", e);
                 }
+            }
+        }
+
+        // Mark persisted feedback signals as consolidated
+        if let Some(ref db) = self.db {
+            if let Ok(pending) = db.load_pending_feedback().await {
+                let ids: Vec<i64> = pending.iter().map(|s| s.id).collect();
+                if !ids.is_empty() {
+                    if let Err(e) = db.mark_feedback_consolidated(&ids).await {
+                        tracing::warn!("Failed to mark feedback consolidated: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Episode strength decay (Ebbinghaus forgetting curve)
+        if let Some(ref db) = self.db {
+            let decay_factor = 0.95; // Each sleep cycle decays 5%
+            if let Err(e) = db.decay_episode_strengths(decay_factor).await {
+                tracing::warn!("Failed to decay episode strengths: {}", e);
+            } else {
+                tracing::info!("Applied episode strength decay (factor={})", decay_factor);
             }
         }
 

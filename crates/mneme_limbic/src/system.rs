@@ -13,7 +13,7 @@ use mneme_core::{
     OrganismState, SensoryInput, DefaultDynamics, Dynamics,
     Affect, FastState,
 };
-use crate::somatic::{SomaticMarker, ModulationVector};
+use crate::somatic::{SomaticMarker, ModulationVector, ModulationCurves};
 use crate::surprise::SurpriseDetector;
 use crate::heartbeat::HeartbeatConfig;
 
@@ -81,6 +81,10 @@ pub struct LimbicSystem {
     /// Surprise threshold: if max_delta between prev and current exceeds this,
     /// bypass smoothing and jump directly (startle response).
     surprise_bypass_threshold: f32,
+
+    /// Learnable modulation curves — how state maps to LLM parameters.
+    /// Different Mneme instances can have different curves (sensitive vs resilient).
+    curves: ModulationCurves,
 }
 
 impl LimbicSystem {
@@ -107,6 +111,7 @@ impl LimbicSystem {
             prev_modulation: Arc::new(RwLock::new(ModulationVector::default())),
             modulation_smoothing: 0.3,       // moderate inertia by default
             surprise_bypass_threshold: 0.5,  // large jumps bypass smoothing
+            curves: ModulationCurves::default(),
         };
 
         // Spawn the heartbeat task
@@ -241,7 +246,7 @@ impl LimbicSystem {
     /// we skip smoothing (startle response / sudden shock).
     pub async fn get_modulation_vector(&self) -> ModulationVector {
         let marker = self.get_somatic_marker().await;
-        let raw = marker.to_modulation_vector();
+        let raw = marker.to_modulation_vector_with_curves(&self.curves);
 
         let mut prev = self.prev_modulation.write().await;
         let delta = prev.max_delta(&raw);
@@ -289,6 +294,16 @@ impl LimbicSystem {
     pub async fn update_prediction(&self, expected_response: &str) {
         let mut detector = self.surprise_detector.write().await;
         detector.set_prediction(expected_response);
+    }
+
+    /// Get the current modulation curves
+    pub fn get_curves(&self) -> &ModulationCurves {
+        &self.curves
+    }
+
+    /// Set new modulation curves (e.g., loaded from persistence or learned)
+    pub fn set_curves(&mut self, curves: ModulationCurves) {
+        self.curves = curves;
     }
 
     /// Check if the system needs social interaction (proactivity trigger)
