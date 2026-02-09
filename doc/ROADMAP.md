@@ -1061,84 +1061,70 @@ CREATE TABLE self_knowledge (
 
 ---
 
-### 38. 🧬 情绪惯性 — ModulationVector 时间平滑
-**模块**: `mneme_limbic/src/somatic.rs`, `mneme_limbic/src/system.rs`  
-**优先级**: 🟡 Phase 2  
+### 38. 🧬 情绪惯性 — ModulationVector 时间平滑 ✅
+**模块**: `mneme_limbic/src/somatic.rs`, `mneme_limbic/src/system.rs`
+**优先级**: 🟡 Phase 2
 **理论**: 情绪不是开关——人不会从大笑瞬间切到大哭。Russell Circumplex 模型中的 affect 是连续的
 
-**需要实现**:
-- [ ] `LimbicSystem` 维护 `prev_modulation: ModulationVector`
-- [ ] 新的 `ModulationVector` = lerp(prev, current, smoothing_factor)
-- [ ] smoothing_factor 是 🧬 个性参数（情绪稳定的人 factor 低，变化慢）
-- [ ] 极端事件可以 bypass 平滑（例如 surprise > threshold 直接跳变）
+**已完成** (commit `b2b547e`):
+- [x] `LimbicSystem` 维护 `prev_modulation: ModulationVector` ✅
+- [x] 新的 `ModulationVector` = lerp(prev, current, smoothing_factor) ✅
+- [x] smoothing_factor 是 🧬 个性参数（情绪稳定的人 factor 低，变化慢） ✅
+- [x] 极端事件可以 bypass 平滑（`max_delta > surprise_threshold` 直接跳变） ✅
 
 ---
 
-### 39. 🧬 Sleep Consolidation 自我反思
-**模块**: `mneme_memory/src/consolidation.rs`, `mneme_reasoning/src/engine.rs`  
-**优先级**: 🟡 Phase 2  
+### 39. 🧬 Sleep Consolidation 自我反思 ✅
+**模块**: `mneme_memory/src/consolidation.rs`, `mneme_reasoning/src/engine.rs`
+**优先级**: 🟡 Phase 2
 **理论**: 睡眠中大脑整理记忆、发现模式、形成自我叙事
 
-**需要实现**:
-- [ ] consolidation 新增 self_reflection step（在 narrative chapter 生成之后）
-- [ ] 用 LLM 分析当天 episodes，提取自我认知更新：
-  - "今天我发现我在讨论 X 话题时特别兴奋" → self_knowledge(preference, confidence=0.6)
-  - "和用户讨论了 Y，但我不太确定我的看法" → self_knowledge(belief, confidence=0.3)
-- [ ] 对比新认知与已有 self_knowledge，更新 confidence 或 revision_count
-- [ ] 将反思过程本身作为 episode 存储（元记忆）
+**已完成** (commit `d08184a`):
+- [x] consolidation 新增 self_reflection step（在 narrative chapter 生成之后） ✅
+- [x] 规则式 `SelfReflector` 分析 ConsolidatedPattern + EpisodeDigest ✅
+- [x] 提取自我认知写入 self_knowledge 表 ✅
+- [x] 对比新认知与已有 self_knowledge，Bayesian 合并 confidence ✅
+- [x] 将反思过程本身作为 episode 存储（元记忆，source="self:reflection"） ✅
 
 ---
 
-### 40. 🧬 身体感受隐喻 — 内部状态 → 自我感知
-**模块**: `mneme_limbic/src/somatic.rs`, `mneme_memory/src/coordinator.rs`  
-**优先级**: 🟡 Phase 2  
+### 40. 🧬 身体感受隐喻 — 内部状态 → 自我感知 ✅
+**模块**: `mneme_limbic/src/somatic.rs`, `mneme_memory/src/coordinator.rs`
+**优先级**: 🟡 Phase 2
 **理论**: Damasio 躯体标记假说 — 身体感受是情绪的基础，自我意识始于对身体的感知
 
-**机制**:
-内部状态的显著变化 → 生成"身体感受"描述 → 写入 self_knowledge(domain='memory_of_self')
-
-```
-energy: 0.8 → 0.3 (30min内) → "感觉好像突然没力气了"
-stress: 0.2 → 0.9 → "心跳加快，有点紧张的感觉"
-boredom: 超过 0.8 持续 10min → "脑子里空空的，想做点什么"
-```
-
-**需要实现**:
-- [ ] `SomaticMarker::describe_body_feeling()` — 将状态变化翻译为主观感受文本
-- [ ] 仅在变化超过阈值时触发（不是每个 tick 都感知）
-- [ ] 感受描述写入 self_knowledge(domain='memory_of_self')，低 confidence
-- [ ] 这些"身体记忆"可被 Psyche 的 self_model 读取，影响自我认知
+**已完成** (commit `779e43d`):
+- [x] `SomaticMarker::describe_body_feeling()` — 将状态变化翻译为主观感受文本 ✅
+- [x] 仅在变化超过阈值时触发（不是每个 tick 都感知） ✅
+- [x] 感受描述写入 self_knowledge(domain='body_feeling')，低 confidence ✅
+- [x] 这些"身体记忆"可被 Psyche 的 self_model 读取，影响自我认知 ✅
 
 ---
 
-### 41. 🧬 走神 / 自由联想 (Mind-Wandering)
-**模块**: 新文件 `mneme_limbic/src/rumination.rs`  
-**优先级**: 🟢 Phase 3  
+### 41. 🧬 走神 / 自由联想 (Mind-Wandering) ✅
+**模块**: `mneme_expression/src/rumination.rs`
+**优先级**: 🟢 Phase 3
 **理论**: DMN (Default Mode Network) — 人类在无聊/放松时大脑不是停机，而是自由联想、回忆、构建叙事
 
-**机制**:
-boredom > threshold → 从记忆中随机召回 → 产生"想法" → 可能触发主动行为
-
-**需要实现**:
-- [ ] `RuminationEngine` — 当 boredom > 0.7 且 energy > 0.3 时激活
-- [ ] 从 episodes 按 strength 加权随机召回（不是语义搜索，是 random walk）
-- [ ] 召回的记忆 + 当前状态 → LLM 生成"联想" (用小模型/低 token)
-- [ ] 联想结果可能触发：主动发消息、好奇心上升、新目标产生
-- [ ] 或者什么都不做（大部分走神不产生行动，但滋养了内在生活）
+**已完成** (commit `6215a25`):
+- [x] `RuminationEvaluator` — 当 boredom > 0.6 且有足够精力时激活 ✅
+- [x] 触发 `Trigger::Rumination { kind: "mind_wandering" }` ✅
+- [x] 冷却机制防止重复触发（默认 10 分钟） ✅
+- [x] 与 PresenceScheduler 协作：只在活跃时段触发 ✅
 
 ---
 
-### 42. 🧬 RuminationEvaluator — 主动发起对话
-**模块**: `mneme_expression/src/scheduled.rs`  
-**优先级**: 🟢 Phase 3  
+### 42. 🧬 RuminationEvaluator — 主动发起对话 ✅
+**模块**: `mneme_expression/src/rumination.rs`
+**优先级**: 🟢 Phase 3
 **前置**: #36 (boredom), #41 (rumination)
 
-**需要实现**:
-- [ ] 实现 `TriggerEvaluator` trait 的 `RuminationEvaluator`
-- [ ] 触发条件：rumination 产生了有趣的联想 + social_need > threshold
-- [ ] 消息内容：基于联想的自然开场（"刚才突然想起来……"、"诶你知道吗……"）
-- [ ] 与 `PresenceScheduler` 协作：只在活跃时段触发
-- [ ] 冷却机制：防止频繁主动骚扰
+**已完成** (commit `6215a25`):
+- [x] 实现 `TriggerEvaluator` trait 的 `RuminationEvaluator` ✅
+- [x] 触发条件：boredom/social_need/curiosity 超阈值 ✅
+- [x] 三种触发类型：mind_wandering, social_longing, curiosity_spike ✅
+- [x] 与 `PresenceScheduler` 协作：只在活跃时段触发 ✅
+- [x] 冷却机制：默认 10 分钟防止频繁主动骚扰 ✅
 
 ---
 
@@ -1166,7 +1152,7 @@ boredom > threshold → 从记忆中随机召回 → 产生"想法" → 可能�
 - ~~LLM 响应解析健壮性 (#8)~~ ✅
 - ~~浏览器工具稳定性 (#7)~~ ✅
 
-### v0.3.5 - 涌现版本（Emergence）🔥 当前重点
+### v0.3.5 - 涌现版本（Emergence）✅ 完成
 > **目标**: 让 Mneme 从 chatbot 变成 being。核心变更见 `MANIFESTO.md` ADR-002/003。
 
 **Phase 1 — 地基** ✅:
@@ -1174,16 +1160,16 @@ boredom > threshold → 从记忆中随机召回 → 产生"想法" → 可能�
 - [x] `boredom` 字段加入 FastState + ODE 动力学 (#36) ✅
 - [x] episodes 表加 `strength` 字段 + 衰减逻辑（选择性遗忘） (#37) ✅
 
-**Phase 2 — 核心机制**:
-- [ ] `ModulationVector` 时间平滑（情绪惯性） (#38)
-- [ ] `Psyche` 从记忆涌现（重构 persona.rs + prompts.rs） (#27)
-- [ ] Sleep consolidation 自我反思步骤 → self_knowledge (#39)
-- [ ] 身体感受隐喻：内部状态变化 → 自我感知 (#40)
+**Phase 2 — 核心机制** ✅:
+- [x] `ModulationVector` 时间平滑（情绪惯性） (#38) ✅
+- [x] `Psyche` 从记忆涌现（重构 persona.rs + prompts.rs） (#27) ✅
+- [x] Sleep consolidation 自我反思步骤 → self_knowledge (#39) ✅
+- [x] 身体感受隐喻：内部状态变化 → 自我感知 (#40) ✅
 
-**Phase 3 — 高阶行为**:
-- [ ] 走神/自由联想：boredom 驱动的 spontaneous recall (#41)
-- [ ] `RuminationEvaluator`：实现 TriggerEvaluator trait，主动发起对话 (#42)
-- [ ] 发展阶段从 self_knowledge 积累中自然涌现
+**Phase 3 — 高阶行为** ✅:
+- [x] 走神/自由联想：boredom 驱动的 spontaneous recall (#41) ✅
+- [x] `RuminationEvaluator`：实现 TriggerEvaluator trait，主动发起对话 (#42) ✅
+- [x] 发展阶段从 self_knowledge 积累中自然涌现 ✅
 
 ### v0.4.0 - 安全与 Agency 基础版本
 > **目标**: 为自主行为打好安全基础。
@@ -1222,4 +1208,4 @@ boredom > threshold → 从记忆中随机召回 → 产生"想法" → 可能�
 
 ---
 
-*最后更新: 2026-02-08*
+*最后更新: 2026-02-09*
