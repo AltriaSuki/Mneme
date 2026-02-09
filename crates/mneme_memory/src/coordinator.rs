@@ -108,6 +108,9 @@ pub struct OrganismCoordinator {
 
     /// Previous state snapshot for computing diffs in state history
     prev_snapshot: Arc<RwLock<Option<OrganismState>>>,
+
+    /// Previous somatic marker for body feeling detection (#40)
+    prev_somatic: Arc<RwLock<Option<SomaticMarker>>>,
 }
 
 impl OrganismCoordinator {
@@ -140,6 +143,7 @@ impl OrganismCoordinator {
             episode_buffer: Arc::new(RwLock::new(Vec::new())),
             db,
             prev_snapshot: Arc::new(RwLock::new(None)),
+            prev_somatic: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -254,7 +258,34 @@ impl OrganismCoordinator {
         // 6. Record state history snapshot (after state update)
         self.save_state_with_trigger("interaction").await;
 
-        // 7. Check if we should transition to drowsy/sleep
+        // 7. Body feeling detection (#40): compare somatic markers across interactions
+        {
+            let prev = self.prev_somatic.read().await.clone();
+            if let Some(ref prev_marker) = prev {
+                let feelings = soma.describe_body_feeling(prev_marker, 0.15);
+                if !feelings.is_empty() {
+                    if let Some(ref db) = self.db {
+                        for (text, intensity) in &feelings {
+                            tracing::debug!("Body feeling: {} (intensity={:.2})", text, intensity);
+                            if let Err(e) = db.store_self_knowledge(
+                                "body_feeling",
+                                text,
+                                *intensity,
+                                "somatic",
+                                None,
+                                false,
+                            ).await {
+                                tracing::warn!("Failed to store body feeling: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+            // Update prev_somatic for next comparison
+            *self.prev_somatic.write().await = Some(soma.clone());
+        }
+
+        // 8. Check if we should transition to drowsy/sleep
         self.check_lifecycle_transition().await;
 
         Ok(InteractionResult {

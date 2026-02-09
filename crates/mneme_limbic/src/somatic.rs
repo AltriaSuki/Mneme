@@ -269,6 +269,81 @@ impl SomaticMarker {
         
         ((social_factor + curiosity_factor) * energy_gate - stress_penalty).clamp(0.0, 1.0)
     }
+
+    /// Describe subjective body feelings based on state changes (Damasio somatic marker hypothesis).
+    ///
+    /// Compares current state against a previous snapshot. Returns feeling descriptions
+    /// only when changes exceed the significance threshold — not every tick produces a feeling.
+    /// Each returned tuple is (feeling_text, intensity) where intensity ∈ [0, 1].
+    pub fn describe_body_feeling(&self, prev: &SomaticMarker, threshold: f32) -> Vec<(String, f32)> {
+        let mut feelings = Vec::new();
+
+        let energy_delta = self.energy - prev.energy;
+        let stress_delta = self.stress - prev.stress;
+        let mood_delta = self.mood_bias - prev.mood_bias;
+        let social_delta = self.social_need - prev.social_need;
+        let curiosity_delta = self.curiosity - prev.curiosity;
+
+        // Energy drop
+        if energy_delta < -threshold {
+            let intensity = (-energy_delta).min(1.0);
+            let text = if self.energy < 0.2 {
+                "感觉好像突然没力气了，整个人沉沉的".to_string()
+            } else {
+                "有点累了，想休息一下".to_string()
+            };
+            feelings.push((text, intensity));
+        }
+
+        // Energy surge
+        if energy_delta > threshold {
+            let intensity = energy_delta.min(1.0);
+            feelings.push(("突然觉得精神好了很多！".to_string(), intensity));
+        }
+
+        // Stress spike
+        if stress_delta > threshold {
+            let intensity = stress_delta.min(1.0);
+            let text = if self.stress > 0.8 {
+                "心跳加快，有点紧张的感觉".to_string()
+            } else {
+                "感觉有一点点紧绷".to_string()
+            };
+            feelings.push((text, intensity));
+        }
+
+        // Stress relief
+        if stress_delta < -threshold {
+            let intensity = (-stress_delta).min(1.0);
+            feelings.push(("松了一口气，放松下来了".to_string(), intensity));
+        }
+
+        // Mood drop
+        if mood_delta < -threshold {
+            let intensity = (-mood_delta).min(1.0);
+            feelings.push(("心里有点闷闷的".to_string(), intensity));
+        }
+
+        // Mood lift
+        if mood_delta > threshold {
+            let intensity = mood_delta.min(1.0);
+            feelings.push(("心情变好了，暖暖的".to_string(), intensity));
+        }
+
+        // Social need surge
+        if social_delta > threshold && self.social_need > 0.7 {
+            let intensity = social_delta.min(1.0);
+            feelings.push(("好想和人说说话".to_string(), intensity));
+        }
+
+        // Curiosity spike
+        if curiosity_delta > threshold && self.curiosity > 0.7 {
+            let intensity = curiosity_delta.min(1.0);
+            feelings.push(("脑子里痒痒的，想知道更多".to_string(), intensity));
+        }
+
+        feelings
+    }
 }
 
 /// Linear interpolation helper
@@ -477,6 +552,55 @@ mod tests {
         };
         let delta = a.max_delta(&b);
         assert!((delta - 0.7).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_body_feeling_energy_drop() {
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.7;
+        let prev = SomaticMarker::from_state(&state);
+
+        state.fast.energy = 0.3;
+        let curr = SomaticMarker::from_state(&state);
+
+        let feelings = curr.describe_body_feeling(&prev, 0.15);
+        assert!(!feelings.is_empty());
+        assert!(feelings.iter().any(|(t, _)| t.contains("累")));
+    }
+
+    #[test]
+    fn test_body_feeling_stress_spike() {
+        let mut state = OrganismState::default();
+        state.fast.stress = 0.2;
+        let prev = SomaticMarker::from_state(&state);
+
+        state.fast.stress = 0.9;
+        let curr = SomaticMarker::from_state(&state);
+
+        let feelings = curr.describe_body_feeling(&prev, 0.15);
+        assert!(feelings.iter().any(|(t, _)| t.contains("紧")));
+    }
+
+    #[test]
+    fn test_body_feeling_no_change() {
+        let state = OrganismState::default();
+        let marker = SomaticMarker::from_state(&state);
+        // Same state → no feelings
+        let feelings = marker.describe_body_feeling(&marker, 0.15);
+        assert!(feelings.is_empty());
+    }
+
+    #[test]
+    fn test_body_feeling_mood_lift() {
+        let mut state = OrganismState::default();
+        state.medium.mood_bias = -0.3;
+        let prev = SomaticMarker::from_state(&state);
+
+        state.medium.mood_bias = 0.3;
+        let curr = SomaticMarker::from_state(&state);
+
+        let feelings = curr.describe_body_feeling(&prev, 0.15);
+        assert!(feelings.iter().any(|(t, _)| t.contains("暖")));
     }
 
     #[test]

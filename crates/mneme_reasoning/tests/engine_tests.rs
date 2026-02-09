@@ -175,13 +175,7 @@ fn tool_use_and_text_response(tool_id: &str, tool_name: &str, input: serde_json:
 }
 
 fn test_psyche() -> Psyche {
-    Psyche {
-        hippocampus: "Test identity.".into(),
-        limbic: "Test emotions.".into(),
-        cortex: "Test cognition.".into(),
-        broca: "Test language.".into(),
-        occipital: "Test senses.".into(),
-    }
+    Psyche::with_self_model("Test self model for unit tests.".into())
 }
 
 fn user_event(text: &str) -> Event {
