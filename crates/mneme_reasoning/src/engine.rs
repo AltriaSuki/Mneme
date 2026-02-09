@@ -615,6 +615,8 @@ impl Reasoning for ReasoningEngine {
                         format!("You haven't discussed '{}' in a while. Bring it up naturally.", topic),
                     Trigger::Trending { topic, .. } =>
                         format!("'{}' is trending. Mention it if relevant.", topic),
+                    Trigger::Rumination { kind, context } =>
+                        format!("[内部驱动: {}] {}", kind, context),
                 };
 
                 let (response_text, emotion, affect) = self.process_thought_loop(&prompt_text, false).await?;

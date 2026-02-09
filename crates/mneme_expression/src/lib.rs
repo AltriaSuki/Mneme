@@ -4,8 +4,10 @@ use mneme_core::Emotion;
 
 mod presence;
 mod scheduled;
+mod rumination;
 pub use presence::PresenceScheduler;
 pub use scheduled::{ScheduleEntry, ScheduledTriggerEvaluator};
+pub use rumination::{RuminationEvaluator, RuminationConfig};
 
 pub struct Humanizer {
     read_speed_cpm: u32,

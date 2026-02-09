@@ -3,7 +3,7 @@ use mneme_core::{Event, Content, Modality, Reasoning, SeedPersona, Memory};
 use mneme_memory::{SqliteMemory, OrganismCoordinator, OrganismConfig};
 use mneme_limbic::LimbicSystem;
 use mneme_reasoning::ReasoningEngine;
-use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler, Humanizer};
+use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler, Humanizer, RuminationEvaluator};
 use std::sync::Arc;
 use tracing::{info, error};
 use uuid::Uuid;
@@ -128,6 +128,10 @@ async fn main() -> anyhow::Result<()> {
     // Add default scheduled triggers (morning/evening)
     let scheduler = ScheduledTriggerEvaluator::new();
     engine.add_evaluator(Box::new(scheduler));
+
+    // Add rumination evaluator (mind-wandering, social longing, curiosity)
+    let rumination = RuminationEvaluator::new(coordinator.state());
+    engine.add_evaluator(Box::new(rumination));
 
     // Initialize Presence Scheduler (filters triggers by active hours)
     let presence = PresenceScheduler::default();

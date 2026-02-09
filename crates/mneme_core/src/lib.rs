@@ -76,6 +76,13 @@ pub enum Trigger {
         platform: String,
         topic: String,
     },
+    /// Internal state-driven rumination (mind-wandering, social longing, curiosity)
+    Rumination {
+        /// Kind: "mind_wandering", "social_longing", "curiosity_spike"
+        kind: String,
+        /// Human-readable context for the LLM
+        context: String,
+    },
 }
 
 #[async_trait]
