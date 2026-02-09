@@ -16,6 +16,7 @@ use tokio::sync::{RwLock, watch};
 use chrono::{Utc, Timelike};
 use anyhow::Result;
 
+use mneme_core::Memory;
 use mneme_core::{
     OrganismState, DefaultDynamics, SensoryInput,
     ValueJudge, RuleBasedJudge, Situation,
@@ -344,6 +345,44 @@ impl OrganismCoordinator {
             if let Some(ref db) = self.db {
                 if let Err(e) = db.save_narrative_chapter(chapter).await {
                     tracing::error!("Failed to save narrative chapter: {}", e);
+                }
+            }
+        }
+
+        // Store self-reflection results in self_knowledge table
+        if !result.self_reflections.is_empty() {
+            if let Some(ref db) = self.db {
+                for candidate in &result.self_reflections {
+                    if let Err(e) = db.store_self_knowledge(
+                        &candidate.domain,
+                        &candidate.content,
+                        candidate.confidence,
+                        "consolidation",
+                        None,
+                        false,
+                    ).await {
+                        tracing::warn!("Failed to store self-reflection: {}", e);
+                    }
+                }
+                tracing::info!(
+                    "Stored {} self-reflection entries",
+                    result.self_reflections.len()
+                );
+
+                // Store the reflection summary as a meta-episode
+                let summary = crate::SelfReflector::format_reflection_summary(
+                    &result.self_reflections,
+                );
+                let meta_content = mneme_core::Content {
+                    id: uuid::Uuid::new_v4(),
+                    source: "self:reflection".to_string(),
+                    author: "Mneme".to_string(),
+                    body: summary,
+                    timestamp: chrono::Utc::now().timestamp(),
+                    modality: mneme_core::Modality::Text,
+                };
+                if let Err(e) = db.memorize(&meta_content).await {
+                    tracing::warn!("Failed to store reflection meta-episode: {}", e);
                 }
             }
         }

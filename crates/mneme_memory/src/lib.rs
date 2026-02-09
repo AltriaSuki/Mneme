@@ -11,7 +11,7 @@ pub use sqlite::SelfKnowledge;
 pub use sqlite::StateSnapshot;
 pub use feedback_buffer::{FeedbackBuffer, FeedbackSignal, SignalType, ConsolidatedPattern, StateUpdates};
 pub use narrative::{NarrativeWeaver, NarrativeChapter, EpisodeDigest, CrisisEvent};
-pub use consolidation::{SleepConsolidator, SleepConfig, ConsolidationResult};
+pub use consolidation::{SleepConsolidator, SleepConfig, ConsolidationResult, SelfReflector, SelfKnowledgeCandidate};
 pub use coordinator::{OrganismCoordinator, OrganismConfig, LifecycleState, InteractionResult, ActionEvaluation};
 
 #[cfg(test)]
