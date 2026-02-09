@@ -1222,6 +1222,43 @@ impl SqliteMemory {
         }
         output
     }
+
+    /// Seed self_knowledge from persona files (first-run only).
+    ///
+    /// Each (domain, content) pair is stored as a source="seed" entry with
+    /// high confidence (0.9). Idempotent: skips if seed entries already exist.
+    pub async fn seed_self_knowledge(&self, entries: &[(&str, &str)]) -> Result<usize> {
+        // Check if any seed entries already exist
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM self_knowledge WHERE source = 'seed'"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to check seed entries")?;
+
+        if count > 0 {
+            tracing::info!("Self-knowledge already seeded ({} entries), skipping", count);
+            return Ok(0);
+        }
+
+        let mut seeded = 0;
+        for (domain, content) in entries {
+            self.store_self_knowledge(domain, content, 0.9, "seed", None, false).await?;
+            seeded += 1;
+        }
+        tracing::info!("Seeded {} self-knowledge entries from persona files", seeded);
+        Ok(seeded)
+    }
+
+    /// Build a Psyche from the current self_knowledge table.
+    ///
+    /// Loads all entries with confidence > 0.1, formats them, and returns
+    /// a Psyche with the formatted self-model.
+    pub async fn build_psyche(&self) -> Result<mneme_core::Psyche> {
+        let entries = self.get_all_self_knowledge(0.1).await?;
+        let self_model = Self::format_self_knowledge_for_prompt(&entries);
+        Ok(mneme_core::Psyche::with_self_model(self_model))
+    }
 }
 
 // =============================================================================

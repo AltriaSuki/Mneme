@@ -5,7 +5,7 @@ pub mod state;
 pub mod dynamics;
 pub mod values;
 
-pub use persona::Psyche;
+pub use persona::{Psyche, SeedPersona};
 pub use affect::Affect;
 pub use state::{OrganismState, FastState, MediumState, SlowState, SensoryInput, AttachmentStyle, ValueNetwork};
 pub use dynamics::{Dynamics, DefaultDynamics};

@@ -1,5 +1,5 @@
 use clap::Parser;
-use mneme_core::{Event, Content, Modality, Reasoning, Psyche, Memory};
+use mneme_core::{Event, Content, Modality, Reasoning, SeedPersona, Memory};
 use mneme_memory::{SqliteMemory, OrganismCoordinator, OrganismConfig};
 use mneme_limbic::LimbicSystem;
 use mneme_reasoning::ReasoningEngine;
@@ -70,13 +70,20 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Initializing Mneme...");
     
-    // 1. Load Persona
-    info!("Loading Psyche from {}...", args.persona);
-    let psyche = Psyche::load(&args.persona).await?;
-    
-    // 2. Initialize Memory
+    // 1. Initialize Memory (before Psyche — Psyche reads from DB)
     info!("Connecting to Memory at {}...", args.db);
     let memory = Arc::new(SqliteMemory::new(&args.db).await?);
+
+    // 2. Load Psyche (ADR-002: persona emerges from memory)
+    info!("Loading seed persona from {}...", args.persona);
+    let seed = SeedPersona::load(&args.persona).await?;
+    if !seed.is_empty() {
+        let seeded = memory.seed_self_knowledge(&seed.to_seed_entries()).await?;
+        if seeded > 0 {
+            info!("First run: seeded {} self-knowledge entries from persona files", seeded);
+        }
+    }
+    let psyche = memory.build_psyche().await?;
 
     // 3. Initialize Source Manager
     let source_manager = Arc::new(SourceManager::new());
