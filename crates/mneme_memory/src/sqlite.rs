@@ -283,12 +283,48 @@ impl SqliteMemory {
         .await
         .context("Failed to create token_usage timestamp index")?;
 
+        // Modulation samples table — records (state, modulation, feedback) for offline learning
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS modulation_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                energy REAL NOT NULL,
+                stress REAL NOT NULL,
+                arousal REAL NOT NULL,
+                mood_bias REAL NOT NULL,
+                social_need REAL NOT NULL,
+                modulation_json TEXT NOT NULL,
+                feedback_valence REAL NOT NULL,
+                timestamp INTEGER NOT NULL,
+                consumed INTEGER NOT NULL DEFAULT 0
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create modulation_samples table")?;
+
+        // Learned curves table — persists the latest learned ModulationCurves
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS learned_curves (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                curves_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create learned_curves table")?;
+
         Ok(())
     }
 }
 
 #[async_trait]
 impl Memory for SqliteMemory {
+    #[tracing::instrument(skip(self), fields(query))]
     async fn recall(&self, query: &str) -> Result<String> {
         // Generate embedding for the query
         let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
@@ -339,6 +375,7 @@ impl Memory for SqliteMemory {
         Ok(context)
     }
 
+    #[tracing::instrument(skip(self), fields(query, mood_bias))]
     async fn recall_with_bias(&self, query: &str, mood_bias: f32) -> Result<String> {
         let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
 
@@ -1460,6 +1497,122 @@ impl SqliteMemory {
         let total_in: i64 = row.get("total_in");
         let total_out: i64 = row.get("total_out");
         Ok((total_in as u64, total_out as u64))
+    }
+}
+
+// =============================================================================
+// Modulation Sample & Learned Curves Persistence
+// =============================================================================
+
+impl SqliteMemory {
+    /// Save a modulation sample (state + modulation + feedback) for offline learning.
+    pub async fn save_modulation_sample(&self, sample: &crate::learning::ModulationSample) -> Result<i64> {
+        let modulation_json = serde_json::to_string(&sample.modulation)
+            .context("Failed to serialize modulation vector")?;
+
+        let result = sqlx::query(
+            "INSERT INTO modulation_samples (energy, stress, arousal, mood_bias, social_need, modulation_json, feedback_valence, timestamp, consumed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"
+        )
+        .bind(sample.energy as f64)
+        .bind(sample.stress as f64)
+        .bind(sample.arousal as f64)
+        .bind(sample.mood_bias as f64)
+        .bind(sample.social_need as f64)
+        .bind(&modulation_json)
+        .bind(sample.feedback_valence as f64)
+        .bind(sample.timestamp)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save modulation sample")?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Load all unconsumed modulation samples for offline learning.
+    pub async fn load_unconsumed_samples(&self) -> Result<Vec<crate::learning::ModulationSample>> {
+        use mneme_limbic::ModulationVector;
+
+        let rows = sqlx::query(
+            "SELECT id, energy, stress, arousal, mood_bias, social_need, modulation_json, feedback_valence, timestamp FROM modulation_samples WHERE consumed = 0 ORDER BY timestamp ASC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to load unconsumed samples")?;
+
+        let mut samples = Vec::with_capacity(rows.len());
+        for row in rows {
+            let json_str: String = row.get("modulation_json");
+            let modulation: ModulationVector = serde_json::from_str(&json_str)
+                .context("Failed to deserialize modulation vector")?;
+
+            samples.push(crate::learning::ModulationSample {
+                id: row.get("id"),
+                energy: row.get::<f64, _>("energy") as f32,
+                stress: row.get::<f64, _>("stress") as f32,
+                arousal: row.get::<f64, _>("arousal") as f32,
+                mood_bias: row.get::<f64, _>("mood_bias") as f32,
+                social_need: row.get::<f64, _>("social_need") as f32,
+                modulation,
+                feedback_valence: row.get::<f64, _>("feedback_valence") as f32,
+                timestamp: row.get("timestamp"),
+            });
+        }
+        Ok(samples)
+    }
+
+    /// Mark samples as consumed after offline learning has processed them.
+    pub async fn mark_samples_consumed(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders: Vec<String> = ids.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "UPDATE modulation_samples SET consumed = 1 WHERE id IN ({})",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query(&sql);
+        for id in ids {
+            query = query.bind(id);
+        }
+        query.execute(&self.pool).await
+            .context("Failed to mark samples consumed")?;
+        Ok(())
+    }
+
+    /// Save learned ModulationCurves (upsert — always id=1).
+    pub async fn save_learned_curves(&self, curves: &mneme_limbic::ModulationCurves) -> Result<()> {
+        let json = serde_json::to_string(curves)
+            .context("Failed to serialize curves")?;
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            "INSERT INTO learned_curves (id, curves_json, updated_at) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET curves_json = excluded.curves_json, updated_at = excluded.updated_at"
+        )
+        .bind(&json)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save learned curves")?;
+
+        Ok(())
+    }
+
+    /// Load previously learned ModulationCurves from DB.
+    pub async fn load_learned_curves(&self) -> Result<Option<mneme_limbic::ModulationCurves>> {
+        let row = sqlx::query("SELECT curves_json FROM learned_curves WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to load learned curves")?;
+
+        match row {
+            Some(r) => {
+                let json_str: String = r.get("curves_json");
+                let curves = serde_json::from_str(&json_str)
+                    .context("Failed to deserialize learned curves")?;
+                Ok(Some(curves))
+            }
+            None => Ok(None),
+        }
     }
 }
 

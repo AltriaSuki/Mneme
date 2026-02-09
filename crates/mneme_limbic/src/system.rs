@@ -84,7 +84,8 @@ pub struct LimbicSystem {
 
     /// Learnable modulation curves — how state maps to LLM parameters.
     /// Different Mneme instances can have different curves (sensitive vs resilient).
-    curves: ModulationCurves,
+    /// Protected by RwLock so offline learning can update curves via `&self`.
+    curves: RwLock<ModulationCurves>,
 }
 
 impl LimbicSystem {
@@ -111,7 +112,7 @@ impl LimbicSystem {
             prev_modulation: Arc::new(RwLock::new(ModulationVector::default())),
             modulation_smoothing: 0.3,       // moderate inertia by default
             surprise_bypass_threshold: 0.5,  // large jumps bypass smoothing
-            curves: ModulationCurves::default(),
+            curves: RwLock::new(ModulationCurves::default()),
         };
 
         // Spawn the heartbeat task
@@ -246,7 +247,9 @@ impl LimbicSystem {
     /// we skip smoothing (startle response / sudden shock).
     pub async fn get_modulation_vector(&self) -> ModulationVector {
         let marker = self.get_somatic_marker().await;
-        let raw = marker.to_modulation_vector_with_curves(&self.curves);
+        let curves = self.curves.read().await;
+        let raw = marker.to_modulation_vector_with_curves(&curves);
+        drop(curves);
 
         let mut prev = self.prev_modulation.write().await;
         let delta = prev.max_delta(&raw);
@@ -296,14 +299,14 @@ impl LimbicSystem {
         detector.set_prediction(expected_response);
     }
 
-    /// Get the current modulation curves
-    pub fn get_curves(&self) -> &ModulationCurves {
-        &self.curves
+    /// Get a clone of the current modulation curves
+    pub async fn get_curves(&self) -> ModulationCurves {
+        self.curves.read().await.clone()
     }
 
     /// Set new modulation curves (e.g., loaded from persistence or learned)
-    pub fn set_curves(&mut self, curves: ModulationCurves) {
-        self.curves = curves;
+    pub async fn set_curves(&self, curves: ModulationCurves) {
+        *self.curves.write().await = curves;
     }
 
     /// Check if the system needs social interaction (proactivity trigger)

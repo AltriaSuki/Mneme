@@ -13,6 +13,7 @@ use crate::llm::{LlmClient, CompletionParams};
 
 #[async_trait::async_trait]
 impl LlmClient for AnthropicClient {
+    #[tracing::instrument(skip(self, system, messages, tools, params), fields(model = %self.model))]
     async fn complete(
         &self,
         system: &str,

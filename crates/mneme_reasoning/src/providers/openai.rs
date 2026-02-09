@@ -35,6 +35,7 @@ impl OpenAiClient {
 
 #[async_trait::async_trait]
 impl LlmClient for OpenAiClient {
+    #[tracing::instrument(skip(self, system, messages, tools, params), fields(model = %self.model))]
     async fn complete(
         &self,
         system: &str,

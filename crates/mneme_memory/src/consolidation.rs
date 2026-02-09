@@ -96,6 +96,7 @@ impl SleepConsolidator {
     /// 1. Consolidates feedback buffer patterns
     /// 2. Weaves narrative chapters
     /// 3. Returns state updates to apply
+    #[tracing::instrument(skip(self, episodes, current_state))]
     pub async fn consolidate(
         &self,
         episodes: &[EpisodeDigest],

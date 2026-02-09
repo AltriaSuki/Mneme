@@ -177,6 +177,12 @@ impl OrganismCoordinator {
                 );
             }
         }
+
+        // Load learned ModulationCurves from DB
+        if let Ok(Some(curves)) = db.load_learned_curves().await {
+            coordinator.limbic.set_curves(curves).await;
+            tracing::info!("Loaded learned ModulationCurves from DB");
+        }
         
         Ok(coordinator)
     }
@@ -364,6 +370,34 @@ impl OrganismCoordinator {
         }
     }
 
+    /// Record a modulation sample for offline curve learning.
+    ///
+    /// Called after each interaction with the modulation vector that was used
+    /// and the feedback valence from the user's response.
+    pub async fn record_modulation_sample(
+        &self,
+        modulation: &mneme_limbic::ModulationVector,
+        feedback_valence: f32,
+    ) {
+        if let Some(ref db) = self.db {
+            let state = self.state.read().await;
+            let sample = crate::learning::ModulationSample {
+                id: 0,
+                energy: state.fast.energy,
+                stress: state.fast.stress,
+                arousal: state.fast.affect.arousal,
+                mood_bias: state.medium.mood_bias,
+                social_need: state.fast.social_need,
+                modulation: modulation.clone(),
+                feedback_valence,
+                timestamp: chrono::Utc::now().timestamp(),
+            };
+            if let Err(e) = db.save_modulation_sample(&sample).await {
+                tracing::warn!("Failed to save modulation sample: {}", e);
+            }
+        }
+    }
+
     /// Trigger sleep consolidation manually
     pub async fn trigger_sleep(&self) -> Result<ConsolidationResult> {
         // Transition to sleeping state
@@ -458,6 +492,22 @@ impl OrganismCoordinator {
                 tracing::warn!("Failed to decay episode strengths: {}", e);
             } else {
                 tracing::info!("Applied episode strength decay (factor={})", decay_factor);
+            }
+        }
+
+        // Offline learning: adjust ModulationCurves from collected samples
+        if let Some(ref db) = self.db {
+            let samples = db.load_unconsumed_samples().await.unwrap_or_default();
+            if !samples.is_empty() {
+                let learner = crate::learning::CurveLearner::new();
+                let current_curves = self.limbic.get_curves().await;
+                if let Some(new_curves) = learner.learn(&current_curves, &samples) {
+                    self.limbic.set_curves(new_curves.clone()).await;
+                    let _ = db.save_learned_curves(&new_curves).await;
+                    tracing::info!("Adjusted ModulationCurves from {} samples", samples.len());
+                }
+                let ids: Vec<i64> = samples.iter().map(|s| s.id).collect();
+                let _ = db.mark_samples_consumed(&ids).await;
             }
         }
 

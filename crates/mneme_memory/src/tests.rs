@@ -739,3 +739,177 @@ async fn test_recall_with_bias_ordering_differs() {
     // The ordering may differ — at minimum, both should return non-empty results
     // (Exact ordering depends on embedding similarity, so we just verify no crash)
 }
+
+// =============================================================================
+// Modulation Sample & Curve Learning Tests (#13 Offline Learning)
+// =============================================================================
+
+#[tokio::test]
+async fn test_modulation_sample_persist() {
+    use crate::learning::ModulationSample;
+    use mneme_limbic::ModulationVector;
+
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let sample = ModulationSample {
+        id: 0,
+        energy: 0.7,
+        stress: 0.3,
+        arousal: 0.5,
+        mood_bias: 0.1,
+        social_need: 0.4,
+        modulation: ModulationVector {
+            max_tokens_factor: 1.2,
+            temperature_delta: 0.05,
+            context_budget_factor: 0.9,
+            recall_mood_bias: 0.1,
+            silence_inclination: 0.2,
+            typing_speed_factor: 1.1,
+        },
+        feedback_valence: 0.6,
+        timestamp: 12345,
+    };
+
+    let id = memory.save_modulation_sample(&sample).await.unwrap();
+    assert!(id > 0);
+
+    let loaded = memory.load_unconsumed_samples().await.unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert!((loaded[0].energy - 0.7).abs() < 0.01);
+    assert!((loaded[0].modulation.max_tokens_factor - 1.2).abs() < 0.01);
+    assert!((loaded[0].feedback_valence - 0.6).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn test_modulation_sample_mark_consumed() {
+    use crate::learning::ModulationSample;
+    use mneme_limbic::ModulationVector;
+
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Save two samples
+    for i in 0..2 {
+        let sample = ModulationSample {
+            id: 0,
+            energy: 0.5,
+            stress: 0.3,
+            arousal: 0.4,
+            mood_bias: 0.0,
+            social_need: 0.5,
+            modulation: ModulationVector::default(),
+            feedback_valence: 0.5,
+            timestamp: 100 + i,
+        };
+        memory.save_modulation_sample(&sample).await.unwrap();
+    }
+
+    let loaded = memory.load_unconsumed_samples().await.unwrap();
+    assert_eq!(loaded.len(), 2);
+
+    // Mark first as consumed
+    memory.mark_samples_consumed(&[loaded[0].id]).await.unwrap();
+
+    let remaining = memory.load_unconsumed_samples().await.unwrap();
+    assert_eq!(remaining.len(), 1);
+}
+
+#[tokio::test]
+async fn test_curves_persist_and_load() {
+    use mneme_limbic::ModulationCurves;
+
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Initially no curves
+    let loaded = memory.load_learned_curves().await.unwrap();
+    assert!(loaded.is_none());
+
+    // Save curves
+    let mut curves = ModulationCurves::default();
+    curves.energy_to_max_tokens.1 = 1.3;
+    curves.stress_to_temperature.1 = 0.2;
+    memory.save_learned_curves(&curves).await.unwrap();
+
+    // Load back
+    let loaded = memory.load_learned_curves().await.unwrap().unwrap();
+    assert!((loaded.energy_to_max_tokens.1 - 1.3).abs() < 0.01);
+    assert!((loaded.stress_to_temperature.1 - 0.2).abs() < 0.01);
+
+    // Upsert (overwrite)
+    curves.energy_to_max_tokens.1 = 0.9;
+    memory.save_learned_curves(&curves).await.unwrap();
+
+    let loaded2 = memory.load_learned_curves().await.unwrap().unwrap();
+    assert!((loaded2.energy_to_max_tokens.1 - 0.9).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn test_sleep_learns_curves() {
+    use crate::{learning::ModulationSample, EpisodeDigest};
+    use mneme_limbic::ModulationVector;
+    use std::sync::Arc;
+    use chrono::Utc;
+
+    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
+    let mut config = crate::OrganismConfig::default();
+    config.sleep_config.allow_manual_trigger = true;
+    let coordinator = crate::OrganismCoordinator::with_config(
+        limbic.clone(), config, Some(memory.clone()),
+    );
+
+    // Record enough positive modulation samples
+    let high_mv = ModulationVector {
+        max_tokens_factor: 1.4,
+        temperature_delta: 0.1,
+        context_budget_factor: 1.0,
+        recall_mood_bias: 0.2,
+        silence_inclination: 0.3,
+        typing_speed_factor: 1.5,
+    };
+    for i in 0..8 {
+        let sample = ModulationSample {
+            id: 0,
+            energy: 0.7,
+            stress: 0.2,
+            arousal: 0.5,
+            mood_bias: 0.1,
+            social_need: 0.3,
+            modulation: high_mv.clone(),
+            feedback_valence: 0.8,
+            timestamp: 1000 + i,
+        };
+        memory.save_modulation_sample(&sample).await.unwrap();
+    }
+
+    // Snapshot curves before sleep
+    let before = limbic.get_curves().await;
+
+    // Add episodes for consolidation
+    {
+        let mut episodes = coordinator.episode_buffer.write().await;
+        for i in 0..15 {
+            episodes.push(EpisodeDigest {
+                timestamp: Utc::now(),
+                author: "user".to_string(),
+                content: format!("Message {}", i),
+                emotional_valence: 0.5,
+            });
+        }
+    }
+
+    // Trigger sleep — should learn curves
+    coordinator.trigger_sleep().await.unwrap();
+
+    // Curves should have changed
+    let after = limbic.get_curves().await;
+    let changed = (after.energy_to_max_tokens.1 - before.energy_to_max_tokens.1).abs() > 0.001;
+    assert!(changed, "Curves should have been adjusted by offline learning");
+
+    // Samples should be consumed
+    let remaining = memory.load_unconsumed_samples().await.unwrap();
+    assert!(remaining.is_empty(), "All samples should be consumed after sleep");
+
+    // Curves should be persisted
+    let persisted = memory.load_learned_curves().await.unwrap();
+    assert!(persisted.is_some(), "Learned curves should be persisted to DB");
+}

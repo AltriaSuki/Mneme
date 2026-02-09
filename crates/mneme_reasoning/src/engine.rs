@@ -211,6 +211,7 @@ impl ReasoningEngine {
         (valence * 0.8, intensity.max(0.2)) // Moderate the valence, ensure some intensity
     }
 
+    #[tracing::instrument(skip(self, input_text), fields(is_user_message))]
     async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<(String, Emotion, mneme_core::Affect)> {
         use crate::api_types::{Message, Role, ContentBlock};
 
@@ -471,10 +472,17 @@ impl ReasoningEngine {
             // Record self-reflection about our response
             self.coordinator.record_feedback(
                 SignalType::SituationInterpretation,
-                format!("对「{}」的回应：{}", 
+                format!("对「{}」的回应：{}",
                     input_text.chars().take(50).collect::<String>(),
                     final_content.chars().take(100).collect::<String>()),
                 0.7, // Moderate confidence
+                final_affect.valence,
+            ).await;
+
+            // Record modulation sample for offline curve learning
+            let modulation = self.limbic.get_modulation_vector().await;
+            self.coordinator.record_modulation_sample(
+                &modulation,
                 final_affect.valence,
             ).await;
         }
@@ -483,6 +491,7 @@ impl ReasoningEngine {
     }
     
     /// Execute a tool with automatic retry for transient failures.
+    #[tracing::instrument(skip(self, input), fields(tool = name))]
     async fn execute_tool_with_retry(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
         let outcome = self.execute_tool(name, input).await;
         

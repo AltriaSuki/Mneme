@@ -60,6 +60,18 @@ struct Args {
     /// Model to use (overrides config file)
     #[arg(short, long)]
     model: Option<String>,
+
+    /// Log level (trace, debug, info, warn, error)
+    #[arg(long, default_value = "info")]
+    log_level: String,
+
+    /// Output logs as JSON
+    #[arg(long)]
+    log_json: bool,
+
+    /// Log file path (additional to stderr)
+    #[arg(long)]
+    log_file: Option<String>,
 }
 
 #[tokio::main]
@@ -67,8 +79,50 @@ async fn main() -> anyhow::Result<()> {
     // Load .env file if it exists
     dotenv::dotenv().ok();
 
-    tracing_subscriber::fmt::init();
     let args = Args::parse();
+
+    // Configurable tracing subscriber
+    {
+        use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+
+        let env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(&args.log_level));
+
+        if let Some(ref log_path) = args.log_file {
+            // File + stderr dual output
+            let file_appender = tracing_appender::rolling::daily(
+                std::path::Path::new(log_path).parent().unwrap_or(std::path::Path::new(".")),
+                std::path::Path::new(log_path).file_name().unwrap_or(std::ffi::OsStr::new("mneme.log")),
+            );
+            let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+            // Leak the guard so it lives for the program's lifetime
+            std::mem::forget(_guard);
+
+            if args.log_json {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(fmt::layer().json().with_writer(std::io::stderr))
+                    .with(fmt::layer().json().with_writer(non_blocking))
+                    .init();
+            } else {
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(fmt::layer().with_writer(std::io::stderr))
+                    .with(fmt::layer().with_writer(non_blocking))
+                    .init();
+            }
+        } else if args.log_json {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt::layer().json())
+                .init();
+        } else {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt::layer())
+                .init();
+        }
+    }
 
     // Load unified config (file + env overrides)
     let mut config = MnemeConfig::load_or_default(&args.config);

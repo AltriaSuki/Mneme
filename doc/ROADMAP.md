@@ -707,8 +707,15 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 ## 🟢 低优先级 (Low Priority)
 
 ### 13. 🧬 离线学习管道
-**模块**: `mneme_memory/src/consolidation.rs`  
+**模块**: `mneme_memory/src/learning.rs`, `mneme_memory/src/coordinator.rs`
 **问题**: 当前整合只在 "睡眠" 时间进行，需要完整的离线学习流程。这是实现个性化的核心机制。
+
+**已完成（v0.5.0）**:
+- [x] `ModulationSample` 记录 (state, modulation, feedback) 三元组 ✅
+- [x] `CurveLearner` 梯度无关曲线优化器（reward-weighted nudge） ✅
+- [x] Sleep 时自动加载未消费样本、学习曲线、持久化 ✅
+- [x] 启动时加载已学习的 `ModulationCurves` ✅
+- [x] SQLite 持久化：`modulation_samples` + `learned_curves` 表 ✅
 
 **长期目标**:
 - [ ] 定时任务调度器
@@ -744,7 +751,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 ---
 
 ### 15. 🏗️ Observability & Metrics
-**模块**: 全局  
+**模块**: 全局
 **问题**: 缺乏运行时监控和性能指标。
 
 **需要实现**:
@@ -752,7 +759,10 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
   - API 调用延迟/成功率
   - 状态值分布
   - 内存使用
-- [ ] Structured logging (JSON)
+- [x] Structured logging (JSON) ✅ — `--log-json` CLI flag, `tracing-subscriber` JSON layer
+- [x] Configurable log levels ✅ — `--log-level` CLI flag + `RUST_LOG` env var via `EnvFilter`
+- [x] File logging ✅ — `--log-file` with daily rolling via `tracing-appender`
+- [x] Key method instrumentation ✅ — `#[tracing::instrument]` on process_thought_loop, execute_tool_with_retry, complete (Anthropic/OpenAI), recall/recall_with_bias, consolidate
 - [ ] Distributed tracing (OpenTelemetry)
 - [ ] Grafana dashboard 模板
 
@@ -874,7 +884,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] `LimbicSystem` 持有 curves，`to_modulation_vector_with_curves()` 使用 ✅
 - [x] 不同实例的曲线不同（敏感型 vs 坚韧型 vs 戏剧化型） ✅ — 通过 `set_curves()` 配置
 - [ ] 存储到 `OrganismState.slow` 或独立的 `PersonalityParams`（序列化已支持）
-- [ ] 从反馈中调整曲线参数
+- [x] 从反馈中调整曲线参数 ✅ — `CurveLearner` reward-weighted nudge, sleep 时自动学习
 
 **长期：完全数据驱动**:
 - [ ] 神经网络直接从 `OrganismState` 输出 `ModulationVector`
@@ -1181,9 +1191,9 @@ CREATE TABLE self_knowledge (
 - [x] Sleep 时 episode 强度衰减（Ebbinghaus 遗忘曲线） ✅
 - [x] Recall 情绪偏置 — mood-congruent memory (#20) ✅
 - [x] 可学习的 ModulationCurves 基础结构 (#20 中期) ✅
-- 离线学习管道 (#13)
+- [x] 离线学习管道 (#13) ✅ — CurveLearner + ModulationSample 持久化 + sleep 自动学习
+- [x] Observability & Metrics (#15) ✅ — 可配置日志级别/JSON/文件输出 + instrument 关键方法
 - LLM 流式输出 (#31)
-- Observability & Metrics (#15)
 - 向量搜索 ANN 索引 (#33)
 
 ### v0.6.0 - 自主 Agency 版本
