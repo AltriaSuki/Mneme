@@ -1,5 +1,10 @@
 use serde_json::json;
+use std::sync::Arc;
 use crate::api_types::{Tool, ToolInputSchema};
+use crate::engine::{ToolOutcome, ToolErrorKind};
+use crate::tool_registry::ToolHandler;
+use mneme_core::safety::CapabilityGuard;
+use mneme_os::Executor;
 
 /// Tool descriptions embed parameter specs directly in the text as a fallback.
 /// Some API proxies strip `input_schema`, so the model must be able to infer
@@ -99,4 +104,198 @@ pub fn browser_get_html_tool() -> Tool {
             required: vec![],
         },
     }
+}
+
+// ============================================================================
+// ToolHandler implementations
+// ============================================================================
+
+/// Shell command execution handler with safety guard.
+pub struct ShellToolHandler {
+    pub executor: Arc<dyn Executor>,
+    pub guard: Option<Arc<CapabilityGuard>>,
+}
+
+#[async_trait::async_trait]
+impl ToolHandler for ShellToolHandler {
+    fn name(&self) -> &str { "shell" }
+    fn description(&self) -> &str { "Execute a shell command on the local OS" }
+    fn schema(&self) -> Tool { shell_tool() }
+
+    async fn execute(&self, input: &serde_json::Value) -> ToolOutcome {
+        let cmd = match input.get("command").and_then(|v| v.as_str()) {
+            Some(c) => c,
+            None => return ToolOutcome {
+                content: format!(
+                    "Missing 'command' parameter. Expected: {{\"command\": \"<shell command>\"}}. Got: {}",
+                    input
+                ),
+                is_error: true,
+                error_kind: Some(ToolErrorKind::Permanent),
+            },
+        };
+
+        // Safety guard check
+        if let Some(ref guard) = self.guard {
+            if let Err(denied) = guard.check_command(cmd) {
+                return ToolOutcome {
+                    content: format!("Safety: {}", denied),
+                    is_error: true,
+                    error_kind: Some(ToolErrorKind::Permanent),
+                };
+            }
+        }
+
+        match self.executor.execute(cmd).await {
+            Ok(out) => ToolOutcome { content: out, is_error: false, error_kind: None },
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("timed out") || msg.contains("spawn") {
+                    ToolOutcome {
+                        content: format!("Shell command failed (transient): {}", msg),
+                        is_error: true,
+                        error_kind: Some(ToolErrorKind::Transient),
+                    }
+                } else {
+                    ToolOutcome {
+                        content: format!("Shell command failed: {}", msg),
+                        is_error: true,
+                        error_kind: Some(ToolErrorKind::Permanent),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Generic browser tool handler that wraps a shared browser session.
+pub struct BrowserToolHandler {
+    pub session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>,
+    tool_name: String,
+    tool_schema: Tool,
+}
+
+impl BrowserToolHandler {
+    pub fn goto(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
+        Self { session, tool_name: "browser_goto".into(), tool_schema: browser_goto_tool() }
+    }
+    pub fn click(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
+        Self { session, tool_name: "browser_click".into(), tool_schema: browser_click_tool() }
+    }
+    pub fn type_text(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
+        Self { session, tool_name: "browser_type".into(), tool_schema: browser_type_tool() }
+    }
+    pub fn screenshot(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
+        Self { session, tool_name: "browser_screenshot".into(), tool_schema: browser_screenshot_tool() }
+    }
+    pub fn get_html(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
+        Self { session, tool_name: "browser_get_html".into(), tool_schema: browser_get_html_tool() }
+    }
+
+    fn parse_action(&self, input: &serde_json::Value) -> Result<mneme_browser::BrowserAction, String> {
+        use mneme_browser::BrowserAction;
+        match self.tool_name.as_str() {
+            "browser_goto" => input.get("url").and_then(|u| u.as_str())
+                .map(|url| BrowserAction::Goto { url: url.to_string() })
+                .ok_or_else(|| "Missing 'url' parameter".to_string()),
+            "browser_click" => input.get("selector").and_then(|s| s.as_str())
+                .map(|sel| BrowserAction::Click { selector: sel.to_string() })
+                .ok_or_else(|| "Missing 'selector' parameter".to_string()),
+            "browser_type" => {
+                let sel = input.get("selector").and_then(|s| s.as_str());
+                let txt = input.get("text").and_then(|t| t.as_str());
+                match (sel, txt) {
+                    (Some(s), Some(t)) => Ok(BrowserAction::Type {
+                        selector: s.to_string(),
+                        text: t.to_string(),
+                    }),
+                    _ => Err("Missing 'selector' or 'text'".to_string()),
+                }
+            }
+            "browser_screenshot" => Ok(BrowserAction::Screenshot),
+            "browser_get_html" => Ok(BrowserAction::GetHtml),
+            _ => Err(format!("Unknown browser tool: {}", self.tool_name)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolHandler for BrowserToolHandler {
+    fn name(&self) -> &str { &self.tool_name }
+    fn description(&self) -> &str { "Browser automation tool" }
+    fn schema(&self) -> Tool { self.tool_schema.clone() }
+
+    async fn execute(&self, input: &serde_json::Value) -> ToolOutcome {
+        let action = match self.parse_action(input) {
+            Ok(a) => a,
+            Err(msg) => return ToolOutcome {
+                content: msg,
+                is_error: true,
+                error_kind: Some(ToolErrorKind::Permanent),
+            },
+        };
+
+        let mut session = self.session.lock().await;
+
+        // Health check
+        if let Some(client) = session.as_ref() {
+            if !client.is_alive() {
+                *session = None;
+            }
+        }
+
+        // Ensure session exists
+        if session.is_none() {
+            match create_browser_session() {
+                Ok(c) => { *session = Some(c); }
+                Err(e) => return ToolOutcome {
+                    content: format!("Failed to launch browser: {}", e),
+                    is_error: true,
+                    error_kind: Some(ToolErrorKind::Transient),
+                },
+            }
+        }
+
+        // Execute action
+        if let Some(client) = session.as_mut() {
+            match client.execute_action(action.clone()) {
+                Ok(out) => return ToolOutcome {
+                    content: out, is_error: false, error_kind: None,
+                },
+                Err(e) => {
+                    tracing::warn!("Browser action failed, recovering: {}", e);
+                    *session = None;
+                }
+            }
+        }
+
+        // Recovery attempt
+        match create_browser_session() {
+            Ok(mut client) => {
+                let result = client.execute_action(action);
+                *session = Some(client);
+                match result {
+                    Ok(out) => ToolOutcome {
+                        content: out, is_error: false, error_kind: None,
+                    },
+                    Err(e) => ToolOutcome {
+                        content: format!("Browser failed after recovery: {}", e),
+                        is_error: true,
+                        error_kind: Some(ToolErrorKind::Transient),
+                    },
+                }
+            }
+            Err(e) => ToolOutcome {
+                content: format!("Browser recovery failed: {}", e),
+                is_error: true,
+                error_kind: Some(ToolErrorKind::Transient),
+            },
+        }
+    }
+}
+
+fn create_browser_session() -> anyhow::Result<mneme_browser::BrowserClient> {
+    let mut client = mneme_browser::BrowserClient::new(true)?;
+    client.launch()?;
+    Ok(client)
 }

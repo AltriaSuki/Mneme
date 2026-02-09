@@ -1,0 +1,40 @@
+# Mneme 配置文件示例
+# 复制为 mneme.toml 并根据需要修改
+
+[llm]
+provider = "anthropic"           # "anthropic" | "openai" | "deepseek"
+model = "claude-4-5-sonnet-20250929"
+# base_url = "https://custom-endpoint.example.com/v1"
+max_tokens = 4096
+temperature = 0.7
+
+[safety]
+tier = "restricted"              # "read_only" | "restricted" | "full"
+allowed_paths = ["."]            # Restricted 模式下允许写入的路径
+blocked_commands = [
+    "rm -rf /",
+    "rm -rf /*",
+    "mkfs",
+    "dd if=",
+    ":(){ :|:& };:",
+    "sudo rm",
+    "> /dev/sda",
+]
+network_whitelist = []           # 空 = 允许所有；非空 = 仅允许列出的域名
+require_confirmation = true      # 危险操作前是否需要确认
+
+[token_budget]
+# daily_limit = 100000          # 每日 token 上限（不设置 = 无限制）
+# monthly_limit = 3000000       # 每月 token 上限
+warning_threshold = 0.8          # 80% 时发出警告
+degradation_strategy = "hard_stop"  # "hard_stop" | { degrade = { max_tokens_cap = 1024 } }
+
+[organism]
+db_path = "mneme.db"
+persona_dir = "persona"
+tick_interval_secs = 10
+trigger_interval_secs = 60
+
+# [onebot]
+# ws_url = "ws://localhost:8080"
+# access_token = "your-token-here"

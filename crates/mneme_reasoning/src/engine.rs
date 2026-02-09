@@ -1,4 +1,5 @@
 use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion};
+use mneme_core::safety::CapabilityGuard;
 use mneme_limbic::LimbicSystem;
 use mneme_memory::{OrganismCoordinator, LifecycleState, SignalType};
 use crate::{prompts::{ContextAssembler, ContextLayers}, llm::{LlmClient, CompletionParams}};
@@ -50,25 +51,37 @@ pub struct ReasoningEngine {
     evaluators: Vec<Box<dyn TriggerEvaluator>>,
     emotion_regex: Regex,
     executor: Arc<dyn Executor>,
-    
+
+    // Safety guard for tool execution
+    guard: Option<Arc<CapabilityGuard>>,
+
+    // Tool registry for dynamic dispatch
+    registry: Option<Arc<crate::tool_registry::ToolRegistry>>,
+
+    // Token budget tracking
+    token_budget: Option<Arc<crate::token_budget::TokenBudget>>,
+
     // System 1: Limbic System (new organic architecture)
     limbic: Arc<LimbicSystem>,
-    
+
     // Organism Coordinator (integrates all subsystems)
     coordinator: Arc<OrganismCoordinator>,
-    
+
     // Phase 3: Web Automation
     browser_session: tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>,
 
     // Layer 3: Shared feed digest cache (written by CLI sync, read during think)
     feed_cache: Arc<tokio::sync::RwLock<String>>,
+
+    // Decision router for layered routing
+    decision_router: crate::decision::DecisionRouter,
 }
 
 impl ReasoningEngine {
     pub fn new(psyche: Psyche, memory: Arc<dyn Memory>, client: Box<dyn LlmClient>, executor: Arc<dyn Executor>) -> Self {
         let limbic = Arc::new(LimbicSystem::new());
         let coordinator = Arc::new(OrganismCoordinator::new(limbic.clone()));
-        
+
         Self {
             psyche,
             memory,
@@ -77,18 +90,22 @@ impl ReasoningEngine {
             evaluators: Vec::new(),
             emotion_regex: Regex::new(r"(?si)<\s*emotion\s*>(.*?)<\s*/\s*emotion\s*>").expect("Invalid regex"),
             executor,
+            guard: None,
+            registry: None,
+            token_budget: None,
             limbic,
             coordinator,
-            browser_session: tokio::sync::Mutex::new(None), 
+            browser_session: tokio::sync::Mutex::new(None),
             feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
+            decision_router: crate::decision::DecisionRouter::with_defaults(),
         }
     }
 
     /// Create with custom limbic system and coordinator
     pub fn with_coordinator(
-        psyche: Psyche, 
-        memory: Arc<dyn Memory>, 
-        client: Box<dyn LlmClient>, 
+        psyche: Psyche,
+        memory: Arc<dyn Memory>,
+        client: Box<dyn LlmClient>,
         executor: Arc<dyn Executor>,
         coordinator: Arc<OrganismCoordinator>,
     ) -> Self {
@@ -101,11 +118,30 @@ impl ReasoningEngine {
             evaluators: Vec::new(),
             emotion_regex: Regex::new(r"(?si)<\s*emotion\s*>(.*?)<\s*/\s*emotion\s*>").expect("Invalid regex"),
             executor,
+            guard: None,
+            registry: None,
+            token_budget: None,
             limbic,
             coordinator,
-            browser_session: tokio::sync::Mutex::new(None), 
+            browser_session: tokio::sync::Mutex::new(None),
             feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
+            decision_router: crate::decision::DecisionRouter::with_defaults(),
         }
+    }
+
+    /// Set the safety guard for tool execution
+    pub fn set_guard(&mut self, guard: Arc<CapabilityGuard>) {
+        self.guard = Some(guard);
+    }
+
+    /// Set the tool registry for dynamic dispatch
+    pub fn set_registry(&mut self, registry: Arc<crate::tool_registry::ToolRegistry>) {
+        self.registry = Some(registry);
+    }
+
+    /// Set the token budget tracker
+    pub fn set_token_budget(&mut self, budget: Arc<crate::token_budget::TokenBudget>) {
+        self.token_budget = Some(budget);
     }
 
     /// Get reference to the limbic system
@@ -177,7 +213,28 @@ impl ReasoningEngine {
 
     async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<(String, Emotion, mneme_core::Affect)> {
         use crate::api_types::{Message, Role, ContentBlock};
-        
+
+        // Check token budget before calling LLM
+        if let Some(ref budget) = self.token_budget {
+            use crate::token_budget::BudgetStatus;
+            match budget.check_budget().await {
+                BudgetStatus::Exceeded => {
+                    match &budget.config().degradation_strategy {
+                        mneme_core::config::DegradationStrategy::HardStop => {
+                            return Ok(("[Token 预算已用尽，暂时无法回应]".to_string(), Emotion::Calm, mneme_core::Affect::default()));
+                        }
+                        mneme_core::config::DegradationStrategy::Degrade { .. } => {
+                            tracing::warn!("Token budget exceeded, degrading parameters");
+                        }
+                    }
+                }
+                BudgetStatus::Warning { usage_pct } => {
+                    tracing::info!("Token budget warning: {:.0}% used", usage_pct * 100.0);
+                }
+                BudgetStatus::Ok => {}
+            }
+        }
+
         // Check lifecycle state - if sleeping, don't process
         if self.coordinator.lifecycle_state().await == LifecycleState::Sleeping {
             tracing::debug!("Organism is sleeping, deferring interaction");
@@ -230,15 +287,19 @@ impl ReasoningEngine {
         let episodes = episodes?;
         let user_facts = user_facts.unwrap_or_default();
         
-        // 2. Prepare Tools
-        let tools = vec![
-            crate::tools::shell_tool(), 
-            crate::tools::browser_goto_tool(),
-            crate::tools::browser_click_tool(),
-            crate::tools::browser_type_tool(),
-            crate::tools::browser_screenshot_tool(),
-            crate::tools::browser_get_html_tool(),
-        ];
+        // 2. Prepare Tools (from registry if available, else hardcoded)
+        let tools = if let Some(ref registry) = self.registry {
+            registry.available_tools()
+        } else {
+            vec![
+                crate::tools::shell_tool(),
+                crate::tools::browser_goto_tool(),
+                crate::tools::browser_click_tool(),
+                crate::tools::browser_type_tool(),
+                crate::tools::browser_screenshot_tool(),
+                crate::tools::browser_get_html_tool(),
+            ]
+        };
         
         // 3. Assemble 6-layer context with modulated budget
         let base_budget: usize = 32_000; // ~8k tokens worth of chars
@@ -448,9 +509,21 @@ impl ReasoningEngine {
     }
     
     async fn execute_tool(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
+        // Dispatch through registry if available
+        if let Some(ref registry) = self.registry {
+            return registry.dispatch(name, input).await;
+        }
+
+        // Legacy hardcoded dispatch (fallback)
         match name {
             "shell" => {
                 if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                    // Safety guard check
+                    if let Some(ref guard) = self.guard {
+                        if let Err(denied) = guard.check_command(cmd) {
+                            return ToolOutcome::permanent_error(format!("Safety: {}", denied));
+                        }
+                    }
                     match self.executor.execute(cmd).await {
                         Ok(out) => ToolOutcome::ok(out),
                         Err(e) => {
@@ -573,6 +646,35 @@ impl Reasoning for ReasoningEngine {
     async fn think(&self, event: Event) -> Result<ReasoningOutput> {
         match event {
             Event::UserMessage(content) => {
+                // === Decision Router: layered filtering ===
+                let decision = self.decision_router.route(&content.body);
+                match &decision {
+                    crate::decision::DecisionLevel::RuleMatch(response) => {
+                        if response.is_empty() {
+                            // Empty input — silent discard
+                            let affect = self.limbic.get_affect().await;
+                            return Ok(ReasoningOutput {
+                                content: String::new(),
+                                modality: ResponseModality::Text,
+                                emotion: Emotion::from_affect(&affect),
+                                affect,
+                            });
+                        }
+                        // Direct rule response (no LLM needed)
+                        let affect = self.limbic.get_affect().await;
+                        return Ok(ReasoningOutput {
+                            content: response.clone(),
+                            modality: ResponseModality::Text,
+                            emotion: Emotion::from_affect(&affect),
+                            affect,
+                        });
+                    }
+                    crate::decision::DecisionLevel::QuickResponse => {
+                        tracing::debug!("QuickResponse: using reduced token budget");
+                    }
+                    crate::decision::DecisionLevel::FullReasoning => {}
+                }
+
                 let (response_text, emotion, affect) = self.process_thought_loop(&content.body, true).await?;
 
                 // Memorize the episode

@@ -261,6 +261,28 @@ impl SqliteMemory {
         .await
         .context("Failed to create self_knowledge domain index")?;
 
+        // === Token Usage Tracking (v0.4.0) ===
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                timestamp INTEGER NOT NULL
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create token_usage table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_token_usage_timestamp ON token_usage(timestamp)"
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create token_usage timestamp index")?;
+
         Ok(())
     }
 }
@@ -1352,6 +1374,33 @@ impl SqliteMemory {
             .context("Failed to get episode strength")?;
 
         Ok(row.map(|r| r.get::<f64, _>("strength") as f32))
+    }
+
+    // === Token Usage Tracking ===
+
+    pub async fn record_token_usage(&self, input_tokens: u64, output_tokens: u64) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query("INSERT INTO token_usage (input_tokens, output_tokens, timestamp) VALUES (?, ?, ?)")
+            .bind(input_tokens as i64)
+            .bind(output_tokens as i64)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .context("Failed to record token usage")?;
+        Ok(())
+    }
+
+    pub async fn get_token_usage_since(&self, since_timestamp: i64) -> Result<(u64, u64)> {
+        let row = sqlx::query(
+            "SELECT COALESCE(SUM(input_tokens), 0) as total_in, COALESCE(SUM(output_tokens), 0) as total_out FROM token_usage WHERE timestamp >= ?"
+        )
+            .bind(since_timestamp)
+            .fetch_one(&self.pool)
+            .await
+            .context("Failed to query token usage")?;
+        let total_in: i64 = row.get("total_in");
+        let total_out: i64 = row.get("total_out");
+        Ok((total_in as u64, total_out as u64))
     }
 }
 

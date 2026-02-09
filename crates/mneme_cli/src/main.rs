@@ -1,5 +1,6 @@
 use clap::Parser;
 use mneme_core::{Event, Content, Modality, Reasoning, SeedPersona, Memory};
+use mneme_core::config::MnemeConfig;
 use mneme_memory::{SqliteMemory, OrganismCoordinator, OrganismConfig};
 use mneme_limbic::LimbicSystem;
 use mneme_reasoning::ReasoningEngine;
@@ -12,7 +13,6 @@ use mneme_perception::{SourceManager, rss::RssSource};
 
 use mneme_core::ReasoningOutput;
 use mneme_onebot::OneBotClient;
-use std::env;
 use mneme_reasoning::{llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
 
 use rustyline::error::ReadlineError;
@@ -41,42 +41,54 @@ async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefi
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Path to TOML config file
+    #[arg(short, long, default_value = "mneme.toml")]
+    config: String,
+
     /// Add RSS feed URLs to monitor (can be used multiple times)
     #[arg(long)]
     rss: Vec<String>,
 
-    /// Path to the memory database
-    #[arg(short, long, default_value = "mneme.db")]
-    db: String,
+    /// Path to the memory database (overrides config file)
+    #[arg(long)]
+    db: Option<String>,
 
-    /// Path to the persona directory
-    #[arg(short, long, default_value = "persona")]
-    persona: String,
+    /// Path to the persona directory (overrides config file)
+    #[arg(long)]
+    persona: Option<String>,
 
-    /// Model to use
-    #[arg(short, long, env = "ANTHROPIC_MODEL", default_value = "claude-4-5-sonnet-20250929")]
-    model: String,
-
-
+    /// Model to use (overrides config file)
+    #[arg(short, long)]
+    model: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env file if it exists
     dotenv::dotenv().ok();
-    
+
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    // Load unified config (file + env overrides)
+    let mut config = MnemeConfig::load_or_default(&args.config);
+
+    // CLI args override config file
+    if let Some(ref model) = args.model {
+        config.llm.model = model.clone();
+    }
+    let db_path = args.db.as_deref().unwrap_or(&config.organism.db_path);
+    let persona_dir = args.persona.as_deref().unwrap_or(&config.organism.persona_dir);
+
     info!("Initializing Mneme...");
-    
+
     // 1. Initialize Memory (before Psyche — Psyche reads from DB)
-    info!("Connecting to Memory at {}...", args.db);
-    let memory = Arc::new(SqliteMemory::new(&args.db).await?);
+    info!("Connecting to Memory at {}...", db_path);
+    let memory = Arc::new(SqliteMemory::new(db_path).await?);
 
     // 2. Load Psyche (ADR-002: persona emerges from memory)
-    info!("Loading seed persona from {}...", args.persona);
-    let seed = SeedPersona::load(&args.persona).await?;
+    info!("Loading seed persona from {}...", persona_dir);
+    let seed = SeedPersona::load(persona_dir).await?;
     if !seed.is_empty() {
         let seeded = memory.seed_self_knowledge(&seed.to_seed_entries()).await?;
         if seeded > 0 {
@@ -95,22 +107,19 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 4. Initialize Reasoning
-    info!("Starting Reasoning Engine with model {}...", args.model);
-    
+    info!("Starting Reasoning Engine with model {}...", config.llm.model);
+
     // Initialize OS Executor (Local for now, potentially SSH based on config later)
     use mneme_os::local::LocalExecutor;
-    // Default to a safe timeout for agentic operations
     let executor = Arc::new(LocalExecutor::default());
-    
-    // Initialize LLM Client
-    
-    let provider = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
-    let client: Box<dyn LlmClient> = match provider.as_str() {
-        "anthropic" => Box::new(AnthropicClient::new(&args.model)?),
-        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&args.model)?),
+
+    // Initialize LLM Client from config
+    let client: Box<dyn LlmClient> = match config.llm.provider.as_str() {
+        "anthropic" => Box::new(AnthropicClient::new(&config.llm.model)?),
+        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model)?),
         _ => {
-            tracing::warn!("Unknown provider '{}', defaulting to Anthropic", provider);
-            Box::new(AnthropicClient::new(&args.model)?)
+            tracing::warn!("Unknown provider '{}', defaulting to Anthropic", config.llm.provider);
+            Box::new(AnthropicClient::new(&config.llm.model)?)
         },
     };
 
@@ -122,16 +131,44 @@ async fn main() -> anyhow::Result<()> {
     );
     
     let mut engine = ReasoningEngine::with_coordinator(psyche, memory.clone(), client, executor, coordinator.clone());
-    
-    // 5. Initialize Proactive Triggers
-    info!("Initializing proactive triggers...");
-    // Add default scheduled triggers (morning/evening)
-    let scheduler = ScheduledTriggerEvaluator::new();
-    engine.add_evaluator(Box::new(scheduler));
 
-    // Add rumination evaluator (mind-wandering, social longing, curiosity)
-    let rumination = RuminationEvaluator::new(coordinator.state());
-    engine.add_evaluator(Box::new(rumination));
+    // 4b. Initialize Safety Guard
+    let guard = Arc::new(mneme_core::safety::CapabilityGuard::new(config.safety.clone()));
+    engine.set_guard(guard.clone());
+
+    // 4c. Initialize Tool Registry
+    {
+        use mneme_reasoning::ToolRegistry;
+        use mneme_reasoning::tools::{ShellToolHandler, BrowserToolHandler};
+
+        let mut registry = ToolRegistry::with_guard(guard);
+        let browser_session = Arc::new(tokio::sync::Mutex::new(None));
+
+        registry.register(Box::new(ShellToolHandler {
+            executor: Arc::new(mneme_os::local::LocalExecutor::default()),
+            guard: registry.guard().cloned(),
+        }));
+        registry.register(Box::new(BrowserToolHandler::goto(browser_session.clone())));
+        registry.register(Box::new(BrowserToolHandler::click(browser_session.clone())));
+        registry.register(Box::new(BrowserToolHandler::type_text(browser_session.clone())));
+        registry.register(Box::new(BrowserToolHandler::screenshot(browser_session.clone())));
+        registry.register(Box::new(BrowserToolHandler::get_html(browser_session)));
+
+        engine.set_registry(Arc::new(registry));
+    }
+
+    // 4d. Initialize Token Budget
+    let token_budget = Arc::new(
+        mneme_reasoning::token_budget::TokenBudget::new(config.token_budget.clone(), memory.clone())
+    );
+    engine.set_token_budget(token_budget.clone());
+
+    // 5. Initialize Proactive Triggers via AgentLoop
+    info!("Initializing proactive triggers...");
+    let evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![
+        Box::new(ScheduledTriggerEvaluator::new()),
+        Box::new(RuminationEvaluator::new(coordinator.state())),
+    ];
 
     // Initialize Presence Scheduler (filters triggers by active hours)
     let presence = PresenceScheduler::default();
@@ -140,21 +177,27 @@ async fn main() -> anyhow::Result<()> {
     // Initialize Humanizer for expressive output
     let humanizer = Humanizer::new();
 
+    // 6. Spawn AgentLoop (background tick + trigger evaluation)
+    let (agent_loop, mut agent_rx) = mneme_reasoning::agent_loop::AgentLoop::new(
+        coordinator.clone(),
+        evaluators,
+        std::time::Duration::from_secs(config.organism.tick_interval_secs),
+        std::time::Duration::from_secs(config.organism.trigger_interval_secs),
+    );
+    let _agent_handle = agent_loop.spawn();
+
     // Subscribe to lifecycle changes
     let mut lifecycle_rx = coordinator.subscribe_lifecycle();
     
     println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
 
     // --- ONEBOT MODE ---
-    let onebot_url = env::var("ONEBOT_WS_URL").ok();
-    
     // Channel for events from stdin (CLI) or OneBot
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(100);
-    
-    let onebot_client = if let Some(url) = onebot_url {
-        let access_token = std::env::var("ONEBOT_ACCESS_TOKEN").ok();
-        tracing::info!("Initializing OneBot at {}", url);
-        match OneBotClient::new(&url, access_token.as_deref()) {
+
+    let onebot_client = if let Some(ref onebot_cfg) = config.onebot {
+        tracing::info!("Initializing OneBot at {}", onebot_cfg.ws_url);
+        match OneBotClient::new(&onebot_cfg.ws_url, onebot_cfg.access_token.as_deref()) {
             Ok((client, mut onebot_rx)) => {
                 // Forward OneBot content to main event loop
                 let tx_clone = event_tx.clone();
@@ -243,14 +286,11 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // --- MAIN EVENT LOOP ---
-    // Now we listen to event_rx, which aggregates both stdin and OneBot
-    // We also need a timer for triggering proactive evaluation and organism tick
-    let mut trigger_interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Check triggers every minute
-    let mut tick_interval = tokio::time::interval(std::time::Duration::from_secs(10)); // Organism tick every 10 seconds
+    // Now we listen to event_rx (stdin + OneBot) and agent_rx (AgentLoop actions)
 
     // Clone coordinator for signal handler
     let coordinator_for_signal = coordinator.clone();
-    
+
     loop {
         let event = tokio::select! {
             Some(evt) = event_rx.recv() => evt,
@@ -265,42 +305,29 @@ async fn main() -> anyhow::Result<()> {
                 info!("Lifecycle state changed: {:?}", state);
                 continue;
             },
-            _ = tick_interval.tick() => {
-                // Organism periodic tick (state maintenance)
-                if let Err(e) = coordinator.tick().await {
-                    tracing::warn!("Organism tick error: {}", e);
-                }
-                continue;
-            },
-            _ = trigger_interval.tick() => {
-                // Proactive Trigger Check
-                match engine.evaluate_triggers().await {
-                    Ok(triggers) => {
-                        let active_triggers = presence.filter_triggers(triggers);
-                        for trigger in active_triggers {
-                            info!("Proactive trigger fired: {:?}", trigger);
-                            // We do NOT print here directly to avoid double printing.
-                            // We wrap it in an Event and sending it to the Engine.
-                            // The response handling logic below will take care of printing.
-                            // However, we are in a select! branch, not easily "sending" to self.
-                            // We can just execute engine.think() here directly?
-                            // Yes, that's what the previous code did, but clearer if we just set `event` variable?
-                            // No, `event` is the result of select!.
-                            // We'll process it right here.
-                            
-                            let trigger_event = Event::ProactiveTrigger(trigger);
+            Some(action) = agent_rx.recv() => {
+                use mneme_reasoning::agent_loop::AgentAction;
+                match action {
+                    AgentAction::StateUpdate => {
+                        // Organism tick completed — no user-visible action needed
+                        continue;
+                    }
+                    AgentAction::ProactiveTrigger(trigger) => {
+                        // Apply presence filter before processing
+                        let active = presence.filter_triggers(vec![trigger]);
+                        for t in active {
+                            info!("Proactive trigger fired: {:?}", t);
+                            let trigger_event = Event::ProactiveTrigger(t);
                             match engine.think(trigger_event).await {
                                 Ok(response) => {
                                     print_response(&response, &humanizer, Some("Proactive")).await;
-                                    // TODO: Also send to OneBot if appropriate (e.g. to default user)
                                 }
                                 Err(e) => error!("Error processing trigger: {}", e),
                             }
                         }
+                        continue;
                     }
-                     Err(e) => error!("Error evaluating triggers: {}", e),
                 }
-                continue;
             },
             else => break, // Channel closed
         };
@@ -351,6 +378,11 @@ async fn main() -> anyhow::Result<()> {
                 println!("Mood bias: {:.2}", state.medium.mood_bias);
                 println!("Affect: {}", state.fast.affect.describe());
                 println!("Attachment: {:?}", state.medium.attachment.style());
+                // Token usage
+                let daily = token_budget.get_daily_usage().await;
+                let monthly = token_budget.get_monthly_usage().await;
+                println!("Token usage (today): {}", daily);
+                println!("Token usage (month): {}", monthly);
                 println!("=======================");
                 continue;
              } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
