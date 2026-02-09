@@ -18,9 +18,9 @@ fn arb_affect() -> impl Strategy<Value = Affect> {
 }
 
 fn arb_fast_state() -> impl Strategy<Value = FastState> {
-    (arb_affect(), 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
-        .prop_map(|(affect, energy, stress, curiosity, social_need)| FastState {
-            affect, energy, stress, curiosity, social_need,
+    (arb_affect(), 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
+        .prop_map(|(affect, energy, stress, curiosity, social_need, boredom)| FastState {
+            affect, energy, stress, curiosity, social_need, boredom,
         })
 }
 

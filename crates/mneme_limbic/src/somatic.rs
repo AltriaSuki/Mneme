@@ -34,6 +34,38 @@ pub struct ModulationVector {
     pub typing_speed_factor: f32,
 }
 
+impl ModulationVector {
+    /// Linearly interpolate between self and other.
+    /// `t` = 0.0 → returns self (no change), `t` = 1.0 → returns other (instant jump).
+    /// A low `t` (e.g. 0.15) gives heavy inertia; a high `t` (e.g. 0.8) gives fast response.
+    pub fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self {
+            max_tokens_factor: mix(self.max_tokens_factor, other.max_tokens_factor),
+            temperature_delta: mix(self.temperature_delta, other.temperature_delta),
+            context_budget_factor: mix(self.context_budget_factor, other.context_budget_factor),
+            recall_mood_bias: mix(self.recall_mood_bias, other.recall_mood_bias),
+            silence_inclination: mix(self.silence_inclination, other.silence_inclination),
+            typing_speed_factor: mix(self.typing_speed_factor, other.typing_speed_factor),
+        }
+    }
+
+    /// Compute the maximum absolute difference across all fields.
+    /// Used to detect "surprise jumps" that should bypass smoothing.
+    pub fn max_delta(&self, other: &Self) -> f32 {
+        let deltas = [
+            (self.max_tokens_factor - other.max_tokens_factor).abs(),
+            (self.temperature_delta - other.temperature_delta).abs(),
+            (self.context_budget_factor - other.context_budget_factor).abs(),
+            (self.recall_mood_bias - other.recall_mood_bias).abs(),
+            (self.silence_inclination - other.silence_inclination).abs(),
+            (self.typing_speed_factor - other.typing_speed_factor).abs(),
+        ];
+        deltas.into_iter().fold(0.0f32, f32::max)
+    }
+}
+
 impl Default for ModulationVector {
     fn default() -> Self {
         Self {
@@ -395,6 +427,58 @@ mod tests {
         assert!(mv.typing_speed_factor <= 2.0);
     }
     
+    #[test]
+    fn test_modulation_vector_lerp_midpoint() {
+        let a = ModulationVector {
+            max_tokens_factor: 0.4,
+            temperature_delta: -0.1,
+            context_budget_factor: 0.5,
+            recall_mood_bias: -1.0,
+            silence_inclination: 0.0,
+            typing_speed_factor: 0.6,
+        };
+        let b = ModulationVector {
+            max_tokens_factor: 1.2,
+            temperature_delta: 0.3,
+            context_budget_factor: 1.1,
+            recall_mood_bias: 0.8,
+            silence_inclination: 0.8,
+            typing_speed_factor: 1.8,
+        };
+        let mid = a.lerp(&b, 0.5);
+        assert!((mid.max_tokens_factor - 0.8).abs() < 0.01);
+        assert!((mid.temperature_delta - 0.1).abs() < 0.01);
+        assert!((mid.recall_mood_bias - (-0.1)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_modulation_vector_lerp_extremes() {
+        let a = ModulationVector::default();
+        let b = ModulationVector {
+            max_tokens_factor: 0.3,
+            temperature_delta: 0.4,
+            ..Default::default()
+        };
+        // t=0 → returns a
+        let r0 = a.lerp(&b, 0.0);
+        assert!((r0.max_tokens_factor - 1.0).abs() < 0.001);
+        // t=1 → returns b
+        let r1 = a.lerp(&b, 1.0);
+        assert!((r1.max_tokens_factor - 0.3).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_modulation_vector_max_delta() {
+        let a = ModulationVector::default();
+        let b = ModulationVector {
+            max_tokens_factor: 0.3, // delta = 0.7
+            temperature_delta: 0.4, // delta = 0.4
+            ..Default::default()
+        };
+        let delta = a.max_delta(&b);
+        assert!((delta - 0.7).abs() < 0.01);
+    }
+
     #[test]
     fn test_format_for_prompt_minimal() {
         let state = OrganismState::default();

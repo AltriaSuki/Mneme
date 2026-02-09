@@ -13,7 +13,7 @@ use mneme_core::{
     OrganismState, SensoryInput, DefaultDynamics, Dynamics,
     Affect, FastState,
 };
-use crate::somatic::SomaticMarker;
+use crate::somatic::{SomaticMarker, ModulationVector};
 use crate::surprise::SurpriseDetector;
 use crate::heartbeat::HeartbeatConfig;
 
@@ -66,9 +66,21 @@ pub struct LimbicSystem {
     
     /// Heartbeat configuration
     heartbeat_config: HeartbeatConfig,
-    
+
     /// Last interaction timestamp (for social need calculation)
     last_interaction: Arc<RwLock<Instant>>,
+
+    /// Previous modulation vector for temporal smoothing (emotion inertia).
+    /// Emotions don't switch instantly — they have momentum.
+    prev_modulation: Arc<RwLock<ModulationVector>>,
+
+    /// Smoothing factor for modulation lerp (0.0 = frozen, 1.0 = instant).
+    /// Lower values = heavier inertia. This is a 🧬 personality parameter.
+    modulation_smoothing: f32,
+
+    /// Surprise threshold: if max_delta between prev and current exceeds this,
+    /// bypass smoothing and jump directly (startle response).
+    surprise_bypass_threshold: f32,
 }
 
 impl LimbicSystem {
@@ -92,6 +104,9 @@ impl LimbicSystem {
             state_watch_rx,
             heartbeat_config,
             last_interaction: Arc::new(RwLock::new(Instant::now())),
+            prev_modulation: Arc::new(RwLock::new(ModulationVector::default())),
+            modulation_smoothing: 0.3,       // moderate inertia by default
+            surprise_bypass_threshold: 0.5,  // large jumps bypass smoothing
         };
 
         // Spawn the heartbeat task
@@ -213,6 +228,33 @@ impl LimbicSystem {
     /// Get the current somatic marker (for System 2 context injection)
     pub async fn get_somatic_marker(&self) -> SomaticMarker {
         self.state_watch_rx.borrow().clone()
+    }
+
+    /// Get a temporally-smoothed modulation vector (emotion inertia).
+    ///
+    /// Instead of snapping instantly to the new emotional state, this lerps
+    /// between the previous modulation and the current one. This models the
+    /// biological reality that emotions have momentum — you don't go from
+    /// laughing to crying in a single frame.
+    ///
+    /// Exception: if the jump is larger than `surprise_bypass_threshold`,
+    /// we skip smoothing (startle response / sudden shock).
+    pub async fn get_modulation_vector(&self) -> ModulationVector {
+        let marker = self.get_somatic_marker().await;
+        let raw = marker.to_modulation_vector();
+
+        let mut prev = self.prev_modulation.write().await;
+        let delta = prev.max_delta(&raw);
+
+        let smoothed = if delta > self.surprise_bypass_threshold {
+            // Large jump — bypass smoothing (startle response)
+            raw.clone()
+        } else {
+            prev.lerp(&raw, self.modulation_smoothing)
+        };
+
+        *prev = smoothed.clone();
+        smoothed
     }
 
     /// Subscribe to state updates

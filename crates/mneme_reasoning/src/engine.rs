@@ -203,8 +203,8 @@ impl ReasoningEngine {
         
         let somatic_marker = interaction_result.somatic_marker;
         
-        // === Compute Modulation Vector (the "neuromodulatory" signal) ===
-        let modulation = somatic_marker.to_modulation_vector();
+        // === Compute Modulation Vector (temporally smoothed — emotion inertia) ===
+        let modulation = self.limbic.get_modulation_vector().await;
         
         tracing::info!(
             "Modulation: max_tokens×{:.2}, temp_delta={:+.2}, context×{:.2}, silence={:.2}",
