@@ -810,6 +810,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] `dynamics.rs` 慢状态危机测试 ✅ — 5 个测试覆盖 step_slow_crisis、apply_moral_cost、homeostatic_error
 - [x] `LimbicSystem` 测试补全 ✅ — 7 个新测试覆盖 state roundtrip、阈值检测、subscribe、modulation、curves
 - [x] `Affect` 测试补全 ✅ — 12 个新测试覆盖 from_polar、lerp、to_discrete_label、describe、边界值
+- [x] `state.rs` 测试补全 ✅ — 14 个新测试覆盖 attachment 四象限转换、moral cost 边界、normalize NaN/Inf、describe_for_context、project persona
 - [ ] 集成测试补充
 - [ ] Mock 基础设施完善
 - [ ] CI/CD 配置
