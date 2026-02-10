@@ -913,3 +913,138 @@ async fn test_sleep_learns_curves() {
     let persisted = memory.load_learned_curves().await.unwrap();
     assert!(persisted.is_some(), "Learned curves should be persisted to DB");
 }
+
+#[tokio::test]
+async fn test_recall_random_by_strength() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Store several episodes with varying strengths
+    for i in 0..10 {
+        let content = Content {
+            id: Uuid::new_v4(),
+            source: "test".to_string(),
+            author: "User".to_string(),
+            body: format!("Episode number {}", i),
+            timestamp: 1000 + i as i64,
+            modality: Modality::Text,
+        };
+        memory.memorize(&content).await.unwrap();
+        // Set varying strengths: 0.1 * (i+1)
+        let strength = 0.1 * (i as f32 + 1.0);
+        memory.update_episode_strength(&content.id.to_string(), strength).await.unwrap();
+    }
+
+    // Recall 3 random seeds
+    let seeds = memory.recall_random_by_strength(3).await.unwrap();
+    assert_eq!(seeds.len(), 3);
+
+    // All seeds should have strength > 0.1
+    for seed in &seeds {
+        assert!(seed.strength > 0.1);
+        assert!(!seed.body.is_empty());
+    }
+
+    // Recall 0 should return empty
+    let empty = memory.recall_random_by_strength(0).await.unwrap();
+    assert!(empty.is_empty());
+}
+
+// =============================================================================
+// Vec Index (ANN) Tests (#33)
+// =============================================================================
+
+#[tokio::test]
+async fn test_vec_recall_basic() {
+    // Verify that recall uses the vec_episodes ANN index and returns relevant results
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let content = Content {
+        id: Uuid::new_v4(),
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "Rust programming language is great for systems programming".to_string(),
+        timestamp: 100,
+        modality: Modality::Text,
+    };
+    memory.memorize(&content).await.unwrap();
+
+    let result = memory.recall("systems programming").await.unwrap();
+    assert!(result.contains("Rust"));
+}
+
+#[tokio::test]
+async fn test_vec_recall_removes_limit() {
+    // The old implementation had LIMIT 1000 on episodes, meaning old memories
+    // beyond 1000 could never be recalled. With sqlite-vec KNN, all episodes
+    // are searchable regardless of count.
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Insert a unique "needle" episode first (oldest)
+    let needle = Content {
+        id: Uuid::new_v4(),
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "The quantum physics experiment yielded surprising results".to_string(),
+        timestamp: 1,
+        modality: Modality::Text,
+    };
+    memory.memorize(&needle).await.unwrap();
+
+    // Insert many filler episodes after it
+    for i in 0..50 {
+        let filler = Content {
+            id: Uuid::new_v4(),
+            source: "test".to_string(),
+            author: "User".to_string(),
+            body: format!("Daily log entry number {} about routine tasks", i),
+            timestamp: 100 + i as i64,
+            modality: Modality::Text,
+        };
+        memory.memorize(&filler).await.unwrap();
+    }
+
+    // The needle should still be recallable despite being the oldest
+    let result = memory.recall("quantum physics experiment").await.unwrap();
+    assert!(
+        result.contains("quantum"),
+        "Old episode should be recallable via ANN index. Got: {}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn test_vec_backfill() {
+    // Test that backfill_vec_index correctly populates vec_episodes
+    // for episodes that were inserted before the vec table existed.
+    // Since SqliteMemory::new() calls migrate() which calls backfill,
+    // we simulate by creating a second SqliteMemory on the same DB path.
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let db_path = dir.path().join("test_backfill.db");
+    let db_str = db_path.to_str().unwrap();
+
+    // Phase 1: Create memory and insert episodes
+    {
+        let memory = SqliteMemory::new(db_str).await.expect("Failed to create memory");
+        let content = Content {
+            id: Uuid::new_v4(),
+            source: "test".to_string(),
+            author: "User".to_string(),
+            body: "Backfill test: machine learning algorithms".to_string(),
+            timestamp: 500,
+            modality: Modality::Text,
+        };
+        memory.memorize(&content).await.unwrap();
+    }
+
+    // Phase 2: Re-open the database (simulates restart, backfill runs again)
+    {
+        let memory = SqliteMemory::new(db_str).await.expect("Failed to reopen memory");
+        // The backfill should have ensured vec_episodes is populated
+        let result = memory.recall("machine learning").await.unwrap();
+        assert!(
+            result.contains("machine learning"),
+            "Backfilled episode should be recallable. Got: {}",
+            result
+        );
+    }
+}

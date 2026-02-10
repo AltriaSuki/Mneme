@@ -217,6 +217,14 @@ async fn main() -> anyhow::Result<()> {
     );
     engine.set_token_budget(token_budget.clone());
 
+    // 4e. Set streaming text callback for real-time output
+    engine.set_on_text_chunk(Arc::new(|chunk: &str| {
+        use std::io::Write;
+        // Print text chunks as they arrive (no newline, flush immediately)
+        print!("{}", chunk);
+        let _ = std::io::stdout().flush();
+    }));
+
     // 5. Initialize Proactive Triggers via AgentLoop
     info!("Initializing proactive triggers...");
     let evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![

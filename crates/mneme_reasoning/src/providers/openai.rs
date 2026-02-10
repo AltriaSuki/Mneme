@@ -1,10 +1,11 @@
 use crate::llm::{LlmClient, CompletionParams};
-use crate::api_types::{Message, Tool, MessagesResponse, ContentBlock, Role};
+use crate::api_types::{Message, Tool, MessagesResponse, ContentBlock, Role, StreamEvent};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
 use std::time::Duration;
+use futures_util::StreamExt;
 
 #[derive(Debug, Clone)]
 pub struct OpenAiClient {
@@ -235,6 +236,234 @@ impl LlmClient for OpenAiClient {
             stop_reason: finish_reason,
         })
     }
+
+    async fn stream_complete(
+        &self,
+        system: &str,
+        messages: Vec<Message>,
+        tools: Vec<Tool>,
+        params: CompletionParams,
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>> {
+        if self.api_key == "mock" {
+            let (tx, rx) = tokio::sync::mpsc::channel(32);
+            tokio::spawn(async move {
+                let _ = tx.send(StreamEvent::TextDelta(
+                    "(Mock OpenAI Response) I received your prompt.".into(),
+                )).await;
+                let _ = tx.send(StreamEvent::Done {
+                    stop_reason: Some("stop".into()),
+                }).await;
+            });
+            return Ok(rx);
+        }
+
+        // Convert tools to OpenAI format
+        let openai_tools: Vec<Value> = tools.iter().map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema
+                }
+            })
+        }).collect();
+
+        // Convert messages to OpenAI format
+        let mut openai_messages = Vec::new();
+        openai_messages.push(json!({ "role": "system", "content": system }));
+
+        for msg in messages {
+            match msg.role {
+                Role::User => {
+                    let final_text = msg.content.iter().filter_map(|b| {
+                        match b {
+                            ContentBlock::Text { text } => Some(text.clone()),
+                            _ => None,
+                        }
+                    }).collect::<Vec<_>>().join("\n");
+
+                    for block in &msg.content {
+                        if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                            openai_messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_use_id,
+                                "content": content
+                            }));
+                        }
+                    }
+
+                    if !final_text.is_empty() {
+                        openai_messages.push(json!({
+                            "role": "user",
+                            "content": final_text
+                        }));
+                    }
+                }
+                Role::Assistant => {
+                    let mut text_parts = Vec::new();
+                    let mut tool_calls = Vec::new();
+                    for block in &msg.content {
+                        match block {
+                            ContentBlock::Text { text } => text_parts.push(text.clone()),
+                            ContentBlock::ToolUse { id, name, input } => {
+                                tool_calls.push(json!({
+                                    "id": id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": name,
+                                        "arguments": input.to_string()
+                                    }
+                                }));
+                            }
+                            _ => {}
+                        }
+                    }
+                    let mut msg_obj = json!({"role": "assistant"});
+                    if !text_parts.is_empty() {
+                        msg_obj["content"] = json!(text_parts.join("\n"));
+                    }
+                    if !tool_calls.is_empty() {
+                        msg_obj["tool_calls"] = json!(tool_calls);
+                        if text_parts.is_empty() {
+                            msg_obj["content"] = Value::Null;
+                        }
+                    }
+                    openai_messages.push(msg_obj);
+                }
+            }
+        }
+
+        let mut payload = json!({
+            "model": self.model,
+            "messages": openai_messages,
+            "temperature": params.temperature,
+            "max_tokens": params.max_tokens,
+            "stream": true,
+        });
+        if !openai_tools.is_empty() {
+            payload["tools"] = json!(openai_tools);
+        }
+
+        let url = format!("{}/chat/completions", self.base_url);
+
+        let response = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to send streaming request to OpenAI")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let err_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenAI streaming error {}: {}", status, err_text);
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let byte_stream = response.bytes_stream();
+
+        tokio::spawn(async move {
+            if let Err(e) = parse_openai_sse(byte_stream, &tx).await {
+                let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+            }
+        });
+
+        Ok(rx)
+    }
+}
+
+/// Parse OpenAI SSE byte stream into StreamEvents.
+///
+/// OpenAI SSE format:
+/// - `data: {"choices":[{"delta":{"content":"..."}}]}` → TextDelta
+/// - `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"...","function":{"name":"...","arguments":"..."}}]}}]}` → ToolUseStart / ToolInputDelta
+/// - `data: [DONE]` → Done
+pub(crate) async fn parse_openai_sse<S>(
+    byte_stream: S,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> Result<()>
+where
+    S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send,
+{
+    let mut stream = byte_stream;
+    let mut buffer = String::new();
+    let mut stop_reason: Option<String> = None;
+    // Track which tool call indices we've already sent ToolUseStart for
+    let mut seen_tool_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk: bytes::Bytes = chunk_result.context("Error reading OpenAI SSE chunk")?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(pos) = buffer.find('\n') {
+            let line = buffer[..pos].trim().to_string();
+            buffer = buffer[pos + 1..].to_string();
+
+            if line.is_empty() {
+                continue;
+            }
+
+            let data = match line.strip_prefix("data: ") {
+                Some(d) => d.trim(),
+                None => continue,
+            };
+
+            if data == "[DONE]" {
+                let _ = tx.send(StreamEvent::Done { stop_reason: stop_reason.take() }).await;
+                return Ok(());
+            }
+
+            let v: Value = match serde_json::from_str(data) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let choice = &v["choices"][0];
+            if let Some(fr) = choice["finish_reason"].as_str() {
+                stop_reason = Some(fr.to_string());
+            }
+
+            let delta = &choice["delta"];
+
+            // Text content
+            if let Some(content) = delta["content"].as_str() {
+                if !content.is_empty() {
+                    let _ = tx.send(StreamEvent::TextDelta(content.to_string())).await;
+                }
+            }
+
+            // Tool calls
+            if let Some(tool_calls) = delta["tool_calls"].as_array() {
+                for tc in tool_calls {
+                    let index = tc["index"].as_i64().unwrap_or(0);
+                    let func = &tc["function"];
+
+                    // First chunk for this tool call has id and name
+                    if let Some(id) = tc["id"].as_str() {
+                        if seen_tool_ids.insert(index) {
+                            let name = func["name"].as_str().unwrap_or("").to_string();
+                            let _ = tx.send(StreamEvent::ToolUseStart {
+                                id: id.to_string(),
+                                name,
+                            }).await;
+                        }
+                    }
+
+                    // Subsequent chunks have argument fragments
+                    if let Some(args) = func["arguments"].as_str() {
+                        if !args.is_empty() {
+                            let _ = tx.send(StreamEvent::ToolInputDelta(args.to_string())).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Stream ended without [DONE]
+    let _ = tx.send(StreamEvent::Done { stop_reason }).await;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -347,5 +576,64 @@ mod tests {
         } else {
             panic!("Expected ToolUse");
         }
+    }
+
+    /// Helper: create a fake byte stream from raw SSE text
+    fn fake_stream(data: &str) -> impl futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send {
+        let bytes = bytes::Bytes::from(data.to_string());
+        futures_util::stream::iter(vec![Ok(bytes)])
+    }
+
+    #[tokio::test]
+    async fn test_openai_sse_text_delta() {
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\ndata: [DONE]\n\n";
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        parse_openai_sse(fake_stream(sse), &tx).await.unwrap();
+        drop(tx);
+
+        let mut texts = Vec::new();
+        let mut done = false;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                StreamEvent::TextDelta(t) => texts.push(t),
+                StreamEvent::Done { .. } => { done = true; }
+                _ => {}
+            }
+        }
+        assert!(done);
+        assert_eq!(texts, vec!["Hello", " world"]);
+    }
+
+    #[tokio::test]
+    async fn test_openai_sse_tool_call() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tc1\",\"function\":{\"name\":\"shell\",\"arguments\":\"\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"cmd\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\":\\\"ls\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        parse_openai_sse(fake_stream(sse), &tx).await.unwrap();
+        drop(tx);
+
+        let mut got_start = false;
+        let mut input_parts = Vec::new();
+        let mut stop = None;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                StreamEvent::ToolUseStart { id, name } => {
+                    assert_eq!(id, "tc1");
+                    assert_eq!(name, "shell");
+                    got_start = true;
+                }
+                StreamEvent::ToolInputDelta(j) => input_parts.push(j),
+                StreamEvent::Done { stop_reason } => { stop = stop_reason; }
+                _ => {}
+            }
+        }
+        assert!(got_start);
+        assert_eq!(input_parts.len(), 2);
+        assert_eq!(stop, Some("tool_calls".into()));
     }
 }

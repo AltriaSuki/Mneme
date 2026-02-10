@@ -12,9 +12,11 @@ serde_json = "1.0"
 async-trait = "0.1"
 anyhow = "1.0"
 tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
 tracing = "0.1"
 regex = "1.10"
+futures-util = "0.3"
+bytes = "1"
 mneme_os = { path = "../mneme_os" }
 mneme_browser = { path = "../mneme_browser" }
 chrono = "0.4"

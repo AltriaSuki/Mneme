@@ -5,8 +5,23 @@ use serde::{Serialize, Deserialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::path::Path;
 use uuid::Uuid;
-use crate::embedding::{EmbeddingModel, cosine_similarity};
+use crate::embedding::EmbeddingModel;
 use std::sync::Arc;
+use std::sync::Once;
+
+/// Register sqlite-vec extension globally (once per process).
+/// Must be called before any SQLite connections are opened.
+fn ensure_sqlite_vec_registered() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        unsafe {
+            libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+        tracing::info!("sqlite-vec extension registered");
+    });
+}
 
 
 
@@ -20,6 +35,9 @@ impl SqliteMemory {
     pub async fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         // Initialize embedding model first (might take a moment to load/download)
         let embedding_model = Arc::new(EmbeddingModel::new().context("Failed to initialize embedding model")?);
+
+        // Register sqlite-vec extension before opening any connections
+        ensure_sqlite_vec_registered();
 
         let db_url = format!("sqlite://{}?mode=rwc", db_path.as_ref().display());
         let pool = SqlitePoolOptions::new()
@@ -318,6 +336,69 @@ impl SqliteMemory {
         .await
         .context("Failed to create learned_curves table")?;
 
+        // === Vector search index (sqlite-vec) ===
+        // Create vec_episodes virtual table for ANN search.
+        // vec0 uses cosine distance by default for float vectors.
+        sqlx::query(
+            r#"
+            CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
+                episode_id TEXT PRIMARY KEY,
+                embedding float[384]
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create vec_episodes virtual table")?;
+
+        // Backfill: insert any episodes that have embeddings but are missing from vec_episodes
+        self.backfill_vec_index().await?;
+
+        Ok(())
+    }
+
+    /// Backfill the vec_episodes virtual table with embeddings from existing episodes.
+    /// Only inserts rows that are not already present in vec_episodes.
+    async fn backfill_vec_index(&self) -> Result<()> {
+        let rows = sqlx::query(
+            r#"
+            SELECT e.id, e.embedding
+            FROM episodes e
+            LEFT JOIN vec_episodes v ON v.episode_id = e.id
+            WHERE e.embedding IS NOT NULL AND v.episode_id IS NULL
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query episodes for vec backfill")?;
+
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let count = rows.len();
+        tracing::info!("Backfilling {} episodes into vec_episodes index", count);
+
+        for row in rows {
+            let id: String = row.get("id");
+            let blob: Vec<u8> = row.get("embedding");
+            if let Ok(embedding) = bincode::deserialize::<Vec<f32>>(&blob) {
+                let json_vec = serde_json::to_string(&embedding)
+                    .context("Failed to serialize embedding to JSON")?;
+                if let Err(e) = sqlx::query(
+                    "INSERT INTO vec_episodes (episode_id, embedding) VALUES (?, ?)"
+                )
+                .bind(&id)
+                .bind(&json_vec)
+                .execute(&self.pool)
+                .await
+                {
+                    tracing::warn!("Failed to backfill vec_episodes for {}: {}", id, e);
+                }
+            }
+        }
+
+        tracing::info!("Vec index backfill complete ({} episodes)", count);
         Ok(())
     }
 }
@@ -326,63 +407,76 @@ impl SqliteMemory {
 impl Memory for SqliteMemory {
     #[tracing::instrument(skip(self), fields(query))]
     async fn recall(&self, query: &str) -> Result<String> {
-        // Generate embedding for the query
         let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
+        let json_query = serde_json::to_string(&query_embedding)
+            .context("Failed to serialize query embedding")?;
 
-        // Fetch recent episodes with embeddings
-        // Optimization: Added LIMIT 1000 to avoid full table scan at scale.
-        // We assume recent memories are more relevant contextually anyway.
-        // Future: Implement proper Approximate Nearest Neighbor (ANN) index.
-        let rows = sqlx::query("SELECT author, body, timestamp, embedding, strength FROM episodes WHERE strength > 0.05 ORDER BY timestamp DESC LIMIT 1000")
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to fetch episodes for vector search")?;
+        // KNN search via sqlite-vec: fetch top 20 candidates across ALL episodes
+        let rows = sqlx::query(
+            r#"
+            SELECT e.author, e.body, e.timestamp, e.strength, v.distance
+            FROM vec_episodes v
+            JOIN episodes e ON e.id = v.episode_id
+            WHERE v.embedding MATCH ?
+              AND k = 20
+              AND e.strength > 0.05
+            ORDER BY v.distance
+            "#
+        )
+        .bind(&json_query)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to execute vec KNN recall")?;
 
-        let mut scored_episodes: Vec<(f32, String, String, i64)> = Vec::new();
-
-        for row in rows {
+        // Re-rank: score = (1 - distance) * strength, take top 5
+        let mut scored: Vec<(f32, String, String, i64)> = Vec::new();
+        for row in &rows {
             let author: String = row.get("author");
             let body: String = row.get("body");
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
-            let embedding_blob: Option<Vec<u8>> = row.get("embedding");
-
-            if let Some(blob) = embedding_blob {
-                if let Ok(embedding) = bincode::deserialize::<Vec<f32>>(&blob) {
-                    let similarity = cosine_similarity(&query_embedding, &embedding);
-                    // Combined score: semantic relevance × memory strength
-                    let score = similarity * strength as f32;
-                    scored_episodes.push((score, author, body, timestamp));
-                }
-            }
+            let distance: f64 = row.get("distance");
+            let similarity = (1.0 - distance) as f32;
+            let score = similarity * strength as f32;
+            scored.push((score, author, body, timestamp));
         }
 
-        // Sort by score descending
-        scored_episodes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let top = scored.into_iter().take(5).collect::<Vec<_>>();
 
-        // Take top 5
-        let top_episodes = scored_episodes.into_iter().take(5).collect::<Vec<_>>();
-
-        if top_episodes.is_empty() {
-             return Ok("No relevant memories found.".to_string());
+        if top.is_empty() {
+            return Ok("No relevant memories found.".to_string());
         }
 
         let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
-        for (_score, author, body, ts) in top_episodes {
+        for (_score, author, body, ts) in top {
             context.push_str(&format!("- [{}] {}: {}\n", ts, author, body));
         }
-
         Ok(context)
     }
 
     #[tracing::instrument(skip(self), fields(query, mood_bias))]
     async fn recall_with_bias(&self, query: &str, mood_bias: f32) -> Result<String> {
         let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
+        let json_query = serde_json::to_string(&query_embedding)
+            .context("Failed to serialize query embedding")?;
 
-        let rows = sqlx::query("SELECT author, body, timestamp, embedding, strength FROM episodes WHERE strength > 0.05 ORDER BY timestamp DESC LIMIT 1000")
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to fetch episodes for biased recall")?;
+        // KNN search via sqlite-vec: fetch top 20 candidates across ALL episodes
+        let rows = sqlx::query(
+            r#"
+            SELECT e.author, e.body, e.timestamp, e.strength, v.distance
+            FROM vec_episodes v
+            JOIN episodes e ON e.id = v.episode_id
+            WHERE v.embedding MATCH ?
+              AND k = 20
+              AND e.strength > 0.05
+            ORDER BY v.distance
+            "#
+        )
+        .bind(&json_query)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to execute vec KNN biased recall")?;
 
         if rows.is_empty() {
             return Ok("No relevant memories found.".to_string());
@@ -401,24 +495,16 @@ impl Memory for SqliteMemory {
             let body: String = row.get("body");
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
-            let embedding_blob: Option<Vec<u8>> = row.get("embedding");
+            let distance: f64 = row.get("distance");
+            let similarity = (1.0 - distance) as f32;
+            let base_score = similarity * strength as f32;
 
-            if let Some(blob) = embedding_blob {
-                if let Ok(embedding) = bincode::deserialize::<Vec<f32>>(&blob) {
-                    let similarity = cosine_similarity(&query_embedding, &embedding);
-                    let base_score = similarity * strength as f32;
+            // Mood-congruent recency bias
+            let recency_score = (timestamp - oldest) as f32 / ts_range;
+            let bias_factor = 1.0 + mood_bias * (recency_score - 0.5) * 0.6;
+            let final_score = base_score * bias_factor.max(0.1);
 
-                    // Mood-congruent recency bias
-                    // recency_score: 0.0 (oldest) to 1.0 (newest)
-                    let recency_score = (timestamp - oldest) as f32 / ts_range;
-                    // mood_bias > 0 → boost recent (positive mood recalls recent good times)
-                    // mood_bias < 0 → boost old (negative mood ruminates on past)
-                    let bias_factor = 1.0 + mood_bias * (recency_score - 0.5) * 0.6;
-                    let final_score = base_score * bias_factor.max(0.1);
-
-                    scored.push((final_score, author, body, timestamp));
-                }
-            }
+            scored.push((final_score, author, body, timestamp));
         }
 
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -441,21 +527,20 @@ impl Memory for SqliteMemory {
     }
 
     async fn memorize(&self, content: &Content) -> Result<()> {
-        let modality_str = format!("{:?}", content.modality); // Simple debug format for enum
-        
+        let modality_str = format!("{:?}", content.modality);
+
         // Generate embedding
         let embedding = self.embedding_model.embed(&content.body)
-            .ok(); // If embedding fails (e.g. empty text), we still store the episode, just no vector.
+            .ok();
 
-        // Serialize embedding to efficient binary format
-        let embedding_blob = if let Some(emb) = embedding {
-            Some(bincode::serialize(&emb).context("Failed to serialize embedding")?)
+        // Serialize embedding to efficient binary format for episodes table
+        let embedding_blob = if let Some(ref emb) = embedding {
+            Some(bincode::serialize(emb).context("Failed to serialize embedding")?)
         } else {
             None
         };
 
         // Default strength 0.5; caller should use update_episode_strength()
-        // to set encoding strength based on emotional intensity (B-10 layer 1).
         let default_strength: f64 = 0.5;
 
         sqlx::query(
@@ -475,6 +560,22 @@ impl Memory for SqliteMemory {
         .execute(&self.pool)
         .await
         .context("Failed to insert episode")?;
+
+        // Also insert into vec_episodes for ANN search
+        if let Some(ref emb) = embedding {
+            let json_vec = serde_json::to_string(emb)
+                .context("Failed to serialize embedding to JSON for vec index")?;
+            if let Err(e) = sqlx::query(
+                "INSERT OR IGNORE INTO vec_episodes (episode_id, embedding) VALUES (?, ?)"
+            )
+            .bind(content.id.to_string())
+            .bind(&json_vec)
+            .execute(&self.pool)
+            .await
+            {
+                tracing::warn!("Failed to insert into vec_episodes: {}", e);
+            }
+        }
 
         Ok(())
     }
@@ -960,6 +1061,17 @@ pub struct SemanticFact {
     pub confidence: f32,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// A memory seed for dream generation (ADR-008).
+/// Represents a recalled episode fragment used to compose dream narratives.
+#[derive(Debug, Clone)]
+pub struct DreamSeed {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub timestamp: i64,
+    pub strength: f32,
 }
 
 impl SqliteMemory {
@@ -1470,6 +1582,69 @@ impl SqliteMemory {
             .context("Failed to get episode strength")?;
 
         Ok(row.map(|r| r.get::<f64, _>("strength") as f32))
+    }
+
+    // === Dream Seed Recall (ADR-008) ===
+
+    /// Recall N episodes randomly, weighted by strength.
+    /// Used for dream generation — stronger memories more likely to appear in dreams.
+    pub async fn recall_random_by_strength(&self, count: usize) -> Result<Vec<DreamSeed>> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Fetch count*5 candidates randomly, then weight-sample in Rust
+        let candidate_limit = (count * 5).max(10) as i64;
+        let rows = sqlx::query(
+            "SELECT id, author, body, timestamp, strength FROM episodes \
+             WHERE strength > 0.1 ORDER BY RANDOM() LIMIT ?"
+        )
+        .bind(candidate_limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to fetch dream seed candidates")?;
+
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build candidates with strength as weight
+        let mut candidates: Vec<DreamSeed> = rows.iter().map(|row| {
+            DreamSeed {
+                id: row.get::<String, _>("id"),
+                author: row.get::<String, _>("author"),
+                body: row.get::<String, _>("body"),
+                timestamp: row.get::<i64, _>("timestamp"),
+                strength: row.get::<f64, _>("strength") as f32,
+            }
+        }).collect();
+
+        // Weighted sampling without replacement
+        let mut selected = Vec::with_capacity(count.min(candidates.len()));
+        for _ in 0..count {
+            if candidates.is_empty() {
+                break;
+            }
+            let total_weight: f32 = candidates.iter().map(|c| c.strength).sum();
+            if total_weight <= 0.0 {
+                break;
+            }
+            // Simple deterministic-ish weighted selection using strength ratios
+            // Use a pseudo-random pivot based on candidate count + total_weight
+            let pivot = (candidates.len() as f32 * 0.618) % 1.0 * total_weight;
+            let mut cumulative = 0.0f32;
+            let mut pick_idx = 0;
+            for (i, c) in candidates.iter().enumerate() {
+                cumulative += c.strength;
+                if cumulative >= pivot {
+                    pick_idx = i;
+                    break;
+                }
+            }
+            selected.push(candidates.remove(pick_idx));
+        }
+
+        Ok(selected)
     }
 
     // === Token Usage Tracking ===

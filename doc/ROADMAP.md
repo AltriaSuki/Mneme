@@ -540,19 +540,19 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 31. 🏗️ LLM 流式输出
-**模块**: `mneme_reasoning/src/providers/`, `mneme_reasoning/src/engine.rs`  
+### 31. ✅ LLM 流式输出
+**模块**: `mneme_reasoning/src/providers/`, `mneme_reasoning/src/engine.rs`
 **问题**: LLM 响应完全缓冲后才处理。用户需要等待整个生成完成。对于长回复（尤其通过 OneBot 发送），严重损害"类人感"。
 
-**当前行为**: 请求 → 等待完整响应 → 一次性处理 → 发送  
-**目标行为**: 请求 → 流式接收 → 逐段处理 → 分批发送（配合 humanizer 的消息拆分）
-
-**需要实现**:
-- [ ] `LlmClient` trait 增加 `stream_completion()` 方法
-- [ ] Anthropic/OpenAI provider 实现 SSE 流式解析
-- [ ] Engine 层逐 chunk 处理，支持"边生成边拆分消息"
-- [ ] 工具调用的流式检测（部分 JSON 缓冲直到完整）
-- [ ] 流式输出与 humanizer 的 typing delay 自然配合
+**已完成** (v0.5.0):
+- [x] `StreamEvent` 枚举：TextDelta / ToolUseStart / ToolInputDelta / Done / Error ✅
+- [x] `LlmClient` trait 增加 `stream_complete()` 方法（默认回退到 `complete()`） ✅
+- [x] Anthropic SSE 流式解析：content_block_start/delta, message_delta/stop ✅
+- [x] OpenAI SSE 流式解析：data chunks + `[DONE]` ✅
+- [x] Engine ReAct loop 改用 `stream_complete()`，逐 chunk 处理文本 ✅
+- [x] 工具调用 JSON 缓冲：ToolInputDelta 累积到完整 JSON 后解析 ✅
+- [x] `on_text_chunk` 回调机制：CLI 实时打印文本 ✅
+- [x] 7 个新测试：stream_fallback (2) + Anthropic SSE (3) + OpenAI SSE (2) ✅
 
 ---
 
@@ -565,8 +565,8 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 | Crate | 测试数 | 覆盖质量 |
 |-------|--------|----------|
 | mneme_core | 18 | ✅ 完善 (含 boredom 动力学测试) |
-| **mneme_reasoning** | **34** | ✅ **10 unit + 24 integration** |
-| mneme_memory | 28 | ✅ 完善 (含 self_knowledge + episode strength 测试) |
+| **mneme_reasoning** | **109** | ✅ **64 unit + 33 integration + 12 property** |
+| mneme_memory | 69 | ✅ 完善 (含 self_knowledge + episode strength + vec index 测试) |
 | mneme_limbic | 9 | ✅ 良好 |
 | mneme_expression | 14 | ✅ 良好 |
 | mneme_perception | 4 | ✅ 良好 |
@@ -594,16 +594,17 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 33. 🏗️ 向量搜索 ANN 索引
-**模块**: `mneme_memory/src/sqlite.rs`  
-**问题**: 当前实现线性扫描最近 1,000 条 episode 计算余弦相似度（O(n)）。数据量增长后性能线性退化，无法支撑长期记忆。
+### 33. ✅ 向量搜索 ANN 索引
+**模块**: `mneme_memory/src/sqlite.rs`
 
-**需要实现**:
-- [ ] 评估 SQLite 向量扩展（sqlite-vss / sqlite-vec）
-- [ ] 或迁移到支持 ANN 的后端（LanceDB / Qdrant / pgvector）
-- [ ] HNSW 索引用于近似最近邻搜索
-- [ ] 索引增量更新（新 episode 插入时自动维护索引）
-- [ ] 性能基准测试：1k / 10k / 100k episodes 的召回延迟
+**已完成** (v0.5.0):
+- [x] 使用 `sqlite-vec` 扩展（纯 C，无外部依赖，cosine 距离） ✅
+- [x] `vec_episodes` 虚拟表 (`vec0`, float[384]) ✅
+- [x] `memorize()` 同时写入 episodes + vec_episodes ✅
+- [x] `backfill_vec_index()` 迁移已有 episodes 的 embedding ✅
+- [x] `recall()` 改用 KNN 查询（`WHERE embedding MATCH ? AND k = 20`），去除 LIMIT 1000 ✅
+- [x] `recall_with_bias()` 同步改用 KNN + mood-congruent recency bias ✅
+- [x] 3 个新测试：vec_recall_basic, vec_recall_removes_limit, vec_backfill ✅
 
 ---
 ## � Token 经济与成本控制
@@ -1131,6 +1132,27 @@ CREATE TABLE self_knowledge (
 
 ---
 
+### 43. 🧬 做梦 (Dreaming) — 走神在睡眠中的延伸 ✅ Phase 1
+**模块**: `mneme_memory/src/dream.rs`, `mneme_memory/src/consolidation.rs`, `mneme_memory/src/coordinator.rs`
+**优先级**: 🟢 Phase 3
+**前置**: #37 (episode strength), #39 (self-reflection), #41 (rumination)
+**理论**: MANIFESTO ADR-008 — consolidation 期间 rumination 运行，按 strength 加权随机召回 2-3 条 episodes，拼接成梦境 episode
+
+**Phase 1 已完成（规则式）**:
+- [x] `DreamSeed` 结构体 + `recall_random_by_strength()` 加权随机召回 ✅
+- [x] `DreamGenerator` 规则式模板梦境生成（积极/消极/中性/混乱四类模板） ✅
+- [x] `DreamEpisode` 包含 narrative + source_ids + emotional_tone ✅
+- [x] `ConsolidationResult` 新增 `dream` 字段 ✅
+- [x] `trigger_sleep()` 中生成梦境并存储为 episode（source="self:dream", strength=0.4） ✅
+- [x] 当前 mood_bias 影响梦境色调选择 ✅
+- [x] 9 个测试（dream 模块 8 + sqlite 集成 1） ✅
+
+**Phase 2 待升级**:
+- [ ] LLM 生成梦境叙述（替代模板拼接）
+- [ ] 梦境与自我反思的交互（梦中领悟）
+
+---
+
 ## 📅 版本规划
 
 ### v0.2.0 - 核心管道闭环版本
@@ -1193,8 +1215,8 @@ CREATE TABLE self_knowledge (
 - [x] 可学习的 ModulationCurves 基础结构 (#20 中期) ✅
 - [x] 离线学习管道 (#13) ✅ — CurveLearner + ModulationSample 持久化 + sleep 自动学习
 - [x] Observability & Metrics (#15) ✅ — 可配置日志级别/JSON/文件输出 + instrument 关键方法
-- LLM 流式输出 (#31)
-- 向量搜索 ANN 索引 (#33)
+- [x] LLM 流式输出 (#31) ✅ — StreamEvent + SSE 解析 + Engine 流式 ReAct loop + CLI 实时输出
+- [x] 向量搜索 ANN 索引 (#33) ✅ — sqlite-vec KNN 查询，去除 LIMIT 1000 限制
 
 ### v0.6.0 - 自主 Agency 版本
 > **目标**: 目标驱动的自主行为。
@@ -1213,4 +1235,4 @@ CREATE TABLE self_knowledge (
 
 ---
 
-*最后更新: 2026-02-09*
+*最后更新: 2026-02-10*

@@ -66,3 +66,18 @@ pub struct MessagesResponse {
     pub content: Vec<ContentBlock>,
     pub stop_reason: Option<String>,
 }
+
+/// A streaming event from the LLM.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// Incremental text content
+    TextDelta(String),
+    /// Tool use started (id and name known, input accumulating)
+    ToolUseStart { id: String, name: String },
+    /// Incremental tool input JSON fragment
+    ToolInputDelta(String),
+    /// Stream completed, final stop reason
+    Done { stop_reason: Option<String> },
+    /// Error during streaming
+    Error(String),
+}

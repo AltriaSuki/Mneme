@@ -408,7 +408,7 @@ impl OrganismCoordinator {
         let current_state = self.state.read().await.clone();
 
         // Run consolidation
-        let result = self.consolidator.consolidate(&episodes, &current_state).await?;
+        let mut result = self.consolidator.consolidate(&episodes, &current_state).await?;
 
         // Apply state updates if consolidation was performed
         if result.performed && !result.state_updates.is_empty() {
@@ -469,6 +469,46 @@ impl OrganismCoordinator {
                 };
                 if let Err(e) = db.memorize(&meta_content).await {
                     tracing::warn!("Failed to store reflection meta-episode: {}", e);
+                }
+            }
+        }
+
+        // Dream generation (ADR-008): recall random memories and weave a dream
+        if let Some(ref db) = self.db {
+            match db.recall_random_by_strength(3).await {
+                Ok(seeds) if seeds.len() >= 2 => {
+                    let current = self.state.read().await.clone();
+                    if let Some(dream) = crate::dream::DreamGenerator::generate(&seeds, &current) {
+                        tracing::info!(
+                            "Dream generated from {} seeds, tone={:.2}",
+                            dream.source_ids.len(),
+                            dream.emotional_tone,
+                        );
+                        let dream_content = mneme_core::Content {
+                            id: uuid::Uuid::new_v4(),
+                            source: "self:dream".to_string(),
+                            author: "Mneme".to_string(),
+                            body: dream.narrative.clone(),
+                            timestamp: chrono::Utc::now().timestamp(),
+                            modality: mneme_core::Modality::Text,
+                        };
+                        if let Err(e) = db.memorize(&dream_content).await {
+                            tracing::warn!("Failed to store dream episode: {}", e);
+                        } else {
+                            // Set dream strength to 0.4 (weaker than real memories)
+                            let _ = db.update_episode_strength(
+                                &dream_content.id.to_string(),
+                                0.4,
+                            ).await;
+                        }
+                        result.dream = Some(dream);
+                    }
+                }
+                Ok(_) => {
+                    tracing::debug!("Not enough memory seeds for dream generation");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to recall seeds for dreaming: {}", e);
                 }
             }
         }
