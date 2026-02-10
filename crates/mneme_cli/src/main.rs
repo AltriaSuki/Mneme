@@ -19,7 +19,7 @@ use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Config, EditMode};
 
 async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
-    println!(""); // Spacer
+    println!(); // Spacer
     let parts = humanizer.split_response(&response.content);
     for part in parts {
         // Simulate typing delay based on emotion
@@ -33,7 +33,7 @@ async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefi
             println!("Mneme: {}", part);
         }
     }
-    println!(""); // Spacer
+    println!(); // Spacer
 }
 
 
@@ -389,6 +389,18 @@ async fn main() -> anyhow::Result<()> {
                         }
                         continue;
                     }
+                    AgentAction::AutonomousToolUse { tool_name, input, goal_id } => {
+                        info!("Autonomous tool use: {} (goal={:?})", tool_name, goal_id);
+                        match engine.execute_autonomous_tool(&tool_name, &input, goal_id).await {
+                            Ok(result) => {
+                                if !result.is_empty() {
+                                    info!("Autonomous tool result: {}", &result[..result.len().min(200)]);
+                                }
+                            }
+                            Err(e) => error!("Autonomous tool error: {}", e),
+                        }
+                        continue;
+                    }
                 }
             },
             else => break, // Channel closed
@@ -493,13 +505,10 @@ async fn main() -> anyhow::Result<()> {
         }
         
         // Log incoming messages
-        match &event {
-            Event::UserMessage(content) => {
-                if content.source.starts_with("onebot") {
-                    tracing::info!("Received OneBot message ({}) from {}: {}", content.source, content.author, content.body);
-                }
+        if let Event::UserMessage(content) = &event {
+            if content.source.starts_with("onebot") {
+                tracing::info!("Received OneBot message ({}) from {}: {}", content.source, content.author, content.body);
             }
-            _ => {}
         }
         
         match engine.think(event.clone()).await {
