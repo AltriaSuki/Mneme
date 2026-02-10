@@ -168,9 +168,9 @@ mod tests {
         let s1 = detector.compute_surprise("你好");
         assert!(s1 > 0.0 && s1 < 1.0);
         
-        // Similar message should be less surprising
+        // Similar message also produces a valid surprise value
         let s2 = detector.compute_surprise("你好啊");
-        // Note: might not be less due to baseline adjustment
+        assert!(s2 >= 0.0 && s2 <= 1.0);
     }
 
     #[test]
