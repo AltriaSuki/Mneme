@@ -794,7 +794,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [ ] 文档注释补全（尤其是 public API；reasoning 和 CLI 模块注释稀疏）
 - [x] `values.rs` 和 `somatic.rs` 的中文情感关键词分析逻辑重复，应抽取为共用模块 ✅ — `mneme_core::sentiment` 共享模块 + 6 测试
 - [ ] `ContentItem` 缺少设计文档 §3.2 要求的 reply chain、thread ID、modality metadata 字段
-- [ ] `headless_chrome` 同步 API 在异步上下文中直接调用，阻塞 tokio 运行时，需用 `spawn_blocking` 包装
+- [x] `headless_chrome` 同步 API 在异步上下文中直接调用，阻塞 tokio 运行时，需用 `spawn_blocking` 包装 ✅ — engine.rs + tools.rs 全部 CDP 调用（健康检查、会话创建、动作执行、恢复）均已包装
 
 ### 18. ✅ 配置管理
 - [x] 统一 TOML 配置文件：`MnemeConfig` + `load_or_default()` ✅
@@ -826,7 +826,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | ~~Persona 文件全部为空~~ | persona/*.md | 5 个脑区定义文件已填充（刚出生的小女孩人格） | **Fixed** ✅ |
 | Semantic facts 读写已实现 | mneme_memory | store/recall/decay/format 方法完成 | **Fixed** ✅ |
 | ~~Context assembly 管道断裂~~ | mneme_reasoning | 6/6 层上下文全部完成 | **Fixed** ✅ |
-| 浏览器阻塞异步运行时 | mneme_browser | headless_chrome 同步调用阻塞 tokio | Open |
+| ~~浏览器阻塞异步运行时~~ | mneme_browser | headless_chrome 同步调用已用 spawn_blocking 包装 | **Fixed** ✅ |
 | ~~Shell 无权限控制~~ | mneme_os | ~~LocalShell 可执行任意命令~~ → CapabilityGuard 三级沙箱 (#29) | **Fixed** ✅ |
 | ~~输出含 roleplay 动作描写~~ | prompts/broca | `*感觉有点熟悉*` 等星号旁白，人类不这样聊天 | **Fixed** ✅ |
 | ~~日常聊天用 markdown~~ | prompts/broca | 聊天中使用加粗/列表/标题，不自然 | **Fixed** ✅ |
