@@ -806,6 +806,9 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [ ] Hot reload 支持
 
 ### 19. 🏗️ 测试覆盖率
+- [x] `cosine_similarity` 单元测试 ✅ — 7 个测试覆盖相同/相反/正交/缩放/空/零/长度不匹配
+- [x] `dynamics.rs` 慢状态危机测试 ✅ — 5 个测试覆盖 step_slow_crisis、apply_moral_cost、homeostatic_error
+- [x] `LimbicSystem` 测试补全 ✅ — 7 个新测试覆盖 state roundtrip、阈值检测、subscribe、modulation、curves
 - [ ] 集成测试补充
 - [ ] Mock 基础设施完善
 - [ ] CI/CD 配置
