@@ -792,7 +792,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [ ] 统一错误类型（目前混用 `anyhow::Error`；`thiserror` 已引入但未使用，无自定义错误类型）
 - [ ] 减少 `Arc<RwLock<>>` 的过度使用（coordinator 有 8 个 Arc 字段，考虑 actor/mpsc 模式）
 - [ ] 文档注释补全（尤其是 public API；reasoning 和 CLI 模块注释稀疏）
-- [ ] `values.rs` 和 `somatic.rs` 的中文情感关键词分析逻辑重复，应抽取为共用模块
+- [x] `values.rs` 和 `somatic.rs` 的中文情感关键词分析逻辑重复，应抽取为共用模块 ✅ — `mneme_core::sentiment` 共享模块 + 6 测试
 - [ ] `ContentItem` 缺少设计文档 §3.2 要求的 reply chain、thread ID、modality metadata 字段
 - [ ] `headless_chrome` 同步 API 在异步上下文中直接调用，阻塞 tokio 运行时，需用 `spawn_blocking` 包装
 
