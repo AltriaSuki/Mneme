@@ -212,6 +212,12 @@ mod tests {
     }
 
     #[test]
+    fn test_browser_client_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<BrowserClient>();
+    }
+
+    #[test]
     fn test_is_alive_before_launch() {
         // Without Chrome, we can't create a BrowserClient, but we can verify
         // the logic: a client with no current_tab should return false from is_alive.

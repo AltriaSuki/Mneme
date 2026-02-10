@@ -534,49 +534,70 @@ impl ReasoningEngine {
     }
     
     /// Execute a browser tool with session recovery on failure.
+    ///
+    /// All headless_chrome calls are synchronous CDP operations, so we use
+    /// `spawn_blocking` to avoid blocking the tokio runtime.
     async fn execute_browser_tool(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
         // Parse action from input (permanent error if params invalid)
         let action = match Self::parse_browser_action(name, input) {
             Ok(a) => a,
             Err(msg) => return ToolOutcome::permanent_error(msg),
         };
-        
+
         let mut session_lock = self.browser_session.lock().await;
-        
-        // Proactive health check: if session exists but is dead, drop it
-        if let Some(client) = session_lock.as_ref() {
-            if !client.is_alive() {
+
+        // Proactive health check (blocking CDP call → spawn_blocking)
+        if let Some(client) = session_lock.take() {
+            let (client, alive) = tokio::task::spawn_blocking(move || {
+                let alive = client.is_alive();
+                (client, alive)
+            }).await.unwrap();
+            if alive {
+                *session_lock = Some(client);
+            } else {
                 tracing::warn!("Browser session is stale, will recreate");
-                *session_lock = None;
             }
         }
-        
-        // Ensure session exists
+
+        // Ensure session exists (blocking Browser::new → spawn_blocking)
         if session_lock.is_none() {
-            match Self::create_browser_session() {
+            match tokio::task::spawn_blocking(Self::create_browser_session).await.unwrap() {
                 Ok(client) => { *session_lock = Some(client); },
                 Err(e) => return ToolOutcome::transient_error(
                     format!("Failed to launch browser: {}", e)
                 ),
             }
         }
-        
-        // First attempt
-        if let Some(client) = session_lock.as_mut() {
-            match client.execute_action(action.clone()) {
-                Ok(out) => return ToolOutcome::ok(out),
+
+        // First attempt (blocking CDP call → spawn_blocking)
+        if let Some(mut client) = session_lock.take() {
+            let act = action.clone();
+            let (client, result) = tokio::task::spawn_blocking(move || {
+                let r = client.execute_action(act);
+                (client, r)
+            }).await.unwrap();
+
+            match result {
+                Ok(out) => {
+                    *session_lock = Some(client);
+                    return ToolOutcome::ok(out);
+                }
                 Err(e) => {
                     tracing::warn!("Browser action failed, attempting session recovery: {}", e);
-                    // Drop old session and try to recover
-                    *session_lock = None;
+                    // Drop dead client, fall through to recovery
                 }
             }
         }
-        
-        // Recovery attempt: create fresh session and retry
-        match Self::create_browser_session() {
-            Ok(mut client) => {
-                let result = client.execute_action(action);
+
+        // Recovery attempt (blocking → spawn_blocking)
+        let recovery = tokio::task::spawn_blocking(move || {
+            let mut client = Self::create_browser_session()?;
+            let result = client.execute_action(action);
+            Ok::<_, anyhow::Error>((client, result))
+        }).await.unwrap();
+
+        match recovery {
+            Ok((client, result)) => {
                 *session_lock = Some(client);
                 match result {
                     Ok(out) => ToolOutcome::ok(out),

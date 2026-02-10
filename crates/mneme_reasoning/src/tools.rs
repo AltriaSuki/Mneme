@@ -236,16 +236,21 @@ impl ToolHandler for BrowserToolHandler {
 
         let mut session = self.session.lock().await;
 
-        // Health check
-        if let Some(client) = session.as_ref() {
-            if !client.is_alive() {
-                *session = None;
+        // Health check (blocking CDP call → spawn_blocking)
+        if let Some(client) = session.take() {
+            let alive = tokio::task::spawn_blocking(move || {
+                let alive = client.is_alive();
+                (client, alive)
+            }).await.unwrap();
+            if alive.1 {
+                *session = Some(alive.0);
             }
+            // else: dead session dropped
         }
 
-        // Ensure session exists
+        // Ensure session exists (blocking Browser::new → spawn_blocking)
         if session.is_none() {
-            match create_browser_session() {
+            match tokio::task::spawn_blocking(create_browser_session).await.unwrap() {
                 Ok(c) => { *session = Some(c); }
                 Err(e) => return ToolOutcome {
                     content: format!("Failed to launch browser: {}", e),
@@ -255,23 +260,37 @@ impl ToolHandler for BrowserToolHandler {
             }
         }
 
-        // Execute action
-        if let Some(client) = session.as_mut() {
-            match client.execute_action(action.clone()) {
-                Ok(out) => return ToolOutcome {
-                    content: out, is_error: false, error_kind: None,
-                },
+        // Execute action (blocking CDP call → spawn_blocking)
+        if let Some(mut client) = session.take() {
+            let act = action.clone();
+            let (client, result) = tokio::task::spawn_blocking(move || {
+                let r = client.execute_action(act);
+                (client, r)
+            }).await.unwrap();
+
+            match result {
+                Ok(out) => {
+                    *session = Some(client);
+                    return ToolOutcome {
+                        content: out, is_error: false, error_kind: None,
+                    };
+                }
                 Err(e) => {
                     tracing::warn!("Browser action failed, recovering: {}", e);
-                    *session = None;
+                    // Drop dead client, fall through to recovery
                 }
             }
         }
 
-        // Recovery attempt
-        match create_browser_session() {
-            Ok(mut client) => {
-                let result = client.execute_action(action);
+        // Recovery attempt (blocking → spawn_blocking)
+        let recovery = tokio::task::spawn_blocking(move || {
+            let mut client = create_browser_session()?;
+            let result = client.execute_action(action);
+            Ok::<_, anyhow::Error>((client, result))
+        }).await.unwrap();
+
+        match recovery {
+            Ok((client, result)) => {
                 *session = Some(client);
                 match result {
                     Ok(out) => ToolOutcome {
