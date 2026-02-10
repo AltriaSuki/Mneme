@@ -314,8 +314,8 @@ degradation_strategy = { degrade = { max_tokens_cap = 1024 } }
     }
 
     #[test]
-    fn test_env_overrides() {
-        // Set env vars
+    fn test_env_overrides_and_defaults() {
+        // Part 1: env overrides
         std::env::set_var("LLM_PROVIDER", "openai");
         std::env::set_var("ANTHROPIC_MODEL", "gpt-4o");
 
@@ -325,17 +325,11 @@ degradation_strategy = { degrade = { max_tokens_cap = 1024 } }
         assert_eq!(cfg.llm.provider, "openai");
         assert_eq!(cfg.llm.model, "gpt-4o");
 
-        // Clean up
-        std::env::remove_var("LLM_PROVIDER");
-        std::env::remove_var("ANTHROPIC_MODEL");
-    }
-
-    #[test]
-    fn test_load_nonexistent_returns_defaults() {
-        // Clear env vars that test_env_overrides may have set (parallel test race)
+        // Clean up env vars before testing defaults
         std::env::remove_var("LLM_PROVIDER");
         std::env::remove_var("ANTHROPIC_MODEL");
 
+        // Part 2: nonexistent path returns defaults (no env interference)
         let cfg = MnemeConfig::load_or_default("/nonexistent/path.toml");
         assert_eq!(cfg.llm.provider, "anthropic");
     }
