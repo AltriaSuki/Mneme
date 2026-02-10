@@ -381,4 +381,91 @@ mod tests {
         assert!(state.fast.boredom < 0.5,
             "Boredom should decrease with novelty: {}", state.fast.boredom);
     }
+
+    #[test]
+    fn test_slow_crisis_no_collapse() {
+        let dynamics = DefaultDynamics::default();
+        let mut slow = SlowState::default();
+        let medium = MediumState::default();
+        let initial_rigidity = slow.rigidity;
+
+        // Low intensity crisis — should NOT collapse
+        let collapsed = dynamics.step_slow_crisis(&mut slow, &medium, 0.2);
+
+        assert!(!collapsed);
+        // Rigidity should increase slightly (belief solidification)
+        assert!(slow.rigidity > initial_rigidity);
+    }
+
+    #[test]
+    fn test_slow_crisis_collapse() {
+        let dynamics = DefaultDynamics::default();
+        let mut slow = SlowState::default();
+        let medium = MediumState::default();
+
+        // Very high intensity crisis — should collapse
+        let collapsed = dynamics.step_slow_crisis(&mut slow, &medium, 1.0);
+
+        assert!(collapsed);
+        // Rigidity should decrease (plasticity window)
+        assert!(slow.rigidity < SlowState::default().rigidity);
+    }
+
+    #[test]
+    fn test_slow_crisis_rigidity_affects_threshold() {
+        let dynamics = DefaultDynamics::default();
+
+        // High rigidity → higher collapse threshold
+        let mut slow_rigid = SlowState::default();
+        slow_rigid.rigidity = 0.9;
+        let medium = MediumState::default();
+        let collapsed_rigid = dynamics.step_slow_crisis(&mut slow_rigid, &medium, 0.8);
+
+        // Low rigidity → lower collapse threshold
+        let mut slow_flexible = SlowState::default();
+        slow_flexible.rigidity = 0.1;
+        let collapsed_flexible = dynamics.step_slow_crisis(&mut slow_flexible, &medium, 0.8);
+
+        // Same crisis intensity: flexible personality collapses, rigid one doesn't
+        assert!(!collapsed_rigid, "High rigidity should resist collapse at 0.8");
+        assert!(collapsed_flexible, "Low rigidity should collapse at 0.8");
+    }
+
+    #[test]
+    fn test_apply_moral_cost() {
+        let dynamics = DefaultDynamics::default();
+        let mut fast = FastState::default();
+        let initial_stress = fast.stress;
+        let initial_energy = fast.energy;
+        let initial_valence = fast.affect.valence;
+
+        dynamics.apply_moral_cost(&mut fast, 0.6);
+
+        assert!(fast.stress > initial_stress, "Moral cost should increase stress");
+        assert!(fast.energy < initial_energy, "Moral cost should decrease energy");
+        assert!(fast.affect.valence < initial_valence, "Moral cost should decrease valence (guilt)");
+        // Values should remain in valid range
+        assert!(fast.stress >= 0.0 && fast.stress <= 1.0);
+        assert!(fast.energy >= 0.0 && fast.energy <= 1.0);
+    }
+
+    #[test]
+    fn test_homeostatic_error() {
+        let dynamics = DefaultDynamics::default();
+
+        // At equilibrium, error should be near zero
+        let mut state = OrganismState::default();
+        state.fast.energy = dynamics.energy_target;
+        state.fast.stress = dynamics.stress_target;
+        state.fast.social_need = dynamics.social_need_target;
+        let err = homeostatic_error(&state, &dynamics);
+        assert!(err < 0.01, "Error at equilibrium should be near zero, got {}", err);
+
+        // Far from equilibrium, error should be high
+        state.fast.energy = 0.0;
+        state.fast.stress = 1.0;
+        state.fast.social_need = 1.0;
+        let err = homeostatic_error(&state, &dynamics);
+        assert!(err > 0.3, "Error far from equilibrium should be high, got {}", err);
+    }
 }
