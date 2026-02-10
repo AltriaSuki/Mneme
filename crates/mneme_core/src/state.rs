@@ -20,6 +20,8 @@ fn sanitize_f32(v: f32, fallback: f32) -> f32 {
     }
 }
 
+fn default_boredom() -> f32 { 0.2 }
+
 /// Complete organism state: s = (s_fast, s_medium, s_slow)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganismState {
@@ -158,6 +160,7 @@ pub struct FastState {
     /// Boredom (0.0 - 1.0): monotony accumulator
     /// Increases with low-surprise, low-intensity input; decreases with novelty.
     /// Feeds back into curiosity drive and energy restlessness.
+    #[serde(default = "default_boredom")]
     pub boredom: f32,
 }
 
