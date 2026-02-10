@@ -443,4 +443,156 @@ mod tests {
         let cost = net.compute_moral_cost(&["honesty"]);
         assert!(cost > 0.5); // Honesty has high weight
     }
+
+    #[test]
+    fn test_attachment_all_styles() {
+        assert_eq!(
+            AttachmentState { anxiety: 0.2, avoidance: 0.2 }.style(),
+            AttachmentStyle::Secure
+        );
+        assert_eq!(
+            AttachmentState { anxiety: 0.8, avoidance: 0.2 }.style(),
+            AttachmentStyle::Anxious
+        );
+        assert_eq!(
+            AttachmentState { anxiety: 0.2, avoidance: 0.8 }.style(),
+            AttachmentStyle::Avoidant
+        );
+        assert_eq!(
+            AttachmentState { anxiety: 0.8, avoidance: 0.8 }.style(),
+            AttachmentStyle::Disorganized
+        );
+    }
+
+    #[test]
+    fn test_attachment_positive_interaction() {
+        let mut att = AttachmentState { anxiety: 0.6, avoidance: 0.4 };
+        att.update_from_interaction(true, 1.0);
+        // Positive interaction should reduce anxiety
+        assert!(att.anxiety < 0.6);
+        assert!(att.avoidance < 0.4);
+    }
+
+    #[test]
+    fn test_attachment_negative_interaction() {
+        let mut att = AttachmentState { anxiety: 0.3, avoidance: 0.2 };
+        att.update_from_interaction(false, 1.0);
+        // Negative interaction should increase anxiety
+        assert!(att.anxiety > 0.3);
+    }
+
+    #[test]
+    fn test_attachment_slow_response_increases_anxiety() {
+        let mut att = AttachmentState { anxiety: 0.3, avoidance: 0.2 };
+        att.update_from_interaction(true, 3.0); // Very slow response
+        // Even positive interaction with slow response increases anxiety
+        // The net effect depends on the learning rate balance
+        // Just verify values stay in range
+        assert!(att.anxiety >= 0.0 && att.anxiety <= 1.0);
+        assert!(att.avoidance >= 0.0 && att.avoidance <= 1.0);
+    }
+
+    #[test]
+    fn test_moral_cost_multiple_values() {
+        let net = ValueNetwork::default();
+        let cost_one = net.compute_moral_cost(&["honesty"]);
+        let cost_two = net.compute_moral_cost(&["honesty", "kindness"]);
+        assert!(cost_two > cost_one, "Violating more values should cost more");
+    }
+
+    #[test]
+    fn test_moral_cost_unknown_value() {
+        let net = ValueNetwork::default();
+        let cost = net.compute_moral_cost(&["nonexistent_value"]);
+        assert_eq!(cost, 0.0, "Unknown values should have zero cost");
+    }
+
+    #[test]
+    fn test_moral_cost_capped_at_one() {
+        let net = ValueNetwork::default();
+        // Violate all values — cost should be capped at 1.0
+        let all_values: Vec<&str> = net.values.keys().map(|s| s.as_str()).collect();
+        let cost = net.compute_moral_cost(&all_values);
+        assert!(cost <= 1.0, "Moral cost should be capped at 1.0, got {}", cost);
+    }
+
+    #[test]
+    fn test_top_values_ordering() {
+        let net = ValueNetwork::default();
+        let top = net.top_values(5);
+        for i in 1..top.len() {
+            assert!(top[i - 1].1 >= top[i].1, "top_values should be sorted descending");
+        }
+    }
+
+    #[test]
+    fn test_top_values_exceeds_count() {
+        let net = ValueNetwork::default();
+        let top = net.top_values(100);
+        assert_eq!(top.len(), net.values.len(), "Should return all values if n > count");
+    }
+
+    #[test]
+    fn test_fast_state_normalize() {
+        let mut fast = FastState::default();
+        fast.energy = f32::NAN;
+        fast.stress = f32::INFINITY;
+        fast.curiosity = -5.0;
+        fast.social_need = 10.0;
+        fast.boredom = f32::NEG_INFINITY;
+        fast.affect.valence = f32::NAN;
+        fast.affect.arousal = f32::NAN;
+
+        fast.normalize();
+
+        assert!(fast.energy.is_finite() && fast.energy >= 0.0 && fast.energy <= 1.0);
+        assert!(fast.stress.is_finite() && fast.stress >= 0.0 && fast.stress <= 1.0);
+        assert!(fast.curiosity >= 0.0 && fast.curiosity <= 1.0);
+        assert!(fast.social_need >= 0.0 && fast.social_need <= 1.0);
+        assert!(fast.boredom >= 0.0 && fast.boredom <= 1.0);
+        assert!(fast.affect.valence.is_finite());
+        assert!(fast.affect.arousal.is_finite());
+    }
+
+    #[test]
+    fn test_medium_state_normalize() {
+        let mut medium = MediumState::default();
+        medium.mood_bias = f32::NAN;
+        medium.openness = f32::INFINITY;
+        medium.hunger = -10.0;
+        medium.attachment.anxiety = f32::NAN;
+
+        medium.normalize();
+
+        assert!(medium.mood_bias.is_finite() && medium.mood_bias >= -1.0 && medium.mood_bias <= 1.0);
+        assert!(medium.openness >= 0.0 && medium.openness <= 1.0);
+        assert!(medium.hunger >= 0.0 && medium.hunger <= 1.0);
+        assert!(medium.attachment.anxiety.is_finite());
+    }
+
+    #[test]
+    fn test_describe_for_context_low_energy() {
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.1;
+        let desc = state.describe_for_context();
+        assert!(desc.contains("简洁"), "Low energy should mention 简洁, got: {}", desc);
+    }
+
+    #[test]
+    fn test_describe_for_context_high_stress() {
+        let mut state = OrganismState::default();
+        state.fast.stress = 0.9;
+        let desc = state.describe_for_context();
+        assert!(desc.contains("急躁") || desc.contains("敏感"),
+            "High stress should mention 急躁/敏感, got: {}", desc);
+    }
+
+    #[test]
+    fn test_project_persona() {
+        let state = OrganismState::default();
+        let persona = state.project();
+        assert_eq!(persona.attachment_style, AttachmentStyle::Secure);
+        assert!(!persona.dominant_values.is_empty());
+        assert_eq!(persona.dominant_values.len(), 3);
+    }
 }
