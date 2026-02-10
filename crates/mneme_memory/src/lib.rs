@@ -6,6 +6,8 @@ pub mod consolidation;
 pub mod coordinator;
 pub mod learning;
 pub mod dream;
+pub mod rules;
+pub mod goals;
 
 pub use sqlite::SqliteMemory;
 pub use sqlite::SemanticFact;
@@ -18,6 +20,8 @@ pub use coordinator::{OrganismCoordinator, OrganismConfig, LifecycleState, Inter
 pub use learning::{CurveLearner, ModulationSample};
 pub use dream::{DreamGenerator, DreamEpisode};
 pub use sqlite::DreamSeed;
+pub use rules::{BehaviorRule, RuleTrigger, RuleCondition, RuleAction, RuleEngine, RuleContext};
+pub use goals::{Goal, GoalType, GoalStatus, GoalManager, GoalTriggerEvaluator};
 
 #[cfg(test)]
 mod tests;

@@ -1048,3 +1048,91 @@ async fn test_vec_backfill() {
         );
     }
 }
+
+// =============================================================================
+// Behavior Rules Persistence Tests (ADR-004, v0.6.0)
+// =============================================================================
+
+#[tokio::test]
+async fn test_rule_persist_and_load() {
+    use crate::rules::*;
+
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let rule = BehaviorRule {
+        id: 0,
+        name: "test_rule".into(),
+        priority: 50,
+        enabled: true,
+        trigger: RuleTrigger::OnTick,
+        condition: RuleCondition::StateLt { field: "energy".into(), value: 0.3 },
+        action: RuleAction::ModifyState { field: "boredom".into(), delta: 0.2 },
+        cooldown_secs: Some(300),
+        last_fired: None,
+    };
+
+    let id = memory.save_behavior_rule(&rule).await.expect("save failed");
+    assert!(id > 0);
+
+    let loaded = memory.load_behavior_rules().await.expect("load failed");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].name, "test_rule");
+    assert_eq!(loaded[0].priority, 50);
+}
+
+#[tokio::test]
+async fn test_seed_rules_idempotent() {
+    use crate::rules::seed_rules;
+
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    let seeds = seed_rules();
+    let count1 = memory.seed_behavior_rules(&seeds).await.expect("seed failed");
+    assert_eq!(count1, 3);
+
+    // Second call should be a no-op
+    let count2 = memory.seed_behavior_rules(&seeds).await.expect("seed failed");
+    assert_eq!(count2, 0);
+}
+
+// =============================================================================
+// Goals Persistence Tests (#22, v0.6.0)
+// =============================================================================
+
+#[tokio::test]
+async fn test_goal_crud() {
+    use crate::goals::*;
+
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let gm = GoalManager::new(std::sync::Arc::new(memory));
+
+    let goal = Goal {
+        id: 0,
+        goal_type: GoalType::Social,
+        description: "和创建者聊聊近况".into(),
+        priority: 0.8,
+        status: GoalStatus::Active,
+        progress: 0.0,
+        created_at: 0,
+        deadline: None,
+        parent_id: None,
+        metadata: serde_json::json!({}),
+    };
+
+    let id = gm.create_goal(&goal).await.expect("create failed");
+    assert!(id > 0);
+
+    let active = gm.active_goals().await.expect("load failed");
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].description, "和创建者聊聊近况");
+
+    // Update progress
+    gm.update_progress(id, 0.5).await.expect("update failed");
+    let active = gm.active_goals().await.expect("load failed");
+    assert!((active[0].progress - 0.5).abs() < 0.01);
+
+    // Complete goal
+    gm.update_progress(id, 1.0).await.expect("complete failed");
+    let active = gm.active_goals().await.expect("load failed");
+    assert!(active.is_empty()); // Completed goals are not active
+}

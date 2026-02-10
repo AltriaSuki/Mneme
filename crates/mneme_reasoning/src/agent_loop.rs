@@ -2,6 +2,7 @@ use mneme_core::{Trigger, TriggerEvaluator};
 use mneme_memory::OrganismCoordinator;
 use std::sync::Arc;
 use std::time::Duration;
+use crate::scheduler::PresenceScheduler;
 
 // ============================================================================
 // AgentAction
@@ -13,6 +14,12 @@ pub enum AgentAction {
     ProactiveTrigger(Trigger),
     /// Organism state tick completed
     StateUpdate,
+    /// Autonomous tool use triggered by rule engine (#23, v0.6.0)
+    AutonomousToolUse {
+        tool_name: String,
+        input: serde_json::Value,
+        goal_id: Option<i64>,
+    },
 }
 
 // ============================================================================
@@ -25,6 +32,7 @@ pub struct AgentLoop {
     action_tx: tokio::sync::mpsc::Sender<AgentAction>,
     tick_interval: Duration,
     trigger_interval: Duration,
+    scheduler: Option<PresenceScheduler>,
 }
 
 impl AgentLoop {
@@ -39,12 +47,14 @@ impl AgentLoop {
         trigger_interval: Duration,
     ) -> (Self, tokio::sync::mpsc::Receiver<AgentAction>) {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let scheduler = PresenceScheduler::new(tick_interval, trigger_interval);
         let agent = Self {
             coordinator,
             evaluators,
             action_tx: tx,
             tick_interval,
             trigger_interval,
+            scheduler: Some(scheduler),
         };
         (agent, rx)
     }
@@ -67,19 +77,39 @@ impl AgentLoop {
     /// Spawn the background loop. Runs until the channel is closed (receiver dropped).
     pub fn spawn(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let mut tick_timer = tokio::time::interval(self.tick_interval);
-            let mut trigger_timer = tokio::time::interval(self.trigger_interval);
+            let mut tick_sleep = self.tick_interval;
+            let mut trigger_sleep = self.trigger_interval;
 
             loop {
                 tokio::select! {
-                    _ = tick_timer.tick() => {
+                    _ = tokio::time::sleep(tick_sleep) => {
                         if let Err(e) = self.coordinator.tick().await {
                             tracing::warn!("AgentLoop tick error: {}", e);
                         }
-                        // Notify caller of state update (best-effort)
                         let _ = self.action_tx.try_send(AgentAction::StateUpdate);
+
+                        // Evaluate OnTick rules and emit autonomous actions
+                        let rule_actions = self.coordinator.evaluate_rules(
+                            mneme_memory::RuleTrigger::OnTick,
+                        ).await;
+                        for (_id, action) in rule_actions {
+                            if let mneme_memory::RuleAction::ExecuteTool { name, input } = action {
+                                let _ = self.action_tx.try_send(AgentAction::AutonomousToolUse {
+                                    tool_name: name,
+                                    input,
+                                    goal_id: None,
+                                });
+                            }
+                        }
+
+                        // Dynamic scheduling: recompute tick interval
+                        if let Some(ref sched) = self.scheduler {
+                            let state = self.coordinator.state().read().await.clone();
+                            let lifecycle = self.coordinator.lifecycle_state().await;
+                            tick_sleep = sched.next_tick_interval(&state, lifecycle);
+                        }
                     }
-                    _ = trigger_timer.tick() => {
+                    _ = tokio::time::sleep(trigger_sleep) => {
                         let triggers = self.evaluate_triggers().await;
                         for trigger in triggers {
                             tracing::info!("AgentLoop trigger fired: {:?}", trigger);
@@ -87,6 +117,17 @@ impl AgentLoop {
                                 tracing::info!("AgentLoop: receiver dropped, shutting down");
                                 return;
                             }
+                        }
+
+                        // Dynamic scheduling: recompute trigger interval
+                        if let Some(ref sched) = self.scheduler {
+                            let state = self.coordinator.state().read().await.clone();
+                            let goal_count = if let Some(gm) = self.coordinator.goal_manager() {
+                                gm.active_goals().await.map(|g| g.len()).unwrap_or(0)
+                            } else {
+                                0
+                            };
+                            trigger_sleep = sched.next_trigger_interval(&state, goal_count);
                         }
                     }
                 }

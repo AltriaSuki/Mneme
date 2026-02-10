@@ -61,6 +61,9 @@ pub struct ReasoningEngine {
     // Token budget tracking
     token_budget: Option<Arc<crate::token_budget::TokenBudget>>,
 
+    // Streaming text callback (for real-time output in CLI)
+    on_text_chunk: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+
     // System 1: Limbic System (new organic architecture)
     limbic: Arc<LimbicSystem>,
 
@@ -93,6 +96,7 @@ impl ReasoningEngine {
             guard: None,
             registry: None,
             token_budget: None,
+            on_text_chunk: None,
             limbic,
             coordinator,
             browser_session: tokio::sync::Mutex::new(None),
@@ -121,6 +125,7 @@ impl ReasoningEngine {
             guard: None,
             registry: None,
             token_budget: None,
+            on_text_chunk: None,
             limbic,
             coordinator,
             browser_session: tokio::sync::Mutex::new(None),
@@ -142,6 +147,11 @@ impl ReasoningEngine {
     /// Set the token budget tracker
     pub fn set_token_budget(&mut self, budget: Arc<crate::token_budget::TokenBudget>) {
         self.token_budget = Some(budget);
+    }
+
+    /// Set the streaming text callback (invoked for each text chunk during streaming)
+    pub fn set_on_text_chunk(&mut self, callback: Arc<dyn Fn(&str) + Send + Sync>) {
+        self.on_text_chunk = Some(callback);
     }
 
     /// Get reference to the limbic system
@@ -462,7 +472,25 @@ impl ReasoningEngine {
 
         Ok((final_content.trim().to_string(), final_emotion, final_affect))
     }
-    
+
+    /// Execute a tool autonomously (triggered by rule engine, not user request).
+    pub async fn execute_autonomous_tool(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        goal_id: Option<i64>,
+    ) -> Result<String> {
+        tracing::info!(
+            "Autonomous tool execution: {} (goal={:?})",
+            tool_name, goal_id
+        );
+        let outcome = self.execute_tool_with_retry(tool_name, input).await;
+        if outcome.is_error {
+            anyhow::bail!("Autonomous tool '{}' failed: {}", tool_name, outcome.content);
+        }
+        Ok(outcome.content)
+    }
+
     /// Execute a tool with automatic retry for transient failures.
     #[tracing::instrument(skip(self, input), fields(tool = name))]
     async fn execute_tool_with_retry(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
