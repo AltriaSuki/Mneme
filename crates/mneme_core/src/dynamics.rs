@@ -47,8 +47,8 @@ impl Default for DefaultDynamics {
             stress_target: 0.2,
             social_need_target: 0.5,
             
-            energy_recovery_rate: 0.001,   // ~0.06/min
-            stress_decay_rate: 0.002,      // ~0.12/min
+            energy_recovery_rate: 0.003,   // ~0.18/min — recovers from 0→0.7 in ~5 min
+            stress_decay_rate: 0.005,      // ~0.30/min — decays from 1.0→0.2 in ~3 min
             social_need_growth_rate: 0.0001, // Slow growth when alone
             
             stress_sensitivity: 0.5,
@@ -81,7 +81,11 @@ impl DefaultDynamics {
     pub fn step_fast(&self, fast: &mut FastState, medium: &MediumState, input: &SensoryInput, dt: f32) {
         // === Energy dynamics ===
         // dE/dt = recovery_rate * (target - E) - activity_cost
-        let activity_cost = if input.is_social { 0.01 } else { 0.002 };
+        // Only apply activity cost when there's actual stimulus (social interaction
+        // or meaningful input). Idle heartbeat ticks should not drain energy —
+        // otherwise energy drains to 0 and can never recover (death spiral).
+        let has_stimulus = input.is_social || input.content_intensity > 0.01;
+        let activity_cost = if input.is_social { 0.01 } else if has_stimulus { 0.002 } else { 0.0 };
         let d_energy = self.energy_recovery_rate * (self.energy_target - fast.energy) - activity_cost;
         fast.energy += d_energy * dt;
         
