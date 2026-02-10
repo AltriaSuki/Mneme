@@ -9,7 +9,6 @@ use mneme_os::Executor;
 /// Tool descriptions embed parameter specs directly in the text as a fallback.
 /// Some API proxies strip `input_schema`, so the model must be able to infer
 /// required parameters from the description alone.
-
 pub fn shell_tool() -> Tool {
     Tool {
         name: "shell".to_string(),

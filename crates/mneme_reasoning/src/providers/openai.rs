@@ -90,15 +90,12 @@ impl LlmClient for OpenAiClient {
                     // In strict OpenAI flow, tool results are standalone messages. 
                     // This converter extracts them and ensures they are emitted as distinct named messages.
                     for block in msg.content {
-                        match block {
-                            ContentBlock::ToolResult { tool_use_id, content, .. } => {
-                                openai_messages.push(json!({
-                                    "role": "tool",
-                                    "tool_call_id": tool_use_id,
-                                    "content": content
-                                }));
-                            },
-                            _ => {}
+                        if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                            openai_messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_use_id,
+                                "content": content
+                            }));
                         }
                     }
 

@@ -32,6 +32,12 @@ pub struct DecisionRouter {
     rules: Vec<Box<dyn DecisionRule>>,
 }
 
+impl Default for DecisionRouter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DecisionRouter {
     pub fn new() -> Self {
         Self { rules: Vec::new() }

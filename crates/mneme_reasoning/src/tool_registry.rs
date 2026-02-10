@@ -32,6 +32,12 @@ pub struct ToolRegistry {
     guard: Option<Arc<CapabilityGuard>>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {

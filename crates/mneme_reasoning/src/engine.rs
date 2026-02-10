@@ -322,7 +322,7 @@ impl ReasoningEngine {
         // Current messages serves as the "Scratchpad" for the ReAct loop
         let mut scratchpad_messages = {
             let history_lock = self.history.lock().await;
-            ContextAssembler::assemble_history(&*history_lock, input_text)
+            ContextAssembler::assemble_history(&history_lock, input_text)
         };
         
         let mut final_content = String::new();
