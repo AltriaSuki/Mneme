@@ -752,18 +752,7 @@ impl OrganismCoordinator {
     }
 
     fn analyze_sentiment(text: &str) -> (f32, f32) {
-        let positive = ["开心", "高兴", "喜欢", "爱", "棒", "好", "谢谢", "感谢", "哈哈"];
-        let negative = ["难过", "伤心", "讨厌", "恨", "糟糕", "差", "烦", "气", "怒"];
-        let intense = ["非常", "特别", "超级", "极其", "太", "!", "！"];
-        
-        let pos = positive.iter().filter(|w| text.contains(*w)).count() as f32;
-        let neg = negative.iter().filter(|w| text.contains(*w)).count() as f32;
-        let int = intense.iter().filter(|w| text.contains(*w)).count() as f32;
-        
-        let valence = (pos - neg) / (pos + neg + 1.0);
-        let intensity = ((pos + neg + int) / 5.0).clamp(0.1, 1.0);
-        
-        (valence, intensity)
+        mneme_core::sentiment::analyze_sentiment(text)
     }
 
     fn create_sensory_input(&self, _content: &str, soma: &SomaticMarker, response_delay: f32) -> SensoryInput {

@@ -184,33 +184,6 @@ impl ReasoningEngine {
         Ok(triggers)
     }
 
-    /// Analyze input for emotional content (simplified sentiment analysis)
-    /// Reserved for future use when direct stimulus creation is needed
-    #[allow(dead_code)]
-    fn analyze_input_sentiment(&self, text: &str) -> (f32, f32) {
-        let lower = text.to_lowercase();
-        
-        // Simple keyword-based sentiment (in production, use ML model)
-        let positive_words = ["开心", "高兴", "喜欢", "爱", "棒", "好", "谢谢", "感谢", "哈哈", "😊", "❤️", "👍"];
-        let negative_words = ["难过", "伤心", "讨厌", "恨", "糟糕", "差", "烦", "气", "怒", "😢", "😡", "💔"];
-        let intense_words = ["非常", "特别", "超级", "极其", "太", "!", "！", "?!", "？！"];
-        
-        let pos_count = positive_words.iter().filter(|w| lower.contains(*w)).count() as f32;
-        let neg_count = negative_words.iter().filter(|w| lower.contains(*w)).count() as f32;
-        let intense_count = intense_words.iter().filter(|w| lower.contains(*w)).count() as f32;
-        
-        let total = pos_count + neg_count;
-        let valence = if total > 0.0 {
-            (pos_count - neg_count) / total
-        } else {
-            0.0
-        };
-        
-        let intensity = ((total + intense_count) / 5.0).min(1.0);
-        
-        (valence * 0.8, intensity.max(0.2)) // Moderate the valence, ensure some intensity
-    }
-
     #[tracing::instrument(skip(self, input_text), fields(is_user_message))]
     async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<(String, Emotion, mneme_core::Affect)> {
         use crate::api_types::{Message, Role, ContentBlock};

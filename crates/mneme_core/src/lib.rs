@@ -6,6 +6,7 @@ pub mod dynamics;
 pub mod values;
 pub mod config;
 pub mod safety;
+pub mod sentiment;
 
 pub use persona::{Psyche, SeedPersona};
 pub use affect::Affect;
