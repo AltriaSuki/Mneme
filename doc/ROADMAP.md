@@ -789,7 +789,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 
 ### 17. 🏗️ 代码组织优化
 - [ ] `engine.rs` 过于庞大（~430 LOC），需拆分为 `ContextAssembler`、`ToolDispatcher`、`ConversationManager`
-- [ ] 统一错误类型（目前混用 `anyhow::Error`；`thiserror` 已引入但未使用，无自定义错误类型）
+- [ ] 统一错误类型（目前全部使用 `anyhow::Error`，无自定义错误类型；可引入 `thiserror` 定义领域错误）
 - [ ] 减少 `Arc<RwLock<>>` 的过度使用（coordinator 有 8 个 Arc 字段，考虑 actor/mpsc 模式）
 - [ ] 文档注释补全（尤其是 public API；reasoning 和 CLI 模块注释稀疏）
 - [x] `values.rs` 和 `somatic.rs` 的中文情感关键词分析逻辑重复，应抽取为共用模块 ✅ — `mneme_core::sentiment` 共享模块 + 6 测试
