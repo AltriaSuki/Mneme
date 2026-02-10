@@ -46,8 +46,7 @@ impl SurpriseDetector {
     pub fn compute_surprise(&mut self, content: &str) -> f32 {
         let surprise = if let Some(prediction) = &self.current_prediction {
             // Compute semantic distance (simplified using character overlap)
-            let distance = self.semantic_distance(content, prediction);
-            distance
+            self.semantic_distance(content, prediction)
         } else {
             // No prediction, use history-based surprise
             self.history_based_surprise(content)
