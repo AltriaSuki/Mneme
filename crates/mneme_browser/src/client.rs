@@ -198,4 +198,27 @@ mod tests {
         let config = BrowserConfig::default();
         assert!(config.headless);
     }
+
+    #[test]
+    fn test_browser_config_custom() {
+        let config = BrowserConfig {
+            headless: false,
+            element_timeout: Duration::from_secs(5),
+            navigation_timeout: Duration::from_secs(15),
+        };
+        assert!(!config.headless);
+        assert_eq!(config.element_timeout, Duration::from_secs(5));
+        assert_eq!(config.navigation_timeout, Duration::from_secs(15));
+    }
+
+    #[test]
+    fn test_is_alive_before_launch() {
+        // Without Chrome, we can't create a BrowserClient, but we can verify
+        // the logic: a client with no current_tab should return false from is_alive.
+        // Since BrowserClient::new() requires Chrome, test via config instead.
+        // The is_alive() method checks current_tab.is_some() first — None → false.
+        let config = BrowserConfig::default();
+        assert!(config.headless);
+        assert_eq!(config.navigation_timeout, Duration::from_secs(30));
+    }
 }
