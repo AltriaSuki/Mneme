@@ -378,8 +378,100 @@ mod tests {
             interval: Duration::from_millis(10),
         };
         let limbic = LimbicSystem::with_config(config, DefaultDynamics::default());
-        
+
         // Should not need social interaction initially
         assert!(!limbic.needs_social_interaction().await);
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_state() {
+        let limbic = LimbicSystem::new();
+
+        let mut custom_state = OrganismState::default();
+        custom_state.fast.energy = 0.2;
+        custom_state.fast.stress = 0.9;
+
+        limbic.set_state(custom_state.clone()).await;
+
+        let retrieved = limbic.get_state().await;
+        assert!((retrieved.fast.energy - 0.2).abs() < 1e-6);
+        assert!((retrieved.fast.stress - 0.9).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_is_stressed_threshold() {
+        let limbic = LimbicSystem::new();
+
+        // Default stress is low
+        assert!(!limbic.is_stressed().await);
+
+        // Set high stress
+        let mut state = limbic.get_state().await;
+        state.fast.stress = 0.8;
+        limbic.set_state(state).await;
+        assert!(limbic.is_stressed().await);
+    }
+
+    #[tokio::test]
+    async fn test_is_tired_threshold() {
+        let limbic = LimbicSystem::new();
+
+        // Default energy is high
+        assert!(!limbic.is_tired().await);
+
+        // Set low energy
+        let mut state = limbic.get_state().await;
+        state.fast.energy = 0.1;
+        limbic.set_state(state).await;
+        assert!(limbic.is_tired().await);
+    }
+
+    #[tokio::test]
+    async fn test_get_affect() {
+        let limbic = LimbicSystem::new();
+        let affect = limbic.get_affect().await;
+        // Default affect should be near neutral
+        assert!(affect.valence.abs() < 0.5);
+        assert!(affect.arousal >= 0.0 && affect.arousal <= 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_receives_updates() {
+        let limbic = LimbicSystem::new();
+        let mut rx = limbic.subscribe();
+
+        // Set a distinct state
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.1;
+        limbic.set_state(state).await;
+
+        // Subscriber should see the update
+        rx.changed().await.unwrap();
+        let marker = rx.borrow().clone();
+        assert!((marker.energy - 0.1).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_modulation_vector_valid_ranges() {
+        let limbic = LimbicSystem::new();
+        let modulation = limbic.get_modulation_vector().await;
+
+        assert!(modulation.max_tokens_factor > 0.0);
+        assert!(modulation.temperature_delta.is_finite());
+        assert!(modulation.context_budget_factor > 0.0);
+        assert!(modulation.silence_inclination >= 0.0 && modulation.silence_inclination <= 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_curves_get_set() {
+        let limbic = LimbicSystem::new();
+        let original = limbic.get_curves().await;
+
+        let mut modified = original.clone();
+        modified.energy_to_max_tokens.0 = 99.0;
+        limbic.set_curves(modified.clone()).await;
+
+        let retrieved = limbic.get_curves().await;
+        assert!((retrieved.energy_to_max_tokens.0 - 99.0).abs() < 1e-6);
     }
 }
