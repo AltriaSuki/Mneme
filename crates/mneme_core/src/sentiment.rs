@@ -1,7 +1,7 @@
-/// Simple keyword-based Chinese/English sentiment analysis.
-///
-/// Shared across crates to avoid duplicating word lists.
-/// In production, this should be replaced with an ML model.
+//! Simple keyword-based Chinese/English sentiment analysis.
+//!
+//! Shared across crates to avoid duplicating word lists.
+//! In production, this should be replaced with an ML model.
 
 const POSITIVE: &[&str] = &[
     "开心", "高兴", "喜欢", "爱", "棒", "好", "谢谢", "感谢", "哈哈",
