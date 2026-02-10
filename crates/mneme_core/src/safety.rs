@@ -155,7 +155,7 @@ fn extract_host(url: &str) -> String {
 
 /// Heuristic: is this a read-only shell command?
 fn is_read_only_command(command: &str) -> bool {
-    let first_token = command.trim().split_whitespace().next().unwrap_or("");
+    let first_token = command.split_whitespace().next().unwrap_or("");
     let read_only_commands = [
         "ls", "cat", "head", "tail", "less", "more", "find", "grep",
         "wc", "file", "stat", "du", "df", "pwd", "echo", "date",
@@ -177,7 +177,7 @@ fn is_read_only_command(command: &str) -> bool {
 
 /// Heuristic: is this a destructive shell command?
 fn is_destructive_command(command: &str) -> bool {
-    let first_token = command.trim().split_whitespace().next().unwrap_or("");
+    let first_token = command.split_whitespace().next().unwrap_or("");
     let destructive_prefixes = [
         "rm", "rmdir", "mkfs", "dd", "fdisk", "parted",
         "shutdown", "reboot", "halt", "poweroff",

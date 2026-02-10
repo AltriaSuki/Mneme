@@ -187,7 +187,7 @@ impl Emotion {
     }
     
     /// Parse from string (case-insensitive)
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "neutral" => Some(Self::Neutral),
             "happy" => Some(Self::Happy),

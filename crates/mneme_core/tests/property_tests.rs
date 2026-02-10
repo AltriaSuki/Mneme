@@ -337,14 +337,14 @@ proptest! {
         ];
         let e = emotions[idx];
         let s = e.as_str();
-        let roundtripped = Emotion::from_str(s);
+        let roundtripped = Emotion::parse_str(s);
         prop_assert_eq!(roundtripped, Some(e));
     }
 
-    /// **Emotion::from_str returns None** for random strings (not one of the known labels).
+    /// **Emotion::parse_str returns None** for random strings (not one of the known labels).
     #[test]
     fn emotion_from_str_random_returns_none(s in "[^a-zA-Z]{1,20}") {
-        let result = Emotion::from_str(&s);
+        let result = Emotion::parse_str(&s);
         prop_assert!(result.is_none(), "unexpected Some for: {:?}", s);
     }
 }

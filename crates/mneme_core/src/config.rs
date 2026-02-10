@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 // Top-level config
 // ============================================================================
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct MnemeConfig {
     pub llm: LlmConfig,
@@ -14,18 +14,6 @@ pub struct MnemeConfig {
     pub token_budget: TokenBudgetConfig,
     pub organism: OrganismDefaults,
     pub onebot: Option<OneBotConfig>,
-}
-
-impl Default for MnemeConfig {
-    fn default() -> Self {
-        Self {
-            llm: LlmConfig::default(),
-            safety: SafetyConfig::default(),
-            token_budget: TokenBudgetConfig::default(),
-            organism: OrganismDefaults::default(),
-            onebot: None,
-        }
-    }
 }
 
 impl MnemeConfig {
@@ -145,21 +133,16 @@ fn default_blocked_commands() -> Vec<String> {
     ]
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityTier {
     /// Read-only: ls, cat, git status, curl GET
     ReadOnly,
     /// Restricted writes within allowed_paths
+    #[default]
     Restricted,
     /// Full access (must be explicitly enabled)
     Full,
-}
-
-impl Default for CapabilityTier {
-    fn default() -> Self {
-        Self::Restricted
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,17 +165,12 @@ impl Default for TokenBudgetConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DegradationStrategy {
+    #[default]
     HardStop,
     Degrade { max_tokens_cap: u32 },
-}
-
-impl Default for DegradationStrategy {
-    fn default() -> Self {
-        Self::HardStop
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
