@@ -175,4 +175,108 @@ mod tests {
         let desc = joy.describe();
         assert!(desc.contains("开心") || desc.contains("愉悦"));
     }
+
+    #[test]
+    fn test_from_polar_zero_intensity() {
+        let affect = Affect::from_polar(0.0, 0.0);
+        assert!((affect.valence - 0.0).abs() < 1e-6);
+        assert!((affect.arousal - 0.5).abs() < 1e-6); // (sin(0)*0 + 1) / 2 = 0.5
+    }
+
+    #[test]
+    fn test_from_polar_full_positive() {
+        // angle=0 → cos=1, sin=0 → valence=1.0, arousal=0.5
+        let affect = Affect::from_polar(0.0, 1.0);
+        assert!((affect.valence - 1.0).abs() < 1e-6);
+        assert!((affect.arousal - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_from_polar_clamps_intensity() {
+        let affect = Affect::from_polar(0.0, 5.0);
+        assert!(affect.valence <= 1.0);
+        assert!(affect.arousal >= 0.0 && affect.arousal <= 1.0);
+    }
+
+    #[test]
+    fn test_new_clamps_values() {
+        let affect = Affect::new(5.0, -3.0);
+        assert_eq!(affect.valence, 1.0);
+        assert_eq!(affect.arousal, 0.0);
+
+        let affect2 = Affect::new(-5.0, 10.0);
+        assert_eq!(affect2.valence, -1.0);
+        assert_eq!(affect2.arousal, 1.0);
+    }
+
+    #[test]
+    fn test_lerp_endpoints() {
+        let a = Affect::joy();
+        let b = Affect::sadness();
+
+        // t=0 → returns a
+        let at_zero = a.lerp(&b, 0.0);
+        assert!((at_zero.valence - a.valence).abs() < 1e-6);
+        assert!((at_zero.arousal - a.arousal).abs() < 1e-6);
+
+        // t=1 → returns b
+        let at_one = a.lerp(&b, 1.0);
+        assert!((at_one.valence - b.valence).abs() < 1e-6);
+        assert!((at_one.arousal - b.arousal).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_lerp_midpoint() {
+        let a = Affect::new(0.0, 0.0);
+        let b = Affect::new(1.0, 1.0);
+        let mid = a.lerp(&b, 0.5);
+        assert!((mid.valence - 0.5).abs() < 1e-6);
+        assert!((mid.arousal - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_lerp_clamps_t() {
+        let a = Affect::joy();
+        let b = Affect::sadness();
+
+        // t < 0 should clamp to 0
+        let clamped = a.lerp(&b, -1.0);
+        assert!((clamped.valence - a.valence).abs() < 1e-6);
+
+        // t > 1 should clamp to 1
+        let clamped = a.lerp(&b, 2.0);
+        assert!((clamped.valence - b.valence).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_to_discrete_label_quadrants() {
+        assert_eq!(Affect::joy().to_discrete_label(), "happy");
+        assert_eq!(Affect::excitement().to_discrete_label(), "excited");
+        assert_eq!(Affect::contentment().to_discrete_label(), "calm");
+        assert_eq!(Affect::sadness().to_discrete_label(), "sad");
+        assert_eq!(Affect::anger().to_discrete_label(), "angry");
+        assert_eq!(Affect::anxiety().to_discrete_label(), "anxious");
+    }
+
+    #[test]
+    fn test_to_discrete_label_neutral() {
+        // arousal=0.5 → intensity = sqrt(0 + 0) = 0 → neutral
+        let neutral = Affect::new(0.0, 0.5);
+        assert_eq!(neutral.to_discrete_label(), "neutral");
+    }
+
+    #[test]
+    fn test_describe_neutral() {
+        let neutral = Affect::new(0.0, 0.5);
+        let desc = neutral.describe();
+        assert!(desc.contains("平稳"), "Neutral should describe as 平稳, got: {}", desc);
+    }
+
+    #[test]
+    fn test_describe_negative() {
+        let sad = Affect::sadness();
+        let desc = sad.describe();
+        assert!(desc.contains("低落") || desc.contains("闷闷不乐"),
+            "Sadness should describe as 低落/闷闷不乐, got: {}", desc);
+    }
 }
