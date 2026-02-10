@@ -13,7 +13,8 @@
 
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
-use chrono::{Utc, Timelike};
+use chrono::Timelike;
+use chrono::Utc;
 use anyhow::Result;
 
 use mneme_core::Memory;
@@ -27,6 +28,8 @@ use crate::{
     SleepConsolidator, SleepConfig, ConsolidationResult,
     EpisodeDigest, SqliteMemory,
 };
+use crate::rules::{RuleEngine, RuleContext, RuleTrigger, RuleAction};
+use crate::goals::GoalManager;
 
 /// System lifecycle states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +114,12 @@ pub struct OrganismCoordinator {
 
     /// Previous somatic marker for body feeling detection (#40)
     prev_somatic: Arc<RwLock<Option<SomaticMarker>>>,
+
+    /// Behavior rule engine (ADR-004, v0.6.0)
+    rule_engine: Option<Arc<RwLock<RuleEngine>>>,
+
+    /// Goal manager (#22, v0.6.0)
+    goal_manager: Option<Arc<GoalManager>>,
 }
 
 impl OrganismCoordinator {
@@ -144,6 +153,8 @@ impl OrganismCoordinator {
             db,
             prev_snapshot: Arc::new(RwLock::new(None)),
             prev_somatic: Arc::new(RwLock::new(None)),
+            rule_engine: None,
+            goal_manager: None,
         }
     }
 
@@ -183,7 +194,17 @@ impl OrganismCoordinator {
             coordinator.limbic.set_curves(curves).await;
             tracing::info!("Loaded learned ModulationCurves from DB");
         }
-        
+
+        // Load behavior rule engine (ADR-004)
+        let seed = crate::rules::seed_rules();
+        let _ = db.seed_behavior_rules(&seed).await;
+        let rule_engine = RuleEngine::load(db.clone()).await?;
+        let coordinator = Self {
+            rule_engine: Some(Arc::new(RwLock::new(rule_engine))),
+            goal_manager: Some(Arc::new(GoalManager::new(db.clone()))),
+            ..coordinator
+        };
+
         Ok(coordinator)
     }
 
@@ -205,6 +226,21 @@ impl OrganismCoordinator {
     /// Get limbic system reference
     pub fn limbic(&self) -> &Arc<LimbicSystem> {
         &self.limbic
+    }
+
+    /// Get rule engine reference (v0.6.0)
+    pub fn rule_engine(&self) -> Option<&Arc<RwLock<RuleEngine>>> {
+        self.rule_engine.as_ref()
+    }
+
+    /// Get goal manager reference (v0.6.0)
+    pub fn goal_manager(&self) -> Option<&Arc<GoalManager>> {
+        self.goal_manager.as_ref()
+    }
+
+    /// Get interaction count
+    pub async fn interaction_count(&self) -> u32 {
+        *self.interaction_count.read().await
     }
 
     /// Process an incoming interaction
@@ -333,6 +369,33 @@ impl OrganismCoordinator {
             explanation: judgment.explanation,
             should_proceed: judgment.moral_valence > -0.3, // Allow if not strongly negative
         })
+    }
+
+    /// Evaluate behavior rules against current context (ADR-004, v0.6.0).
+    /// Returns matched rule actions for the caller to process.
+    pub async fn evaluate_rules(&self, trigger: RuleTrigger) -> Vec<(i64, RuleAction)> {
+        let engine = match &self.rule_engine {
+            Some(e) => e,
+            None => return Vec::new(),
+        };
+
+        let state = self.state.read().await.clone();
+        let lifecycle = *self.lifecycle_state.read().await;
+        let interaction_count = *self.interaction_count.read().await;
+        let now = chrono::Utc::now();
+
+        let ctx = RuleContext {
+            trigger_type: trigger,
+            state,
+            current_hour: now.hour(),
+            interaction_count,
+            lifecycle,
+            now: now.timestamp(),
+            message_text: None,
+        };
+
+        let mut engine = engine.write().await;
+        engine.evaluate(&ctx).await
     }
 
     /// Record feedback from System 2 (LLM output)
@@ -563,6 +626,20 @@ impl OrganismCoordinator {
         // Save state after consolidation
         self.save_state_with_trigger("consolidation").await;
 
+        // Generate goal suggestions from post-sleep state (#22)
+        if let Some(ref gm) = self.goal_manager {
+            let state = self.state.read().await.clone();
+            let suggestions = GoalManager::suggest_goals(&state);
+            for goal in &suggestions {
+                if let Err(e) = gm.create_goal(goal).await {
+                    tracing::warn!("Failed to create suggested goal: {}", e);
+                }
+            }
+            if !suggestions.is_empty() {
+                tracing::info!("Generated {} goal suggestions during sleep", suggestions.len());
+            }
+        }
+
         // Transition back to awake
         self.set_lifecycle_state(LifecycleState::Awake).await;
 
@@ -615,13 +692,13 @@ impl OrganismCoordinator {
                 drop(state);
                 
                 // Save state every 6 ticks (60 seconds if tick interval is 10s)
-                if tick % 6 == 0 {
+                if tick.is_multiple_of(6) {
                     self.save_state().await;
                 }
 
                 // Prune state history once every 360 ticks (~1 hour if tick = 10s)
                 // Keep max 10,000 snapshots and discard anything older than 7 days
-                if tick % 360 == 0 {
+                if tick.is_multiple_of(360) {
                     if let Some(ref db) = self.db {
                         let _ = db.prune_state_history(10_000, 7 * 86400).await;
                     }
@@ -684,7 +761,7 @@ impl OrganismCoordinator {
         let int = intense.iter().filter(|w| text.contains(*w)).count() as f32;
         
         let valence = (pos - neg) / (pos + neg + 1.0);
-        let intensity = ((pos + neg + int) / 5.0).min(1.0).max(0.1);
+        let intensity = ((pos + neg + int) / 5.0).clamp(0.1, 1.0);
         
         (valence, intensity)
     }

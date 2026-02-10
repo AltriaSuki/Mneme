@@ -14,6 +14,7 @@ use std::sync::Once;
 fn ensure_sqlite_vec_registered() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
+        #[allow(clippy::missing_transmute_annotations)]
         unsafe {
             libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
                 sqlite_vec::sqlite3_vec_init as *const (),
@@ -353,6 +354,50 @@ impl SqliteMemory {
 
         // Backfill: insert any episodes that have embeddings but are missing from vec_episodes
         self.backfill_vec_index().await?;
+
+        // === Behavior Rules (ADR-004, v0.6.0) ===
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS behavior_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                priority INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                trigger_json TEXT NOT NULL,
+                condition_json TEXT NOT NULL,
+                action_json TEXT NOT NULL,
+                cooldown_secs INTEGER,
+                last_fired INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create behavior_rules table")?;
+
+        // === Goals (#22, v0.6.0) ===
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                priority REAL NOT NULL DEFAULT 0.5,
+                status TEXT NOT NULL DEFAULT 'active',
+                progress REAL NOT NULL DEFAULT 0.0,
+                created_at INTEGER NOT NULL,
+                deadline INTEGER,
+                parent_id INTEGER,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(parent_id) REFERENCES goals(id)
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create goals table")?;
 
         Ok(())
     }
@@ -1792,8 +1837,211 @@ impl SqliteMemory {
 }
 
 // =============================================================================
-// State History Types
+// Behavior Rules CRUD (ADR-004, v0.6.0)
 // =============================================================================
+
+use crate::rules::{BehaviorRule, RuleTrigger, RuleCondition, RuleAction};
+
+impl SqliteMemory {
+    /// Load all enabled behavior rules, sorted by priority DESC then id ASC.
+    pub async fn load_behavior_rules(&self) -> Result<Vec<BehaviorRule>> {
+        let rows = sqlx::query(
+            "SELECT id, name, priority, enabled, trigger_json, condition_json, \
+             action_json, cooldown_secs, last_fired, created_at, updated_at \
+             FROM behavior_rules WHERE enabled = 1 \
+             ORDER BY priority DESC, id ASC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to load behavior_rules")?;
+
+        let mut rules = Vec::with_capacity(rows.len());
+        for row in rows {
+            let trigger: RuleTrigger = serde_json::from_str(row.get("trigger_json"))
+                .context("Failed to deserialize rule trigger")?;
+            let condition: RuleCondition = serde_json::from_str(row.get("condition_json"))
+                .context("Failed to deserialize rule condition")?;
+            let action: RuleAction = serde_json::from_str(row.get("action_json"))
+                .context("Failed to deserialize rule action")?;
+
+            rules.push(BehaviorRule {
+                id: row.get("id"),
+                name: row.get("name"),
+                priority: row.get("priority"),
+                enabled: row.get::<i32, _>("enabled") != 0,
+                trigger,
+                condition,
+                action,
+                cooldown_secs: row.get("cooldown_secs"),
+                last_fired: row.get("last_fired"),
+            });
+        }
+        Ok(rules)
+    }
+
+    /// Save a behavior rule (insert or update by name).
+    pub async fn save_behavior_rule(&self, rule: &BehaviorRule) -> Result<i64> {
+        let now = Utc::now().timestamp();
+        let trigger_json = serde_json::to_string(&rule.trigger)?;
+        let condition_json = serde_json::to_string(&rule.condition)?;
+        let action_json = serde_json::to_string(&rule.action)?;
+
+        let result = sqlx::query(
+            "INSERT INTO behavior_rules \
+             (name, priority, enabled, trigger_json, condition_json, action_json, \
+              cooldown_secs, last_fired, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(name) DO UPDATE SET \
+              priority=excluded.priority, enabled=excluded.enabled, \
+              trigger_json=excluded.trigger_json, condition_json=excluded.condition_json, \
+              action_json=excluded.action_json, cooldown_secs=excluded.cooldown_secs, \
+              updated_at=excluded.updated_at"
+        )
+        .bind(&rule.name)
+        .bind(rule.priority)
+        .bind(rule.enabled as i32)
+        .bind(&trigger_json)
+        .bind(&condition_json)
+        .bind(&action_json)
+        .bind(rule.cooldown_secs)
+        .bind(rule.last_fired)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save behavior_rule")?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Update the last_fired timestamp for a rule.
+    pub async fn update_rule_last_fired(&self, rule_id: i64, timestamp: i64) -> Result<()> {
+        sqlx::query("UPDATE behavior_rules SET last_fired = ? WHERE id = ?")
+            .bind(timestamp)
+            .bind(rule_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to update rule last_fired")?;
+        Ok(())
+    }
+
+    /// Seed behavior rules if none exist yet.
+    pub async fn seed_behavior_rules(&self, rules: &[BehaviorRule]) -> Result<usize> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM behavior_rules"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to count behavior_rules")?;
+
+        if count > 0 {
+            tracing::info!("Behavior rules already seeded ({} rules), skipping", count);
+            return Ok(0);
+        }
+
+        let mut seeded = 0;
+        for rule in rules {
+            self.save_behavior_rule(rule).await?;
+            seeded += 1;
+        }
+        tracing::info!("Seeded {} behavior rules", seeded);
+        Ok(seeded)
+    }
+}
+
+// =============================================================================
+// Goals CRUD (#22, v0.6.0)
+// =============================================================================
+
+use crate::goals::{Goal, GoalType, GoalStatus};
+
+impl SqliteMemory {
+    /// Load active goals sorted by priority DESC.
+    pub async fn load_active_goals(&self) -> Result<Vec<Goal>> {
+        let rows = sqlx::query(
+            "SELECT id, goal_type, description, priority, status, progress, \
+             created_at, deadline, parent_id, metadata_json \
+             FROM goals WHERE status = 'active' \
+             ORDER BY priority DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to load active goals")?;
+
+        Ok(rows.iter().map(|row| self.row_to_goal(row)).collect())
+    }
+
+    /// Create a new goal, returning its id.
+    pub async fn create_goal(&self, goal: &Goal) -> Result<i64> {
+        let now = Utc::now().timestamp();
+        let goal_type_str = serde_json::to_string(&goal.goal_type)?;
+        let status_str = goal.status.as_str();
+        let metadata_str = goal.metadata.to_string();
+
+        let result = sqlx::query(
+            "INSERT INTO goals \
+             (goal_type, description, priority, status, progress, \
+              created_at, deadline, parent_id, metadata_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&goal_type_str)
+        .bind(&goal.description)
+        .bind(goal.priority as f64)
+        .bind(status_str)
+        .bind(goal.progress as f64)
+        .bind(now)
+        .bind(goal.deadline)
+        .bind(goal.parent_id)
+        .bind(&metadata_str)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create goal")?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Update goal progress.
+    pub async fn update_goal_progress(&self, goal_id: i64, progress: f32) -> Result<()> {
+        sqlx::query("UPDATE goals SET progress = ? WHERE id = ?")
+            .bind(progress as f64)
+            .bind(goal_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to update goal progress")?;
+        Ok(())
+    }
+
+    /// Set goal status.
+    pub async fn set_goal_status(&self, goal_id: i64, status: &GoalStatus) -> Result<()> {
+        let status_str = status.as_str();
+        sqlx::query("UPDATE goals SET status = ? WHERE id = ?")
+            .bind(status_str)
+            .bind(goal_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to set goal status")?;
+        Ok(())
+    }
+
+    fn row_to_goal(&self, row: &sqlx::sqlite::SqliteRow) -> Goal {
+        let goal_type_str: String = row.get("goal_type");
+        let status_str: String = row.get("status");
+        let metadata_str: String = row.get("metadata_json");
+
+        Goal {
+            id: row.get("id"),
+            goal_type: serde_json::from_str(&goal_type_str).unwrap_or(GoalType::Maintenance),
+            description: row.get("description"),
+            priority: row.get::<f64, _>("priority") as f32,
+            status: GoalStatus::parse_str(&status_str),
+            progress: row.get::<f64, _>("progress") as f32,
+            created_at: row.get("created_at"),
+            deadline: row.get("deadline"),
+            parent_id: row.get("parent_id"),
+            metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
+        }
+    }
+}
 
 /// A recorded snapshot of OrganismState at a point in time.
 #[derive(Debug, Clone)]
