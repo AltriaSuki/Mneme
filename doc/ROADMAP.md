@@ -1247,6 +1247,11 @@ CREATE TABLE self_knowledge (
 - [x] 清理 mneme_cli clippy 警告 ✅ — `single_match` → `if let`，`println!("")` → `println!()`
 - [x] mneme_onebot 测试补全 ✅ — 6 个测试覆盖事件解析 + 序列化
 - [x] mneme_browser 测试补全 ✅ — 5 个新测试覆盖 action serde + config
+- [x] 全 workspace clippy 警告清零 ✅ — 23 warnings across 4 crates:
+  - mneme_core (6): derivable Default, trim before split_whitespace, from_str naming
+  - mneme_limbic (1): redundant let binding
+  - mneme_memory (10): transmute annotation, borrowed ref, is_multiple_of, clamp, is_some_and, from_str naming, Default impl
+  - mneme_reasoning (6): Default impl, empty doc line, explicit auto-deref, single_match → if-let
 
 ### v1.0.0 - 成熟版本
 - 元认知反思 (#24)
