@@ -726,7 +726,7 @@ impl Reasoning for ReasoningEngine {
                         if let Err(e) = memory.store_fact(
                             &fact.subject, &fact.predicate, &fact.object, fact.confidence
                         ).await {
-                            tracing::warn!("Failed to store extracted fact: {}", e);
+                            tracing::warn!("Failed to store extracted fact: {:#}", e);
                         }
                     }
                 }

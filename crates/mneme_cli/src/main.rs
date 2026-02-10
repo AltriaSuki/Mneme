@@ -280,6 +280,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Stdin loop using rustyline (line editing, history, CJK support)
+    // Use a sync channel to block the stdin loop until the response is printed,
+    // preventing the ">" prompt from appearing before Mneme's reply.
+    let (prompt_ready_tx, prompt_ready_rx) = std::sync::mpsc::channel::<()>();
     let tx_stdin = event_tx.clone();
     let coordinator_for_stdin = coordinator.clone();
     tokio::task::spawn_blocking(move || {
@@ -289,19 +292,19 @@ async fn main() -> anyhow::Result<()> {
             .auto_add_history(true)
             .build();
         let mut rl = DefaultEditor::with_config(config).expect("Failed to init rustyline");
-        
+
         // Load history from ~/.mneme_history
         let history_path = dirs::data_local_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("mneme_history");
         let _ = rl.load_history(&history_path);
-        
+
         loop {
             match rl.readline("> ") {
                 Ok(line) => {
                     let trimmed = line.trim();
                     if trimmed.is_empty() { continue; }
-                    
+
                     if trimmed == "quit" || trimmed == "exit" {
                         println!("Shutting down gracefully...");
                         // Use a tokio runtime handle to run async shutdown
@@ -312,7 +315,12 @@ async fn main() -> anyhow::Result<()> {
                         let _ = rl.save_history(&history_path);
                         std::process::exit(0);
                     }
-                    
+
+                    // Commands that don't need to wait for response
+                    let needs_wait = !["sync", "sleep", "status"].contains(&trimmed)
+                        && !trimmed.starts_with("os-exec ")
+                        && !trimmed.starts_with("browser-test ");
+
                     let content = Content {
                         id: Uuid::new_v4(),
                         source: "cli".to_string(),
@@ -323,6 +331,11 @@ async fn main() -> anyhow::Result<()> {
                     };
                     if tx_stdin.blocking_send(Event::UserMessage(content)).is_err() {
                         break;
+                    }
+
+                    // Wait for the main loop to signal that the response has been printed
+                    if needs_wait {
+                        let _ = prompt_ready_rx.recv();
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
@@ -516,6 +529,8 @@ async fn main() -> anyhow::Result<()> {
                  // Handle Output
                  if response.content.trim().is_empty() {
                      tracing::debug!("Mneme decided to stay silent.");
+                     // Signal stdin loop that processing is done
+                     let _ = prompt_ready_tx.send(());
                      continue;
                  }
 
@@ -527,7 +542,7 @@ async fn main() -> anyhow::Result<()> {
                              for part in parts {
                                  let delay = humanizer.typing_delay(&part, Some(response.emotion));
                                  tokio::time::sleep(delay).await;
-                                 
+
                                  // Check routing
                                  if let Some(group_str) = input_content.source.strip_prefix("onebot:group:") {
                                      if let Ok(group_id) = group_str.parse::<i64>() {
@@ -548,9 +563,15 @@ async fn main() -> anyhow::Result<()> {
                          // Reply via CLI
                          print_response(&response, &humanizer, None).await;
                      }
+                     // Signal stdin loop that response is done
+                     let _ = prompt_ready_tx.send(());
                     }
                  }
-             Err(e) => tracing::error!("Reasoning error: {}", e),
+             Err(e) => {
+                 tracing::error!("Reasoning error: {}", e);
+                 // Signal stdin loop even on error
+                 let _ = prompt_ready_tx.send(());
+             }
         }
     }
 
