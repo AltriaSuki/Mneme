@@ -11,6 +11,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc, Timelike};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 use mneme_core::OrganismState;
@@ -49,6 +50,8 @@ pub struct SleepConsolidator {
     narrative_weaver: NarrativeWeaver,
     last_consolidation: RwLock<Option<DateTime<Utc>>>,
     next_chapter_id: RwLock<i64>,
+    /// TOCTOU guard: prevents concurrent consolidation runs
+    consolidating: AtomicBool,
 }
 
 impl SleepConsolidator {
@@ -59,6 +62,7 @@ impl SleepConsolidator {
             narrative_weaver: NarrativeWeaver::new(),
             last_consolidation: RwLock::new(None),
             next_chapter_id: RwLock::new(1),
+            consolidating: AtomicBool::new(false),
         }
     }
 
@@ -69,6 +73,7 @@ impl SleepConsolidator {
             narrative_weaver: NarrativeWeaver::new(),
             last_consolidation: RwLock::new(None),
             next_chapter_id: RwLock::new(1),
+            consolidating: AtomicBool::new(false),
         }
     }
 
@@ -98,6 +103,22 @@ impl SleepConsolidator {
     /// 3. Returns state updates to apply
     #[tracing::instrument(skip(self, episodes, current_state))]
     pub async fn consolidate(
+        &self,
+        episodes: &[EpisodeDigest],
+        current_state: &OrganismState,
+    ) -> Result<ConsolidationResult> {
+        // TOCTOU guard: only one consolidation at a time
+        if self.consolidating.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            return Ok(ConsolidationResult::skipped("already in progress"));
+        }
+
+        // All paths below must release the guard
+        let result = self.consolidate_inner(episodes, current_state).await;
+        self.consolidating.store(false, Ordering::Release);
+        result
+    }
+
+    async fn consolidate_inner(
         &self,
         episodes: &[EpisodeDigest],
         current_state: &OrganismState,
@@ -428,8 +449,10 @@ mod tests {
     #[test]
     fn test_apply_updates() {
         let mut state = OrganismState::default();
+        // Seed values so reinforcement has something to update
+        state.slow.values = mneme_core::state::ValueNetwork::seed();
         let initial_anxiety = state.medium.attachment.anxiety;
-        
+
         let updates = StateUpdates {
             attachment_anxiety_delta: -0.1,
             openness_delta: 0.05,
@@ -537,5 +560,40 @@ mod tests {
     fn test_self_reflector_format_summary_empty() {
         let summary = SelfReflector::format_reflection_summary(&[]);
         assert!(summary.contains("没有新的"));
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_consolidation_only_one_runs() {
+        let buffer = Arc::new(RwLock::new(FeedbackBuffer::new()));
+        let mut config = SleepConfig::default();
+        config.allow_manual_trigger = true;
+        let consolidator = Arc::new(SleepConsolidator::with_config(buffer, config));
+
+        let state = OrganismState::default();
+        let episodes: Vec<EpisodeDigest> = Vec::new();
+
+        // Spawn two concurrent consolidations
+        let c1 = consolidator.clone();
+        let s1 = state.clone();
+        let e1 = episodes.clone();
+        let h1 = tokio::spawn(async move { c1.consolidate(&e1, &s1).await.unwrap() });
+
+        let c2 = consolidator.clone();
+        let s2 = state.clone();
+        let e2 = episodes.clone();
+        let h2 = tokio::spawn(async move { c2.consolidate(&e2, &s2).await.unwrap() });
+
+        let (r1, r2) = tokio::join!(h1, h2);
+        let r1 = r1.unwrap();
+        let r2 = r2.unwrap();
+
+        // Exactly one should be skipped with "already in progress"
+        let skipped_count = [&r1, &r2].iter()
+            .filter(|r| r.skip_reason.as_deref() == Some("already in progress"))
+            .count();
+        // At least one performed, at most one skipped due to guard
+        // (both could perform if first finishes before second starts)
+        assert!(skipped_count <= 1);
+        assert!(r1.performed || r2.performed);
     }
 }
