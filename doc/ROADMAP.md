@@ -51,8 +51,8 @@
 |------|-----------|------|--------|
 | `dynamics.rs` | `energy_target: 0.7` | 从反馈中学习最优目标 | 🟡 |
 | `dynamics.rs` | `stress_decay_rate: 0.002` | 个体化的压力恢复速度 | 🟡 |
-| `somatic.rs` | `energy < 0.3 → 简洁回复` | 学习什么状态下该简洁 | 🔴 |
-| `somatic.rs` | `stress > 0.7 → 语气略急` | 学习压力如何影响表达 | 🔴 |
+| `somatic.rs` | `energy < 0.3 → 简洁回复` | 学习什么状态下该简洁 | ✅ `BehaviorThresholds` |
+| `somatic.rs` | `stress > 0.7 → 语气略急` | 学习压力如何影响表达 | ✅ `BehaviorThresholds` |
 | `state.rs` | 行为指导文本 `describe_for_context()` | 删除（ModulationVector 已替代）→ 审计 B-1 | ✅ |
 | `state.rs` | `ValueNetwork::default()` 预设道德权重 | 空初始化 → 从 self_knowledge 加载 → 审计 B-1 | ✅ |
 | `values.rs` | 初始价值权重 | 从用户反馈中调整 | 🟢 |
@@ -335,7 +335,7 @@ impl FastState {
 ```
 
 **需要实现**:
-- [ ] 统一的 `SafeF32` 类型或 validate 宏
+- [x] 统一的 `SafeF32` 类型或 validate 宏 ✅ — `deserialize_safe_f32()` serde helper, applied to all f32 fields in FastState/MediumState/AttachmentState/Affect
 - [x] 在 `normalize()` 中检测并处理 NaN/Infinity ✅ — `sanitize_f32()` + fallback
 - [x] 状态异常时的回退策略（恢复默认值） ✅ — fallback to homeostatic defaults
 - [x] 异常状态日志告警 ✅ — `tracing::warn!` on NaN/Inf detection
@@ -376,8 +376,8 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 - [x] `decay_fact()` — 事实衰减（矛盾信息出现时降低 confidence） ✅
 - [x] `format_facts_for_prompt()` — 格式化事实供 prompt 注入 ✅
 - [x] 对话后的 fact extraction pass（`extraction.rs` + `extract_facts()` + think() 集成） ✅
-- [ ] Social graph 的实际读写（当前只有 trait 骨架）
-- [ ] `Coordinator::recall()` 返回混合结果：episodes + facts + social context
+- [x] Social graph 的实际读写（`get_person_context()` + engine 集成 + prompt 注入） ✅
+- [x] `Coordinator::recall()` 返回混合结果：episodes + facts + social context（`BlendedRecall` + `recall_blended()`） ✅
 
 ---
 
@@ -877,7 +877,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 - [x] 消息路由失败时 log error（group_id/user_id 解析失败不再静默丢弃）
 
 **未修复**（需要更大改动）:
-- [ ] 消息队列：断连期间缓存待发消息，重连后重发
+- [x] 消息队列：断连期间缓存待发消息，重连后重发（`PendingMessageQueue`） ✅
 - [ ] 连接状态暴露给 CLI `status` 命令
 
 ---
@@ -1013,7 +1013,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **多 RwLock 死锁风险** | mneme_memory/coordinator | `state` 和 `prev_somatic` 锁获取顺序不一致，可能死锁 → 锁顺序文档化 | **Fixed** ✅ |
 | **CLI 关机竞态** | mneme_cli | 三条关机路径都用 500ms sleep 硬等待，shutdown 超时则数据库写入不完整 → oneshot channel + graceful_shutdown 5s timeout | **Fixed** ✅ |
 | **goals/rules DB 集成缺失** | mneme_memory | `GoalManager`/`RuleEngine` 调用未实现的 DB 方法，运行时可能 panic → 已验证全部 7 个 DB 方法已实现 + 集成测试 | **Fixed** ✅ |
-| **OneBot 消息丢失** | mneme_onebot | WebSocket 断连期间消息直接丢失，无重发机制 | 🔴 Open |
+| **OneBot 消息丢失** | mneme_onebot | WebSocket 断连期间消息缓存至 PendingMessageQueue，重连后重发 | **Fixed** ✅ |
 | Streaming 回调未生效 | mneme_reasoning/engine | `on_text_chunk` 已设置但 `process_thought_loop` 用 `complete()` 非流式调用 → stream_completion() + fallback | **Fixed** ✅ |
 | AgentLoop 背压丢弃 | mneme_reasoning/agent_loop | `try_send` 失败时静默丢弃 StateUpdate/AutonomousToolUse | **Fixed** ✅ |
 | SSE 最后事件丢失 | mneme_reasoning/anthropic | 流结束时无尾部 `\n\n` 的事件块不会被处理 | **Fixed** ✅ |

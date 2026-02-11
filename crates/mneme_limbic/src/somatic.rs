@@ -114,6 +114,53 @@ impl Default for ModulationCurves {
     }
 }
 
+/// Learnable behavior thresholds — replaces hardcoded magic numbers in somatic logic.
+/// Each threshold controls when a specific behavior triggers.
+/// Default values match the original hardcoded behavior exactly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehaviorThresholds {
+    /// Stress level above which `needs_attention()` fires
+    pub attention_stress: f32,
+    /// Energy level below which `needs_attention()` fires
+    pub attention_energy: f32,
+    /// Social need above which `needs_attention()` fires
+    pub attention_social: f32,
+    /// Energy level below which body feeling text changes to "exhausted"
+    pub energy_critical: f32,
+    /// Stress level above which body feeling text changes to "heart racing"
+    pub stress_critical: f32,
+    /// Social need above which "want to talk" feeling triggers
+    pub social_need_high: f32,
+    /// Curiosity above which "brain itching" feeling triggers
+    pub curiosity_high: f32,
+    /// Minimum energy gate for proactivity (clamped floor)
+    pub energy_gate_min: f32,
+    /// Stress below this + low arousal → calm bonus on temperature
+    pub calm_stress_max: f32,
+    /// Arousal below this + low stress → calm bonus on temperature
+    pub calm_arousal_max: f32,
+    /// Stress above this → extra silence inclination
+    pub stress_silence_min: f32,
+}
+
+impl Default for BehaviorThresholds {
+    fn default() -> Self {
+        Self {
+            attention_stress: 0.7,
+            attention_energy: 0.3,
+            attention_social: 0.8,
+            energy_critical: 0.2,
+            stress_critical: 0.8,
+            social_need_high: 0.7,
+            curiosity_high: 0.7,
+            energy_gate_min: 0.3,
+            calm_stress_max: 0.2,
+            calm_arousal_max: 0.3,
+            stress_silence_min: 0.8,
+        }
+    }
+}
+
 /// A somatic marker - compressed state for System 2 injection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SomaticMarker {
@@ -180,23 +227,22 @@ impl SomaticMarker {
     /// "you're tired", we actually give it less context and limit its output length.
     /// The behavior emerges from the constraint, not from instruction.
     pub fn to_modulation_vector_with_curves(&self, curves: &ModulationCurves) -> ModulationVector {
-        // === max_tokens_factor: energy → response length capacity ===
+        self.to_modulation_vector_full(curves, &BehaviorThresholds::default())
+    }
+
+    /// Convert with both learnable curves and learnable thresholds.
+    pub fn to_modulation_vector_full(&self, curves: &ModulationCurves, t: &BehaviorThresholds) -> ModulationVector {
         let max_tokens_factor = lerp(curves.energy_to_max_tokens.0, curves.energy_to_max_tokens.1, self.energy);
 
-        // === temperature_delta: stress + arousal → unpredictability ===
-        // curves.stress_to_temperature: lerp(low, high, stress) replaces `stress * 0.3`
         let stress_temp = lerp(curves.stress_to_temperature.0, curves.stress_to_temperature.1, self.stress);
         let arousal_temp = self.affect.arousal * 0.15;
-        let calm_bonus = if self.stress < 0.2 && self.affect.arousal < 0.3 { -0.1 } else { 0.0 };
+        let calm_bonus = if self.stress < t.calm_stress_max && self.affect.arousal < t.calm_arousal_max { -0.1 } else { 0.0 };
         let temperature_delta = (stress_temp + arousal_temp + calm_bonus).clamp(-0.1, 0.4);
 
-        // === context_budget_factor: energy + stress → working memory capacity ===
         let energy_context = lerp(curves.energy_to_context.0, curves.energy_to_context.1, self.energy);
         let stress_penalty = self.stress * 0.3;
         let context_budget_factor = (energy_context - stress_penalty).clamp(0.4, 1.2);
 
-        // === recall_mood_bias: mood → what memories surface ===
-        // mood_bias is -1..1, normalize to 0..1 for lerp
         let mood_t = (self.mood_bias + 1.0) / 2.0;
         let recall_mood_bias = lerp(
             curves.mood_to_recall_bias.0,
@@ -204,15 +250,11 @@ impl SomaticMarker {
             mood_t,
         ).clamp(-1.0, 1.0);
 
-        // === silence_inclination: social need + energy + stress → willingness to talk ===
-        // social_to_silence: lerp(low_social_output, high_social_output, social_need)
-        // Default (0.4, 0.0): low social → 0.4 silence, high social → 0.0
         let social_silence = lerp(curves.social_to_silence.0, curves.social_to_silence.1, self.social_need);
         let energy_silence = (1.0 - self.energy) * 0.3;
-        let stress_silence = if self.stress > 0.8 { 0.2 } else { 0.0 };
+        let stress_silence = if self.stress > t.stress_silence_min { 0.2 } else { 0.0 };
         let silence_inclination = (energy_silence + social_silence + stress_silence).clamp(0.0, 1.0);
 
-        // === typing_speed_factor: arousal → urgency of expression ===
         let typing_speed_factor = lerp(curves.arousal_to_typing.0, curves.arousal_to_typing.1, self.affect.arousal);
 
         ModulationVector {
@@ -227,23 +269,25 @@ impl SomaticMarker {
 
     /// Check if the marker indicates a need for special handling
     pub fn needs_attention(&self) -> bool {
-        self.stress > 0.7 || self.energy < 0.3 || self.social_need > 0.8
+        self.needs_attention_with(&BehaviorThresholds::default())
+    }
+
+    /// Check with learnable thresholds
+    pub fn needs_attention_with(&self, t: &BehaviorThresholds) -> bool {
+        self.stress > t.attention_stress || self.energy < t.attention_energy || self.social_need > t.attention_social
     }
 
     /// Get urgency level (0.0 - 1.0) for proactive messaging
     pub fn proactivity_urgency(&self) -> f32 {
-        // Social need is the primary driver
+        self.proactivity_urgency_with(&BehaviorThresholds::default())
+    }
+
+    /// Get urgency with learnable thresholds
+    pub fn proactivity_urgency_with(&self, t: &BehaviorThresholds) -> f32 {
         let social_factor = self.social_need * 0.6;
-        
-        // Curiosity adds some urgency
         let curiosity_factor = self.curiosity * 0.2;
-        
-        // Energy gates proactivity (low energy = less proactive)
-        let energy_gate = self.energy.max(0.3);
-        
-        // Stress reduces proactivity (focus on recovery)
+        let energy_gate = self.energy.max(t.energy_gate_min);
         let stress_penalty = self.stress * 0.3;
-        
         ((social_factor + curiosity_factor) * energy_gate - stress_penalty).clamp(0.0, 1.0)
     }
 
@@ -253,6 +297,11 @@ impl SomaticMarker {
     /// only when changes exceed the significance threshold — not every tick produces a feeling.
     /// Each returned tuple is (feeling_text, intensity) where intensity ∈ [0, 1].
     pub fn describe_body_feeling(&self, prev: &SomaticMarker, threshold: f32) -> Vec<(String, f32)> {
+        self.describe_body_feeling_with(prev, threshold, &BehaviorThresholds::default())
+    }
+
+    /// Describe body feelings with learnable thresholds.
+    pub fn describe_body_feeling_with(&self, prev: &SomaticMarker, threshold: f32, t: &BehaviorThresholds) -> Vec<(String, f32)> {
         let mut feelings = Vec::new();
 
         let energy_delta = self.energy - prev.energy;
@@ -264,7 +313,7 @@ impl SomaticMarker {
         // Energy drop
         if energy_delta < -threshold {
             let intensity = (-energy_delta).min(1.0);
-            let text = if self.energy < 0.2 {
+            let text = if self.energy < t.energy_critical {
                 "感觉好像突然没力气了，整个人沉沉的".to_string()
             } else {
                 "有点累了，想休息一下".to_string()
@@ -281,7 +330,7 @@ impl SomaticMarker {
         // Stress spike
         if stress_delta > threshold {
             let intensity = stress_delta.min(1.0);
-            let text = if self.stress > 0.8 {
+            let text = if self.stress > t.stress_critical {
                 "心跳加快，有点紧张的感觉".to_string()
             } else {
                 "感觉有一点点紧绷".to_string()
@@ -308,13 +357,13 @@ impl SomaticMarker {
         }
 
         // Social need surge
-        if social_delta > threshold && self.social_need > 0.7 {
+        if social_delta > threshold && self.social_need > t.social_need_high {
             let intensity = social_delta.min(1.0);
             feelings.push(("好想和人说说话".to_string(), intensity));
         }
 
         // Curiosity spike
-        if curiosity_delta > threshold && self.curiosity > 0.7 {
+        if curiosity_delta > threshold && self.curiosity > t.curiosity_high {
             let intensity = curiosity_delta.min(1.0);
             feelings.push(("脑子里痒痒的，想知道更多".to_string(), intensity));
         }
@@ -630,5 +679,67 @@ mod tests {
 
         assert!((curves.energy_to_max_tokens.0 - deserialized.energy_to_max_tokens.0).abs() < 0.001);
         assert!((curves.stress_to_temperature.1 - deserialized.stress_to_temperature.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_behavior_thresholds_default_matches_hardcoded() {
+        let t = BehaviorThresholds::default();
+        assert!((t.attention_stress - 0.7).abs() < 1e-6);
+        assert!((t.attention_energy - 0.3).abs() < 1e-6);
+        assert!((t.attention_social - 0.8).abs() < 1e-6);
+        assert!((t.energy_critical - 0.2).abs() < 1e-6);
+        assert!((t.stress_critical - 0.8).abs() < 1e-6);
+        assert!((t.social_need_high - 0.7).abs() < 1e-6);
+        assert!((t.curiosity_high - 0.7).abs() < 1e-6);
+        assert!((t.energy_gate_min - 0.3).abs() < 1e-6);
+        assert!((t.calm_stress_max - 0.2).abs() < 1e-6);
+        assert!((t.calm_arousal_max - 0.3).abs() < 1e-6);
+        assert!((t.stress_silence_min - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_behavior_thresholds_default_behavior_unchanged() {
+        // Default thresholds must produce identical results to no-arg methods
+        let state = OrganismState::default();
+        let marker = SomaticMarker::from_state(&state);
+        let t = BehaviorThresholds::default();
+
+        assert_eq!(marker.needs_attention(), marker.needs_attention_with(&t));
+        assert!((marker.proactivity_urgency() - marker.proactivity_urgency_with(&t)).abs() < 1e-6);
+
+        let mv_default = marker.to_modulation_vector();
+        let mv_full = marker.to_modulation_vector_full(&ModulationCurves::default(), &t);
+        assert!((mv_default.silence_inclination - mv_full.silence_inclination).abs() < 1e-6);
+        assert!((mv_default.temperature_delta - mv_full.temperature_delta).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_custom_thresholds_change_behavior() {
+        let mut state = OrganismState::default();
+        state.fast.stress = 0.6;
+        state.fast.energy = 0.35;
+        state.fast.social_need = 0.75;
+        let marker = SomaticMarker::from_state(&state);
+
+        // Default thresholds: stress 0.6 < 0.7, energy 0.35 > 0.3, social 0.75 < 0.8
+        assert!(!marker.needs_attention());
+
+        // Custom: lower thresholds → now triggers
+        let sensitive = BehaviorThresholds {
+            attention_stress: 0.5,
+            attention_energy: 0.4,
+            attention_social: 0.7,
+            ..Default::default()
+        };
+        assert!(marker.needs_attention_with(&sensitive));
+    }
+
+    #[test]
+    fn test_thresholds_serialization_roundtrip() {
+        let t = BehaviorThresholds::default();
+        let json = serde_json::to_string(&t).unwrap();
+        let restored: BehaviorThresholds = serde_json::from_str(&json).unwrap();
+        assert!((t.attention_stress - restored.attention_stress).abs() < 1e-6);
+        assert!((t.stress_silence_min - restored.stress_silence_min).abs() < 1e-6);
     }
 }

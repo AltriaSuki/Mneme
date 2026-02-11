@@ -28,5 +28,5 @@ mod surprise;
 
 pub use system::{LimbicSystem, Stimulus};
 pub use heartbeat::HeartbeatConfig;
-pub use somatic::{SomaticMarker, ModulationVector, ModulationCurves};
+pub use somatic::{SomaticMarker, ModulationVector, ModulationCurves, BehaviorThresholds};
 pub use surprise::{SurpriseDetector, SpecialPattern};

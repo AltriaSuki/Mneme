@@ -13,7 +13,7 @@ use mneme_core::{
     OrganismState, SensoryInput, DefaultDynamics, Dynamics,
     Affect, FastState,
 };
-use crate::somatic::{SomaticMarker, ModulationVector, ModulationCurves};
+use crate::somatic::{SomaticMarker, ModulationVector, ModulationCurves, BehaviorThresholds};
 use crate::surprise::SurpriseDetector;
 use crate::heartbeat::HeartbeatConfig;
 
@@ -86,6 +86,10 @@ pub struct LimbicSystem {
     /// Different Mneme instances can have different curves (sensitive vs resilient).
     /// Protected by RwLock so offline learning can update curves via `&self`.
     curves: RwLock<ModulationCurves>,
+
+    /// Learnable behavior thresholds — when specific behaviors trigger.
+    /// Protected by RwLock so offline learning can update thresholds via `&self`.
+    thresholds: RwLock<BehaviorThresholds>,
 }
 
 impl LimbicSystem {
@@ -113,6 +117,7 @@ impl LimbicSystem {
             modulation_smoothing: 0.3,       // moderate inertia by default
             surprise_bypass_threshold: 0.5,  // large jumps bypass smoothing
             curves: RwLock::new(ModulationCurves::default()),
+            thresholds: RwLock::new(BehaviorThresholds::default()),
         };
 
         // Spawn the heartbeat task
@@ -248,8 +253,10 @@ impl LimbicSystem {
     pub async fn get_modulation_vector(&self) -> ModulationVector {
         let marker = self.get_somatic_marker().await;
         let curves = self.curves.read().await;
-        let raw = marker.to_modulation_vector_with_curves(&curves);
+        let thresholds = self.thresholds.read().await;
+        let raw = marker.to_modulation_vector_full(&curves, &thresholds);
         drop(curves);
+        drop(thresholds);
 
         let mut prev = self.prev_modulation.write().await;
         let delta = prev.max_delta(&raw);
@@ -309,22 +316,35 @@ impl LimbicSystem {
         *self.curves.write().await = curves;
     }
 
+    /// Get a clone of the current behavior thresholds
+    pub async fn get_thresholds(&self) -> BehaviorThresholds {
+        self.thresholds.read().await.clone()
+    }
+
+    /// Set new behavior thresholds (e.g., loaded from persistence or learned)
+    pub async fn set_thresholds(&self, thresholds: BehaviorThresholds) {
+        *self.thresholds.write().await = thresholds;
+    }
+
     /// Check if the system needs social interaction (proactivity trigger)
     pub async fn needs_social_interaction(&self) -> bool {
         let state = self.state.read().await;
-        state.fast.social_need > 0.7
+        let t = self.thresholds.read().await;
+        state.fast.social_need > t.attention_social
     }
 
     /// Check if the system is stressed (may need calming)
     pub async fn is_stressed(&self) -> bool {
         let state = self.state.read().await;
-        state.fast.stress > 0.7
+        let t = self.thresholds.read().await;
+        state.fast.stress > t.attention_stress
     }
 
     /// Check if energy is low (may need rest)
     pub async fn is_tired(&self) -> bool {
         let state = self.state.read().await;
-        state.fast.energy < 0.3
+        let t = self.thresholds.read().await;
+        state.fast.energy < t.attention_energy
     }
 }
 

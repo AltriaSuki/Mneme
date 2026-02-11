@@ -6,14 +6,59 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
 use url::Url;
 use uuid::Uuid;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 use crate::event::{OneBotEvent, SendMessageAction, SendMessageParams};
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+/// Maximum number of pending messages buffered during disconnect.
+const PENDING_QUEUE_CAPACITY: usize = 256;
+
+/// Bounded message queue for buffering outgoing messages during WebSocket disconnect.
+/// When full, the oldest message is dropped to make room.
+#[derive(Clone)]
+pub struct PendingMessageQueue {
+    inner: Arc<Mutex<VecDeque<String>>>,
+}
+
+impl PendingMessageQueue {
+    pub fn new() -> Self {
+        Self { inner: Arc::new(Mutex::new(VecDeque::new())) }
+    }
+
+    /// Push a message. If at capacity, drops the oldest message first.
+    pub fn push(&self, msg: String) {
+        let mut q = self.inner.lock().unwrap();
+        if q.len() >= PENDING_QUEUE_CAPACITY {
+            let dropped = q.pop_front();
+            tracing::warn!("Pending queue full ({}), dropping oldest message: {:?}",
+                PENDING_QUEUE_CAPACITY, dropped.as_deref().map(|s| &s[..s.len().min(80)]));
+        }
+        q.push_back(msg);
+    }
+
+    /// Drain all pending messages (FIFO order).
+    pub fn drain_all(&self) -> Vec<String> {
+        let mut q = self.inner.lock().unwrap();
+        q.drain(..).collect()
+    }
+
+    /// Number of pending messages.
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 pub struct OneBotClient {
     pub(crate) _ws_url: Url,
-    tx: mpsc::Sender<String>, // Channel to send outgoing messages to WS task
+    tx: mpsc::Sender<String>,
+    pending: PendingMessageQueue,
 }
 
 impl OneBotClient {
@@ -28,7 +73,8 @@ impl OneBotClient {
         let (tx, mut rx) = mpsc::channel::<String>(32);
         let (content_tx, content_rx) = mpsc::channel::<Content>(32);
 
-        let client = Self { _ws_url: ws_url.clone(), tx };
+        let pending = PendingMessageQueue::new();
+        let client = Self { _ws_url: ws_url.clone(), tx, pending: pending.clone() };
 
         // Spawn the WebSocket handler task
         tokio::spawn(async move {
@@ -40,7 +86,7 @@ impl OneBotClient {
                     Ok((ws_stream, _)) => {
                         tracing::info!("Connected to OneBot!");
                         retry_count = 0; // Reset on successful connection
-                        if let Err(e) = Self::handle_connection(ws_stream, &mut rx, &content_tx).await {
+                        if let Err(e) = Self::handle_connection(ws_stream, &mut rx, &content_tx, &pending).await {
                             tracing::error!("OneBot connection error: {}", e);
                         }
                         // Connection lost, wait before reconnecting
@@ -73,8 +119,18 @@ impl OneBotClient {
         stream: WsStream,
         rx: &mut mpsc::Receiver<String>,
         content_tx: &mpsc::Sender<Content>,
+        pending: &PendingMessageQueue,
     ) -> Result<()> {
         let (mut write, mut read) = stream.split();
+
+        // Drain pending messages buffered during disconnect
+        let buffered = pending.drain_all();
+        if !buffered.is_empty() {
+            tracing::info!("Draining {} pending messages after reconnect", buffered.len());
+            for msg in buffered {
+                write.send(Message::Text(msg)).await?;
+            }
+        }
 
         loop {
             tokio::select! {
@@ -141,7 +197,7 @@ impl OneBotClient {
             },
         };
         let json = serde_json::to_string(&payload)?;
-        self.tx.send(json).await.map_err(|_| anyhow::anyhow!("WS task dropped"))?;
+        self.try_send_or_queue(json);
         Ok(())
     }
 
@@ -156,9 +212,65 @@ impl OneBotClient {
             },
         };
         let json = serde_json::to_string(&payload)?;
-        self.tx.send(json).await.map_err(|_| anyhow::anyhow!("WS task dropped"))?;
+        self.try_send_or_queue(json);
         Ok(())
     }
-    
-    // Extensibility: send_group_message, etc.
+
+    /// Try to send via the mpsc channel; if full or closed, buffer in the pending queue.
+    fn try_send_or_queue(&self, json: String) {
+        match self.tx.try_send(json) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(msg)) => {
+                tracing::warn!("OneBot send channel full, buffering message");
+                self.pending.push(msg);
+            }
+            Err(mpsc::error::TrySendError::Closed(msg)) => {
+                tracing::warn!("OneBot WS task closed, buffering message");
+                self.pending.push(msg);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pending_queue_push_and_drain() {
+        let q = PendingMessageQueue::new();
+        assert!(q.is_empty());
+
+        q.push("msg1".to_string());
+        q.push("msg2".to_string());
+        assert_eq!(q.len(), 2);
+
+        let drained = q.drain_all();
+        assert_eq!(drained, vec!["msg1", "msg2"]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn test_pending_queue_overflow_drops_oldest() {
+        let q = PendingMessageQueue::new();
+        for i in 0..PENDING_QUEUE_CAPACITY {
+            q.push(format!("msg{}", i));
+        }
+        assert_eq!(q.len(), PENDING_QUEUE_CAPACITY);
+
+        // Push one more — should drop msg0
+        q.push("overflow".to_string());
+        assert_eq!(q.len(), PENDING_QUEUE_CAPACITY);
+
+        let drained = q.drain_all();
+        assert_eq!(drained[0], "msg1"); // msg0 was dropped
+        assert_eq!(drained.last().unwrap(), "overflow");
+    }
+
+    #[test]
+    fn test_pending_queue_empty_drain() {
+        let q = PendingMessageQueue::new();
+        let drained = q.drain_all();
+        assert!(drained.is_empty());
+    }
 }

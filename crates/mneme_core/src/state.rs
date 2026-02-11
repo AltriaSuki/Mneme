@@ -7,7 +7,7 @@
 //!
 //! This separation prevents state-space explosion and ensures stability.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use crate::affect::Affect;
 
 /// Guard against NaN and Infinity in state values.
@@ -17,6 +17,19 @@ fn sanitize_f32(v: f32, fallback: f32) -> f32 {
     if v.is_finite() { v } else {
         tracing::warn!("NaN/Inf detected in state, resetting to fallback {}", fallback);
         fallback
+    }
+}
+
+/// Serde deserializer that sanitizes NaN/Inf → 0.0 at the deserialization boundary.
+pub(crate) fn deserialize_safe_f32<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = f32::deserialize(deserializer)?;
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        Ok(0.0)
     }
 }
 
@@ -84,23 +97,27 @@ pub struct FastState {
     
     /// Energy level (0.0 - 1.0): determines interaction vitality and persistence
     /// Depletes with activity, recovers with rest
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub energy: f32,
-    
+
     /// Stress level (0.0 - 1.0): sensitivity to negative information
     /// Spikes on negative stimuli, decays over time
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub stress: f32,
-    
+
     /// Curiosity (0.0 - 1.0): drive for exploration and topic divergence
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub curiosity: f32,
 
     /// Social need (0.0 - 1.0): drive for proactive interaction
     /// Increases when alone, decreases after interaction
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub social_need: f32,
 
     /// Boredom (0.0 - 1.0): monotony accumulator
     /// Increases with low-surprise, low-intensity input; decreases with novelty.
     /// Feeds back into curiosity drive and energy restlessness.
-    #[serde(default = "default_boredom")]
+    #[serde(default = "default_boredom", deserialize_with = "deserialize_safe_f32")]
     pub boredom: f32,
 }
 
@@ -141,17 +158,20 @@ impl FastState {
 pub struct MediumState {
     /// Mood bias (-1.0 to 1.0): long-term emotional tendency
     /// Only changes when affect is consistently positive/negative
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub mood_bias: f32,
-    
+
     /// Attachment state: relationship dynamics with user
     pub attachment: AttachmentState,
-    
+
     /// Openness (0.0 - 1.0): willingness to change and explore
     /// Influenced by curiosity and exploration success rate
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub openness: f32,
-    
+
     /// Hunger/Deprivation (0.0 - 1.0): general sense of lack
     /// Accumulates from unmet needs
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub hunger: f32,
 }
 
@@ -182,10 +202,12 @@ impl MediumState {
 pub struct AttachmentState {
     /// Attachment anxiety (0.0 - 1.0): fear of rejection/abandonment
     /// Increases when ignored or rejected
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub anxiety: f32,
-    
+
     /// Attachment avoidance (0.0 - 1.0): resistance to intimacy
     /// Increases when intimacy leads to negative outcomes
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub avoidance: f32,
 }
 
@@ -533,5 +555,66 @@ mod tests {
         let persona = state.project();
         assert_eq!(persona.attachment_style, AttachmentStyle::Secure);
         assert!(persona.dominant_values.is_empty());
+    }
+
+    #[test]
+    fn test_safe_f32_json_roundtrip_fast_state() {
+        let fast = FastState::default();
+        let json = serde_json::to_string(&fast).unwrap();
+        let restored: FastState = serde_json::from_str(&json).unwrap();
+        assert!((restored.energy - fast.energy).abs() < 1e-6);
+        assert!((restored.stress - fast.stress).abs() < 1e-6);
+        assert!((restored.curiosity - fast.curiosity).abs() < 1e-6);
+        assert!((restored.social_need - fast.social_need).abs() < 1e-6);
+        assert!((restored.boredom - fast.boredom).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_safe_f32_json_roundtrip_medium_state() {
+        let medium = MediumState::default();
+        let json = serde_json::to_string(&medium).unwrap();
+        let restored: MediumState = serde_json::from_str(&json).unwrap();
+        assert!((restored.mood_bias - medium.mood_bias).abs() < 1e-6);
+        assert!((restored.openness - medium.openness).abs() < 1e-6);
+        assert!((restored.hunger - medium.hunger).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_safe_f32_json_roundtrip_attachment() {
+        let att = AttachmentState::default();
+        let json = serde_json::to_string(&att).unwrap();
+        let restored: AttachmentState = serde_json::from_str(&json).unwrap();
+        assert!((restored.anxiety - att.anxiety).abs() < 1e-6);
+        assert!((restored.avoidance - att.avoidance).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_safe_f32_json_roundtrip_organism_state() {
+        let state = OrganismState::default();
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: OrganismState = serde_json::from_str(&json).unwrap();
+        assert!((restored.fast.energy - state.fast.energy).abs() < 1e-6);
+        assert!((restored.medium.mood_bias - state.medium.mood_bias).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_deserialize_safe_f32_sanitizes_nan() {
+        // Test the helper directly via a small wrapper struct
+        #[derive(Deserialize)]
+        struct W {
+            #[serde(deserialize_with = "super::deserialize_safe_f32")]
+            v: f32,
+        }
+        // Normal value
+        let w: W = serde_json::from_str(r#"{"v": 1.5}"#).unwrap();
+        assert!((w.v - 1.5).abs() < 1e-6);
+
+        // Zero
+        let w: W = serde_json::from_str(r#"{"v": 0.0}"#).unwrap();
+        assert_eq!(w.v, 0.0);
+
+        // Negative
+        let w: W = serde_json::from_str(r#"{"v": -0.7}"#).unwrap();
+        assert!((w.v - (-0.7)).abs() < 1e-6);
     }
 }

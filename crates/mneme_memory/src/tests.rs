@@ -52,8 +52,54 @@ async fn test_social_graph_ops() {
     memory.upsert_person(&other_person).await.expect("Upsert other failed");
     
     memory.record_interaction(person_id, other_id, "test interaction").await.expect("Record interaction failed");
-    
-    // We can't query interactions yet as there is no API for it, but if it didn't error, the FK checks passed.
+
+    // 6. Get person context (verifies interaction was recorded)
+    let ctx = memory.get_person_context(person_id).await.expect("get_person_context failed");
+    assert!(ctx.is_some(), "Expected person context for known person");
+    let ctx = ctx.unwrap();
+    assert_eq!(ctx.person.id, person_id);
+    assert_eq!(ctx.person.name, "Updated Name");
+    assert_eq!(ctx.interaction_count, 1);
+    assert!(ctx.last_interaction_ts.is_some());
+    assert!(ctx.relationship_notes.contains("test interaction"));
+
+    // 7. Unknown person returns None
+    let unknown_ctx = memory.get_person_context(Uuid::new_v4()).await.expect("get_person_context failed");
+    assert!(unknown_ctx.is_none());
+}
+
+#[tokio::test]
+async fn test_recall_blended_empty_db() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let blended = memory.recall_blended("hello", 0.0).await.expect("recall_blended failed");
+    // Empty DB → both fields empty or minimal
+    assert!(blended.facts.is_empty());
+    // episodes may contain "No relevant memories" or similar
+}
+
+#[tokio::test]
+async fn test_recall_blended_with_data() {
+    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+
+    // Store a fact
+    memory.store_fact("User", "likes", "Rust", 0.9).await.expect("store_fact failed");
+
+    // Memorize an episode
+    let content = Content {
+        id: Uuid::new_v4(),
+        source: "test".to_string(),
+        author: "User".to_string(),
+        body: "I love programming in Rust".to_string(),
+        timestamp: 100,
+        modality: Modality::Text,
+    };
+    memory.memorize(&content).await.expect("memorize failed");
+
+    let blended = memory.recall_blended("Rust programming", 0.0).await.expect("recall_blended failed");
+    // Facts should contain the stored fact
+    assert!(blended.facts.contains("Rust"), "facts: {}", blended.facts);
+    // Episodes should contain the memorized content
+    assert!(!blended.episodes.is_empty());
 }
 
 #[tokio::test]

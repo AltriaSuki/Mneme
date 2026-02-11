@@ -195,6 +195,9 @@ async fn main() -> anyhow::Result<()> {
     
     let mut engine = ReasoningEngine::with_coordinator(psyche, memory.clone(), client, executor, coordinator.clone());
 
+    // 4a. Wire up Social Graph (SqliteMemory implements SocialGraph)
+    engine.set_social_graph(memory.clone());
+
     // 4b. Initialize Safety Guard
     let guard = Arc::new(mneme_core::safety::CapabilityGuard::new(config.safety.clone()));
     engine.set_guard(guard.clone());

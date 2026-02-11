@@ -19,6 +19,8 @@ pub struct ContextLayers {
     pub feed_digest: String,
     /// Layer 4: Recalled episodes from vector search
     pub recalled_episodes: String,
+    /// Social context: person info for current speaker
+    pub social_context: String,
 }
 
 pub struct ContextAssembler;
@@ -70,6 +72,9 @@ impl ContextAssembler {
 
         if !layers.user_facts.is_empty() {
             variable_sections.push(("KNOWN FACTS", &layers.user_facts));
+        }
+        if !layers.social_context.is_empty() {
+            variable_sections.push(("SOCIAL CONTEXT", &layers.social_context));
         }
         if !layers.recalled_episodes.is_empty() {
             variable_sections.push(("RECALLED MEMORIES", &layers.recalled_episodes));

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use mneme_core::{Content, Memory, SocialGraph, Person, OrganismState};
+use mneme_core::{Content, Memory, SocialGraph, Person, PersonContext, OrganismState};
 use serde::{Serialize, Deserialize};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
 use std::path::Path;
@@ -336,6 +336,20 @@ impl SqliteMemory {
         .execute(&self.pool)
         .await
         .context("Failed to create learned_curves table")?;
+
+        // Learned thresholds table — persists the latest learned BehaviorThresholds
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS learned_thresholds (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                thresholds_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            "#
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create learned_thresholds table")?;
 
         // === Vector search index (sqlite-vec) ===
         // Create vec_episodes virtual table for ANN search.
@@ -718,6 +732,72 @@ impl SocialGraph for SqliteMemory {
         .await?;
         
         Ok(())
+    }
+
+    async fn get_person_context(&self, person_id: Uuid) -> Result<Option<PersonContext>> {
+        let id_str = person_id.to_string();
+
+        // Fetch person
+        let person_row = sqlx::query("SELECT id, name FROM people WHERE id = ?")
+            .bind(&id_str)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to fetch person")?;
+
+        let person_row = match person_row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let name: String = person_row.get("name");
+
+        // Fetch aliases
+        let aliases_rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT platform, platform_id FROM aliases WHERE person_id = ?"
+        )
+        .bind(&id_str)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let person = Person {
+            id: person_id,
+            name,
+            aliases: aliases_rows.into_iter().collect(),
+        };
+
+        // Interaction count and last interaction
+        let stats_row = sqlx::query(
+            "SELECT COUNT(*) as cnt, MAX(timestamp) as last_ts FROM relationships WHERE source_id = ? OR target_id = ?"
+        )
+        .bind(&id_str)
+        .bind(&id_str)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let interaction_count: i64 = stats_row.get("cnt");
+        let last_interaction_ts: Option<i64> = stats_row.get("last_ts");
+
+        // Recent interaction contexts as relationship notes
+        let recent_rows = sqlx::query(
+            "SELECT context FROM relationships WHERE source_id = ? OR target_id = ? ORDER BY timestamp DESC LIMIT 5"
+        )
+        .bind(&id_str)
+        .bind(&id_str)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let notes: Vec<String> = recent_rows.iter()
+            .map(|r| r.get::<String, _>("context"))
+            .filter(|s| !s.is_empty())
+            .collect();
+        let relationship_notes = notes.join("; ");
+
+        Ok(Some(PersonContext {
+            person,
+            interaction_count,
+            last_interaction_ts,
+            relationship_notes,
+        }))
     }
 }
 
@@ -1835,6 +1915,42 @@ impl SqliteMemory {
                 let curves = serde_json::from_str(&json_str)
                     .context("Failed to deserialize learned curves")?;
                 Ok(Some(curves))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Save learned BehaviorThresholds (upsert — always id=1).
+    pub async fn save_learned_thresholds(&self, thresholds: &mneme_limbic::BehaviorThresholds) -> Result<()> {
+        let json = serde_json::to_string(thresholds)
+            .context("Failed to serialize thresholds")?;
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            "INSERT INTO learned_thresholds (id, thresholds_json, updated_at) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET thresholds_json = excluded.thresholds_json, updated_at = excluded.updated_at"
+        )
+        .bind(&json)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save learned thresholds")?;
+
+        Ok(())
+    }
+
+    /// Load previously learned BehaviorThresholds from DB.
+    pub async fn load_learned_thresholds(&self) -> Result<Option<mneme_limbic::BehaviorThresholds>> {
+        let row = sqlx::query("SELECT thresholds_json FROM learned_thresholds WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to load learned thresholds")?;
+
+        match row {
+            Some(r) => {
+                let json_str: String = r.get("thresholds_json");
+                let thresholds = serde_json::from_str(&json_str)
+                    .context("Failed to deserialize learned thresholds")?;
+                Ok(Some(thresholds))
             }
             None => Ok(None),
         }

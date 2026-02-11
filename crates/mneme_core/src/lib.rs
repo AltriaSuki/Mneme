@@ -88,6 +88,15 @@ pub enum Trigger {
     },
 }
 
+/// Blended recall result combining episodes and facts from memory.
+#[derive(Debug, Clone, Default)]
+pub struct BlendedRecall {
+    /// Recalled episodes from vector search (mood-biased)
+    pub episodes: String,
+    /// Known facts formatted for prompt injection
+    pub facts: String,
+}
+
 #[async_trait]
 pub trait Memory: Send + Sync {
     /// Recall relevant episodes via vector search.
@@ -115,6 +124,18 @@ pub trait Memory: Send + Sync {
     async fn recall_self_knowledge_by_domain(&self, _domain: &str) -> anyhow::Result<Vec<(String, f32)>> {
         Ok(Vec::new())
     }
+    /// Recall blended context: episodes + facts in one call.
+    /// Default implementation calls `recall_with_bias` and `recall_facts_formatted` in parallel.
+    async fn recall_blended(&self, query: &str, mood_bias: f32) -> anyhow::Result<BlendedRecall> {
+        let (episodes, facts) = tokio::join!(
+            self.recall_with_bias(query, mood_bias),
+            self.recall_facts_formatted(query),
+        );
+        Ok(BlendedRecall {
+            episodes: episodes?,
+            facts: facts.unwrap_or_default(),
+        })
+    }
 }
 
 #[async_trait]
@@ -135,16 +156,28 @@ pub struct Person {
     pub aliases: std::collections::HashMap<String, String>,
 }
 
+/// Contextual information about a person for prompt injection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonContext {
+    pub person: Person,
+    pub interaction_count: i64,
+    pub last_interaction_ts: Option<i64>,
+    pub relationship_notes: String,
+}
+
 #[async_trait]
 pub trait SocialGraph: Send + Sync {
     /// Find a person by one of their platform aliases (e.g., "qq", "12345")
     async fn find_person(&self, platform: &str, platform_id: &str) -> anyhow::Result<Option<Person>>;
-    
+
     /// Create or update a person
     async fn upsert_person(&self, person: &Person) -> anyhow::Result<()>;
-    
+
     /// Record a relationship or interaction between two people
     async fn record_interaction(&self, from_person_id: Uuid, to_person_id: Uuid, context: &str) -> anyhow::Result<()>;
+
+    /// Get rich context about a person (for prompt injection)
+    async fn get_person_context(&self, person_id: Uuid) -> anyhow::Result<Option<PersonContext>>;
 }
 
 #[async_trait]

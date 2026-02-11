@@ -4,6 +4,7 @@
 //! 2D coordinate system: Valence × Arousal. This allows for nuanced, mixed emotions.
 
 use serde::{Deserialize, Serialize};
+use crate::state::deserialize_safe_f32;
 
 /// Russell's Circumplex Model: 2D emotional state
 /// 
@@ -14,11 +15,13 @@ pub struct Affect {
     /// Valence: positive/negative (-1.0 to 1.0)
     /// - Positive: joy, contentment, excitement
     /// - Negative: sadness, fear, anger
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub valence: f32,
-    
+
     /// Arousal: calm/activated (0.0 to 1.0)
     /// - High: excited, anxious, angry
     /// - Low: calm, relaxed, depressed
+    #[serde(deserialize_with = "deserialize_safe_f32")]
     pub arousal: f32,
 }
 
@@ -278,5 +281,14 @@ mod tests {
         let desc = sad.describe();
         assert!(desc.contains("低落") || desc.contains("闷闷不乐"),
             "Sadness should describe as 低落/闷闷不乐, got: {}", desc);
+    }
+
+    #[test]
+    fn test_safe_f32_json_roundtrip_affect() {
+        let affect = Affect::new(0.6, 0.8);
+        let json = serde_json::to_string(&affect).unwrap();
+        let restored: Affect = serde_json::from_str(&json).unwrap();
+        assert!((restored.valence - 0.6).abs() < 1e-6);
+        assert!((restored.arousal - 0.8).abs() < 1e-6);
     }
 }

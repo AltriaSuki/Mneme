@@ -1,4 +1,4 @@
-use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion};
+use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion, SocialGraph};
 use mneme_core::safety::CapabilityGuard;
 use mneme_limbic::LimbicSystem;
 use mneme_memory::{OrganismCoordinator, LifecycleState, SignalType};
@@ -94,6 +94,9 @@ pub struct ReasoningEngine {
 
     // Decision router for layered routing
     decision_router: crate::decision::DecisionRouter,
+
+    // Social graph for person context injection
+    social_graph: Option<Arc<dyn SocialGraph>>,
 }
 
 impl ReasoningEngine {
@@ -118,6 +121,7 @@ impl ReasoningEngine {
             browser_session: tokio::sync::Mutex::new(None),
             feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
             decision_router: crate::decision::DecisionRouter::with_defaults(),
+            social_graph: None,
         }
     }
 
@@ -147,6 +151,7 @@ impl ReasoningEngine {
             browser_session: tokio::sync::Mutex::new(None),
             feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
             decision_router: crate::decision::DecisionRouter::with_defaults(),
+            social_graph: None,
         }
     }
 
@@ -168,6 +173,11 @@ impl ReasoningEngine {
     /// Set the streaming text callback (invoked for each text chunk during streaming)
     pub fn set_on_text_chunk(&mut self, callback: Arc<dyn Fn(&str) + Send + Sync>) {
         self.on_text_chunk = Some(callback);
+    }
+
+    /// Set the social graph for person context injection
+    pub fn set_social_graph(&mut self, graph: Arc<dyn SocialGraph>) {
+        self.social_graph = Some(graph);
     }
 
     /// Get reference to the limbic system
@@ -211,7 +221,7 @@ impl ReasoningEngine {
     }
 
     #[tracing::instrument(skip(self, input_text), fields(is_user_message))]
-    async fn process_thought_loop(&self, input_text: &str, is_user_message: bool) -> Result<(String, Emotion, mneme_core::Affect)> {
+    async fn process_thought_loop(&self, input_text: &str, is_user_message: bool, speaker: Option<(&str, &str)>) -> Result<(String, Emotion, mneme_core::Affect)> {
         use crate::api_types::{Message, Role, ContentBlock};
 
         // Check token budget before calling LLM
@@ -279,13 +289,15 @@ impl ReasoningEngine {
             temperature: (base_temperature + modulation.temperature_delta).clamp(0.0, 2.0),
         };
         
-        // 1. Recall episodes (with mood bias) + facts in parallel
-        let (episodes, user_facts) = tokio::join!(
-            self.memory.recall_with_bias(input_text, modulation.recall_mood_bias),
-            self.memory.recall_facts_formatted(input_text),
-        );
-        let episodes = episodes?;
-        let user_facts = user_facts.unwrap_or_default();
+        // 1. Blended recall: episodes + facts in one call
+        let blended = self.memory.recall_blended(input_text, modulation.recall_mood_bias).await?;
+
+        // 1b. Social graph: look up person context for the current speaker
+        let social_context = if let Some((source, author)) = speaker {
+            self.lookup_social_context(source, author).await
+        } else {
+            String::new()
+        };
         
         // 2. Prepare Tools (from registry if available, else hardcoded)
         let all_tools = if let Some(ref registry) = self.registry {
@@ -310,9 +322,10 @@ impl ReasoningEngine {
         let context_budget = (base_budget as f32 * modulation.context_budget_factor) as usize;
         
         let context_layers = ContextLayers {
-            user_facts,
-            recalled_episodes: episodes,
+            user_facts: blended.facts,
+            recalled_episodes: blended.episodes,
             feed_digest: self.feed_cache.read().await.clone(),
+            social_context,
         };
         
         let system_prompt = ContextAssembler::build_full_system_prompt(
@@ -706,6 +719,49 @@ impl ReasoningEngine {
         client.launch()?;
         Ok(client)
     }
+
+    /// Look up social context for the current speaker.
+    ///
+    /// Parses the source string to extract platform info (e.g. "onebot:group:123" → "onebot"),
+    /// then queries the social graph for person context.
+    async fn lookup_social_context(&self, source: &str, author: &str) -> String {
+        let graph = match &self.social_graph {
+            Some(g) => g,
+            None => return String::new(),
+        };
+
+        // Extract platform from source (e.g. "onebot:group:123" → "onebot", "cli" → "cli")
+        let platform = source.split(':').next().unwrap_or(source);
+
+        let person = match graph.find_person(platform, author).await {
+            Ok(Some(p)) => p,
+            Ok(None) => return String::new(),
+            Err(e) => {
+                tracing::debug!("Social graph lookup failed: {}", e);
+                return String::new();
+            }
+        };
+
+        // Fetch rich context
+        let person_id = person.id;
+        match graph.get_person_context(person_id).await {
+            Ok(Some(ctx)) => {
+                let mut parts = vec![format!("说话人: {}", ctx.person.name)];
+                if ctx.interaction_count > 0 {
+                    parts.push(format!("互动次数: {}", ctx.interaction_count));
+                }
+                if !ctx.relationship_notes.is_empty() {
+                    parts.push(format!("关系备注: {}", ctx.relationship_notes));
+                }
+                parts.join("\n")
+            }
+            Ok(None) => String::new(),
+            Err(e) => {
+                tracing::debug!("Failed to get person context: {}", e);
+                String::new()
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -742,7 +798,7 @@ impl Reasoning for ReasoningEngine {
                     crate::decision::DecisionLevel::FullReasoning => {}
                 }
 
-                let (response_text, emotion, affect) = self.process_thought_loop(&content.body, true).await?;
+                let (response_text, emotion, affect) = self.process_thought_loop(&content.body, true, Some((&content.source, &content.author))).await?;
 
                 // Memorize the episode
                 self.memory.memorize(&content).await?;
@@ -788,7 +844,7 @@ impl Reasoning for ReasoningEngine {
                         format!("[内部驱动: {}] {}", kind, context),
                 };
 
-                let (response_text, emotion, affect) = self.process_thought_loop(&prompt_text, false).await?;
+                let (response_text, emotion, affect) = self.process_thought_loop(&prompt_text, false, None).await?;
 
                 Ok(ReasoningOutput {
                     content: response_text,
