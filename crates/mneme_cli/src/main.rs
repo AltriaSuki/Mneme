@@ -18,6 +18,15 @@ use mneme_reasoning::{llm::LlmClient, providers::{anthropic::AnthropicClient, op
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Config, EditMode};
 
+/// Perform graceful shutdown with a 5-second timeout.
+async fn graceful_shutdown(coordinator: &OrganismCoordinator) {
+    let shutdown_fut = coordinator.shutdown();
+    match tokio::time::timeout(std::time::Duration::from_secs(5), shutdown_fut).await {
+        Ok(()) => tracing::info!("Graceful shutdown completed"),
+        Err(_) => tracing::warn!("Shutdown timed out after 5s, forcing exit"),
+    }
+}
+
 async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
     println!(); // Spacer
     let parts = humanizer.split_response(&response.content);
@@ -282,9 +291,10 @@ async fn main() -> anyhow::Result<()> {
     // Stdin loop using rustyline (line editing, history, CJK support)
     // Use a sync channel to block the stdin loop until the response is printed,
     // preventing the ">" prompt from appearing before Mneme's reply.
+    // Shutdown is signaled via a oneshot channel instead of process::exit().
     let (prompt_ready_tx, prompt_ready_rx) = std::sync::mpsc::channel::<()>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tx_stdin = event_tx.clone();
-    let coordinator_for_stdin = coordinator.clone();
     tokio::task::spawn_blocking(move || {
         // Set up rustyline with history
         let config = Config::builder()
@@ -299,6 +309,8 @@ async fn main() -> anyhow::Result<()> {
             .join("mneme_history");
         let _ = rl.load_history(&history_path);
 
+        let mut shutdown_tx = Some(shutdown_tx);
+
         loop {
             match rl.readline("> ") {
                 Ok(line) => {
@@ -307,13 +319,9 @@ async fn main() -> anyhow::Result<()> {
 
                     if trimmed == "quit" || trimmed == "exit" {
                         println!("Shutting down gracefully...");
-                        // Use a tokio runtime handle to run async shutdown
-                        let rt = tokio::runtime::Handle::current();
-                        rt.block_on(coordinator_for_stdin.shutdown());
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        // Save history before exit
                         let _ = rl.save_history(&history_path);
-                        std::process::exit(0);
+                        if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                        return;
                     }
 
                     // Commands that don't need to wait for response
@@ -339,41 +347,44 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
-                    // Ctrl-C: graceful shutdown
+                    // Ctrl-C: signal shutdown
                     println!("\nShutting down...");
                     let _ = rl.save_history(&history_path);
-                    let rt = tokio::runtime::Handle::current();
-                    rt.block_on(coordinator_for_stdin.shutdown());
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    std::process::exit(0);
+                    if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                    return;
                 }
                 Err(ReadlineError::Eof) => {
-                    // Ctrl-D: exit
+                    // Ctrl-D: signal shutdown
                     let _ = rl.save_history(&history_path);
-                    break;
+                    if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                    return;
                 }
                 Err(err) => {
                     tracing::error!("Readline error: {:?}", err);
-                    break;
+                    if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                    return;
                 }
             }
         }
     });
 
     // --- MAIN EVENT LOOP ---
-    // Now we listen to event_rx (stdin + OneBot) and agent_rx (AgentLoop actions)
-
-    // Clone coordinator for signal handler
-    let coordinator_for_signal = coordinator.clone();
+    // Now we listen to event_rx (stdin + OneBot), agent_rx (AgentLoop actions),
+    // and shutdown_rx (from readline thread quit/Ctrl-C/Ctrl-D/error).
+    let mut shutdown_rx = shutdown_rx;
 
     loop {
         let event = tokio::select! {
             Some(evt) = event_rx.recv() => evt,
+            _ = &mut shutdown_rx => {
+                println!("Shutting down gracefully...");
+                graceful_shutdown(&coordinator).await;
+                break;
+            },
             _ = tokio::signal::ctrl_c() => {
                 println!("\nReceived Ctrl+C, shutting down gracefully...");
-                coordinator_for_signal.shutdown().await;
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                std::process::exit(0);
+                graceful_shutdown(&coordinator).await;
+                break;
             },
             _ = lifecycle_rx.changed() => {
                 let state = *lifecycle_rx.borrow();
@@ -545,16 +556,26 @@ async fn main() -> anyhow::Result<()> {
 
                                  // Check routing
                                  if let Some(group_str) = input_content.source.strip_prefix("onebot:group:") {
-                                     if let Ok(group_id) = group_str.parse::<i64>() {
-                                         // Reply to Group
-                                         if let Err(e) = client.send_group_message(group_id, &part).await {
-                                             error!("Failed to send OneBot Group message: {}", e);
+                                     match group_str.parse::<i64>() {
+                                         Ok(group_id) => {
+                                             if let Err(e) = client.send_group_message(group_id, &part).await {
+                                                 error!("Failed to send OneBot Group message: {}", e);
+                                             }
+                                         }
+                                         Err(e) => {
+                                             error!("OneBot: invalid group_id '{}': {}", group_str, e);
                                          }
                                      }
-                                 } else if let Ok(user_id) = input_content.author.parse::<i64>() {
-                                     // Reply to Private
-                                     if let Err(e) = client.send_private_message(user_id, &part).await {
-                                         error!("Failed to send OneBot Private message: {}", e);
+                                 } else {
+                                     match input_content.author.parse::<i64>() {
+                                         Ok(user_id) => {
+                                             if let Err(e) = client.send_private_message(user_id, &part).await {
+                                                 error!("Failed to send OneBot Private message: {}", e);
+                                             }
+                                         }
+                                         Err(e) => {
+                                             error!("OneBot: invalid user_id '{}': {}", input_content.author, e);
+                                         }
                                      }
                                  }
                              }

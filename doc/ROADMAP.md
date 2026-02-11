@@ -872,10 +872,12 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **问题 C — 消息路由静默失败**: `main.rs:548-554` 中 `group_str.parse::<i64>()` 失败时消息不发送也不报错。
 
-**需要实现**:
-- [ ] 重连熔断：最大重试次数 + 指数退避上限后停止
+**已部分修复** ✅:
+- [x] 重连熔断：最大 10 次重试 + 指数退避，超限后停止 task
+- [x] 消息路由失败时 log error（group_id/user_id 解析失败不再静默丢弃）
+
+**未修复**（需要更大改动）:
 - [ ] 消息队列：断连期间缓存待发消息，重连后重发
-- [ ] 消息路由失败时 log error
 - [ ] 连接状态暴露给 CLI `status` 命令
 
 ---
@@ -1018,7 +1020,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | OpenAI 参数回退空对象 | mneme_reasoning/openai | 工具参数 JSON 解析失败时静默回退到 `{}`，效果同空输入 bug | 🟡 Open |
 | Consolidation TOCTOU | mneme_memory/consolidation | `is_consolidation_due()` 和 `consolidate()` 之间无原子性，可能重复整合 → AtomicBool compare_exchange 原子抢占 | **Fixed** ✅ |
 | Rules 触发匹配过宽 | mneme_memory/rules | `discriminant()` 只比较枚举变体不比较内部数据 → 完整 pattern matching | **Fixed** ✅ |
-| OneBot 重连无熔断 | mneme_onebot/client | WebSocket 断连后无限重试，无最大次数限制 | 🟡 Open |
+| OneBot 重连无熔断 | mneme_onebot/client | WebSocket 断连后无限重试，无最大次数限制 | **Fixed** ✅ |
 | Regex 重复编译 | mneme_reasoning/engine | `sanitize_chat_output`/`is_silence_response` 每次调用都编译新 Regex | **Fixed** ✅ |
 | API 超时硬编码不一致 | mneme_reasoning/providers | Anthropic 120s vs OpenAI 60s，不可配置 | **Fixed** ✅ |
 | Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | **Fixed** ✅ |
