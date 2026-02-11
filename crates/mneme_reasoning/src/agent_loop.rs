@@ -60,14 +60,24 @@ impl AgentLoop {
     }
 
     /// Evaluate all registered triggers (resilient to individual failures).
+    ///
+    /// Each evaluator is given a 10s timeout to prevent a hung evaluator
+    /// from blocking the entire trigger cycle.
     async fn evaluate_triggers(&self) -> Vec<Trigger> {
         let mut triggers = Vec::new();
         for evaluator in &self.evaluators {
-            match evaluator.evaluate().await {
-                Ok(found) => triggers.extend(found),
-                Err(e) => tracing::error!(
+            match tokio::time::timeout(
+                Duration::from_secs(10),
+                evaluator.evaluate(),
+            ).await {
+                Ok(Ok(found)) => triggers.extend(found),
+                Ok(Err(e)) => tracing::error!(
                     "AgentLoop: evaluator '{}' failed: {}",
                     evaluator.name(), e
+                ),
+                Err(_) => tracing::error!(
+                    "AgentLoop: evaluator '{}' timed out (10s)",
+                    evaluator.name(),
                 ),
             }
         }
@@ -86,7 +96,16 @@ impl AgentLoop {
                         if let Err(e) = self.coordinator.tick().await {
                             tracing::warn!("AgentLoop tick error: {}", e);
                         }
-                        let _ = self.action_tx.try_send(AgentAction::StateUpdate);
+                        match self.action_tx.try_send(AgentAction::StateUpdate) {
+                            Ok(()) => {}
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                tracing::warn!("AgentLoop: action channel full, dropping StateUpdate");
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                tracing::info!("AgentLoop: receiver dropped, shutting down");
+                                return;
+                            }
+                        }
 
                         // Evaluate OnTick rules and emit autonomous actions
                         let rule_actions = self.coordinator.evaluate_rules(
@@ -94,11 +113,23 @@ impl AgentLoop {
                         ).await;
                         for (_id, action) in rule_actions {
                             if let mneme_memory::RuleAction::ExecuteTool { name, input } = action {
-                                let _ = self.action_tx.try_send(AgentAction::AutonomousToolUse {
-                                    tool_name: name,
+                                match self.action_tx.try_send(AgentAction::AutonomousToolUse {
+                                    tool_name: name.clone(),
                                     input,
                                     goal_id: None,
-                                });
+                                }) {
+                                    Ok(()) => {}
+                                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                        tracing::warn!(
+                                            "AgentLoop: action channel full, dropping AutonomousToolUse({})",
+                                            name
+                                        );
+                                    }
+                                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                        tracing::info!("AgentLoop: receiver dropped, shutting down");
+                                        return;
+                                    }
+                                }
                             }
                         }
 
@@ -166,6 +197,18 @@ mod tests {
         fn name(&self) -> &'static str { "failing_test" }
     }
 
+    /// A test evaluator that hangs forever (for timeout testing).
+    struct SlowEvaluator;
+
+    #[async_trait::async_trait]
+    impl TriggerEvaluator for SlowEvaluator {
+        async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>> {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok(vec![])
+        }
+        fn name(&self) -> &'static str { "slow_test" }
+    }
+
     fn test_coordinator() -> Arc<OrganismCoordinator> {
         let limbic = Arc::new(LimbicSystem::new());
         Arc::new(OrganismCoordinator::new(limbic))
@@ -213,6 +256,23 @@ mod tests {
             Duration::from_secs(60),
         );
         // Failing evaluator is skipped, good evaluator still works
+        let triggers = agent.evaluate_triggers().await;
+        assert_eq!(triggers.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_evaluate_triggers_timeout() {
+        let good = FixedEvaluator {
+            triggers: vec![Trigger::Scheduled { name: "ok".into(), schedule: "08:00".into() }],
+        };
+        let (agent, _rx) = AgentLoop::new(
+            test_coordinator(),
+            vec![Box::new(SlowEvaluator), Box::new(good)],
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        // SlowEvaluator times out (10s in prod, but test uses tokio::time::pause)
+        // Good evaluator still returns its trigger
         let triggers = agent.evaluate_triggers().await;
         assert_eq!(triggers.len(), 1);
     }

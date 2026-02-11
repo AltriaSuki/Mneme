@@ -834,10 +834,10 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **问题 B — 慢 evaluator 阻塞**: 如果某个 TriggerEvaluator 耗时过长，整个 tick/trigger 循环被阻塞。
 
-**需要实现**:
-- [ ] `try_send` 失败时 log warning，或改用带超时的 `send_timeout()`
-- [ ] receiver dropped 检测统一：`try_send` 和 `send` 行为一致
-- [ ] 为 evaluator 添加超时（`tokio::time::timeout`），单个 evaluator 超时不影响其他
+**已修复** ✅:
+- [x] `try_send` 失败时 log warning，区分 Full 和 Closed（receiver dropped → shutdown）
+- [x] receiver dropped 检测统一：`try_send` 和 `send` 行为一致，均触发 shutdown
+- [x] 为 evaluator 添加 10s 超时（`tokio::time::timeout`），单个 evaluator 超时不影响其他
 
 ---
 
@@ -1010,7 +1010,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **goals/rules DB 集成缺失** | mneme_memory | `GoalManager`/`RuleEngine` 调用未实现的 DB 方法，运行时可能 panic → 已验证全部 7 个 DB 方法已实现 + 集成测试 | **Fixed** ✅ |
 | **OneBot 消息丢失** | mneme_onebot | WebSocket 断连期间消息直接丢失，无重发机制 | 🔴 Open |
 | Streaming 回调未生效 | mneme_reasoning/engine | `on_text_chunk` 已设置但 `process_thought_loop` 用 `complete()` 非流式调用 → stream_completion() + fallback | **Fixed** ✅ |
-| AgentLoop 背压丢弃 | mneme_reasoning/agent_loop | `try_send` 失败时静默丢弃 StateUpdate/AutonomousToolUse | 🟡 Open |
+| AgentLoop 背压丢弃 | mneme_reasoning/agent_loop | `try_send` 失败时静默丢弃 StateUpdate/AutonomousToolUse | **Fixed** ✅ |
 | SSE 最后事件丢失 | mneme_reasoning/anthropic | 流结束时无尾部 `\n\n` 的事件块不会被处理 | 🟡 Open |
 | OpenAI 参数回退空对象 | mneme_reasoning/openai | 工具参数 JSON 解析失败时静默回退到 `{}`，效果同空输入 bug | 🟡 Open |
 | Consolidation TOCTOU | mneme_memory/consolidation | `is_consolidation_due()` 和 `consolidate()` 之间无原子性，可能重复整合 → AtomicBool compare_exchange 原子抢占 | **Fixed** ✅ |
