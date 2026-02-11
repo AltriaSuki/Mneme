@@ -72,40 +72,43 @@ impl Default for OrganismConfig {
 }
 
 /// The central coordinator for all organism subsystems
+///
+/// Lock ordering (to prevent deadlocks):
+///   state_mutation_lock → state → prev_somatic → episode_buffer → feedback_buffer
 pub struct OrganismCoordinator {
     /// Multi-scale personality state
     state: Arc<RwLock<OrganismState>>,
-    
+
     /// State dynamics (ODE-based updates)
     dynamics: DefaultDynamics,
-    
+
     /// System 1: Fast intuitive processing
     limbic: Arc<LimbicSystem>,
-    
+
     /// Feedback buffer for buffered learning
     pub(crate) feedback_buffer: Arc<RwLock<FeedbackBuffer>>,
-    
+
     /// Sleep consolidator
     consolidator: Arc<SleepConsolidator>,
-    
+
     /// Value judgment system
     value_judge: Arc<dyn ValueJudge>,
-    
+
     /// Current lifecycle state
     lifecycle_state: Arc<RwLock<LifecycleState>>,
-    
+
     /// Lifecycle state broadcaster
     lifecycle_tx: watch::Sender<LifecycleState>,
-    
+
     /// Configuration
     config: OrganismConfig,
-    
+
     /// Interaction counter (for sleep timing)
     interaction_count: Arc<RwLock<u32>>,
-    
+
     /// Episode buffer for narrative weaving
     pub(crate) episode_buffer: Arc<RwLock<Vec<EpisodeDigest>>>,
-    
+
     /// Optional database for persistence
     db: Option<Arc<SqliteMemory>>,
 
@@ -120,6 +123,10 @@ pub struct OrganismCoordinator {
 
     /// Goal manager (#22, v0.6.0)
     goal_manager: Option<Arc<GoalManager>>,
+
+    /// Mutex to serialize state-mutating operations (process_interaction, trigger_sleep).
+    /// Prevents concurrent mutations from interleaving reads and writes.
+    state_mutation_lock: tokio::sync::Mutex<()>,
 }
 
 impl OrganismCoordinator {
@@ -155,6 +162,7 @@ impl OrganismCoordinator {
             prev_somatic: Arc::new(RwLock::new(None)),
             rule_engine: None,
             goal_manager: None,
+            state_mutation_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -253,6 +261,8 @@ impl OrganismCoordinator {
         content: &str,
         response_delay_secs: f32,
     ) -> Result<InteractionResult> {
+        let _guard = self.state_mutation_lock.lock().await;
+
         // Check if we should be processing
         let lifecycle = *self.lifecycle_state.read().await;
         if lifecycle == LifecycleState::Sleeping {
@@ -281,13 +291,13 @@ impl OrganismCoordinator {
             episodes.push(EpisodeDigest {
                 timestamp: Utc::now(),
                 author: author.to_string(),
-                content: content.to_string(),
+                content: content.chars().take(500).collect(),
                 emotional_valence: soma.affect.valence,
             });
             
-            // Keep buffer bounded
-            if episodes.len() > 1000 {
-                episodes.drain(0..500);
+            // Keep buffer bounded (tighter cap to limit memory if sleep never fires)
+            if episodes.len() > 200 {
+                episodes.drain(0..100);
             }
         }
 
@@ -463,6 +473,8 @@ impl OrganismCoordinator {
 
     /// Trigger sleep consolidation manually
     pub async fn trigger_sleep(&self) -> Result<ConsolidationResult> {
+        let _guard = self.state_mutation_lock.lock().await;
+
         // Transition to sleeping state
         self.set_lifecycle_state(LifecycleState::Sleeping).await;
 
@@ -869,13 +881,20 @@ mod tests {
     async fn test_evaluate_action() {
         let limbic = Arc::new(LimbicSystem::new());
         let coordinator = OrganismCoordinator::new(limbic);
-        
+
+        // Seed values so moral evaluation has something to judge against
+        {
+            let state_arc = coordinator.state();
+            let mut state = state_arc.write().await;
+            state.slow.values = mneme_core::state::ValueNetwork::seed();
+        }
+
         // Test an action that violates honesty
         let eval = coordinator.evaluate_action(
             "用户问我是否喜欢他",
             "撒谎说喜欢",
         ).await.unwrap();
-        
+
         assert!(eval.moral_valence < 0.0);
         assert!(!eval.explanation.is_empty());
     }

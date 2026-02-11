@@ -1021,7 +1021,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | OneBot 重连无熔断 | mneme_onebot/client | WebSocket 断连后无限重试，无最大次数限制 | 🟡 Open |
 | Regex 重复编译 | mneme_reasoning/engine | `sanitize_chat_output`/`is_silence_response` 每次调用都编译新 Regex | **Fixed** ✅ |
 | API 超时硬编码不一致 | mneme_reasoning/providers | Anthropic 120s vs OpenAI 60s，不可配置 | **Fixed** ✅ |
-| Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | 🟢 Open |
+| Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | **Fixed** ✅ |
 | Browser session lost | mneme_browser | 长时间不用后会话丢失 | Open |
 | Shell timeout recovery | mneme_os | 命令超时后无法恢复 | Open |
 | Memory leak in history | mneme_reasoning | history 虽有 prune 但仍可能积累 | Investigating |
