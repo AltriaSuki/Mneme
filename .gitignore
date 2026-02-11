@@ -20,6 +20,9 @@ mneme.db-wal
 .gemini/
 .env
 
+# Process state (contains API keys)
+.process/
+
 # MacOS
 .DS_Store
 
