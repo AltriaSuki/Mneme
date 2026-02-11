@@ -138,6 +138,16 @@ impl LlmClient for OllamaClient {
         }
 
         let resp_json: Value = response.json().await?;
+
+        // Debug logging (mirrors Anthropic provider)
+        if env::var("DEBUG_PAYLOAD").map(|v| v == "true").unwrap_or(false) {
+            tracing::info!("Ollama request: {}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+            tracing::info!("Ollama response: {}", serde_json::to_string_pretty(&resp_json).unwrap_or_default());
+        } else if tracing::enabled!(tracing::Level::DEBUG) {
+            let raw = serde_json::to_string(&resp_json).unwrap_or_default();
+            tracing::debug!("Ollama raw response (first 2000 chars): {}", &raw[..raw.len().min(2000)]);
+        }
+
         parse_openai_response(&resp_json)
     }
 
@@ -219,9 +229,21 @@ pub(crate) fn parse_openai_response(resp_json: &Value) -> Result<MessagesRespons
         }
     }
 
+    // Extract token usage from OpenAI-compatible response
+    let usage = resp_json.get("usage").and_then(|u| {
+        let input = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let output = u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        if input > 0 || output > 0 {
+            Some(crate::api_types::TokenUsage { input_tokens: input, output_tokens: output })
+        } else {
+            None
+        }
+    });
+
     Ok(MessagesResponse {
         content: content_blocks,
         stop_reason: finish_reason,
+        usage,
     })
 }
 
