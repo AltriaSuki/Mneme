@@ -65,6 +65,16 @@ pub struct MessagesRequest {
 pub struct MessagesResponse {
     pub content: Vec<ContentBlock>,
     pub stop_reason: Option<String>,
+    /// Token usage from the API response (populated by providers).
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
+}
+
+/// Token usage reported by the LLM API.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 /// A streaming event from the LLM.

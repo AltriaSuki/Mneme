@@ -11,6 +11,7 @@ pub mod token_budget;
 pub mod decision;
 pub mod agent_loop;
 pub mod scheduler;
+pub mod text_tool_parser;
 
 pub use engine::ReasoningEngine;
 pub use engine::{ToolOutcome, ToolErrorKind};

@@ -1,6 +1,6 @@
 use mneme_core::Psyche;
 use mneme_limbic::SomaticMarker;
-use crate::api_types::{Message, Role, ContentBlock};
+use crate::api_types::{Message, Role, ContentBlock, Tool};
 
 /// Context layers for the 6-layer assembly pipeline.
 /// Priority order (1 = highest, never dropped):
@@ -29,11 +29,14 @@ impl ContextAssembler {
     /// **Budget logic**: When total exceeds `budget_chars`, layers are trimmed
     /// in reverse priority (feed_digest first, then episodes, then facts).
     /// Persona and somatic marker are never dropped.
+    /// Build the full 6-layer system prompt.
+    ///
     pub fn build_full_system_prompt(
         psyche: &Psyche,
         somatic_marker: &SomaticMarker,
         layers: &ContextLayers,
         budget_chars: usize,
+        text_tool_schemas: &[Tool],
     ) -> String {
         let soma_context = somatic_marker.format_for_prompt();
         
@@ -41,31 +44,24 @@ impl ContextAssembler {
         let persona = psyche.format_context();
         
         // Fixed sections (always present)
+        // B-1: Expression style emerges from experience, not hardcoded rules.
+        // We only provide the somatic context as a signal, not prescriptive formatting rules.
         let style_guide = format!(
-            "== 表达风格指引 ==\n{}\n\n\
-             你的输出就是你发出的消息。像发微信一样说话，不是写文章。\
-             日常聊天不要用 markdown 格式。不要用 *星号动作* 描写。\n\n\
-             == SILENCE RULES ==\n\
-             If the user's message is a casual remark in a group chat not directed at you, \
-             or if you have nothing meaningful to add, you may output exactly: [SILENCE]\n\n\
-             == AVAILABLE TOOLS ==\n\
-             You have access to tools. When using a tool, you MUST provide the correct JSON input.\n\n\
-             1. shell — Execute a shell command.\n   \
-                Input: {{\"command\": \"<shell command>\"}}\n   \
-                Example: {{\"command\": \"ls -la\"}}\n\n\
-             2. browser_goto — Navigate browser to URL.\n   \
-                Input: {{\"url\": \"<url>\"}}\n\n\
-             3. browser_click — Click element by CSS selector.\n   \
-                Input: {{\"selector\": \"<css selector>\"}}\n\n\
-             4. browser_type — Type into input field.\n   \
-                Input: {{\"selector\": \"<css selector>\", \"text\": \"<text>\"}}\n\n\
-             5. browser_screenshot — Take screenshot. No input needed.\n\n\
-             6. browser_get_html — Get page HTML. No input needed.\n\n\
-             CRITICAL: Never call a tool with empty input {{}}. Always include the required parameters.",
+            "== 当前体感状态 ==\n{}",
             soma_context
         );
 
-        let fixed_size = persona.len() + style_guide.len() + 50; // 50 for separators
+        // Tool instructions logic:
+        // - has_api_tools && text_tool_schemas.is_empty() → pure API mode, no text instructions
+        // - !text_tool_schemas.is_empty() → dynamically generate from Tool schemas (Text/Auto)
+        // - neither → no tools at all
+        let tool_instructions = if !text_tool_schemas.is_empty() {
+            generate_text_tool_instructions(text_tool_schemas)
+        } else {
+            String::new()
+        };
+
+        let fixed_size = persona.len() + style_guide.len() + tool_instructions.len() + 80;
         let remaining = budget_chars.saturating_sub(fixed_size);
 
         // Budget allocation for variable layers (priority order for inclusion):
@@ -103,11 +99,15 @@ impl ContextAssembler {
 
         let variable_text = variable_parts.join("\n\n");
 
-        if variable_text.is_empty() {
-            format!("{}\n\n{}", persona, style_guide)
-        } else {
-            format!("{}\n\n{}\n\n{}", persona, style_guide, variable_text)
+        // Assemble final prompt — only append tool_instructions if non-empty
+        let mut parts = vec![persona, style_guide];
+        if !variable_text.is_empty() {
+            parts.push(variable_text);
         }
+        if !tool_instructions.is_empty() {
+            parts.push(tool_instructions.to_string());
+        }
+        parts.join("\n\n")
     }
 
     /// Build system prompt with somatic marker injection (new System 1 integration)
@@ -121,7 +121,7 @@ impl ContextAssembler {
             recalled_episodes: recalled_memory.to_string(),
             ..Default::default()
         };
-        Self::build_full_system_prompt(psyche, somatic_marker, &layers, 32_000)
+        Self::build_full_system_prompt(psyche, somatic_marker, &layers, 32_000, &[])
     }
 
     /// Legacy: Build system prompt with discrete emotion (backward compatibility)
@@ -153,4 +153,58 @@ impl ContextAssembler {
         
         messages
     }
+}
+
+/// Dynamically generate text-mode tool instructions from Tool schemas.
+///
+/// Produces a system prompt section that describes each tool's name, description,
+/// required parameters, and the expected `<tool_call>` output format.
+fn generate_text_tool_instructions(tools: &[Tool]) -> String {
+    let mut lines = Vec::new();
+    lines.push("== SYSTEM TOOLS ==".to_string());
+    lines.push(
+        "The following tools are available regardless of current persona or cognitive stage.\n\
+         Tool call format is specified below.".to_string()
+    );
+    lines.push(String::new());
+    lines.push("AVAILABLE TOOLS:".to_string());
+
+    for (i, tool) in tools.iter().enumerate() {
+        lines.push(String::new());
+        lines.push(format!("{}. {} — {}", i + 1, tool.name, tool.description));
+
+        if !tool.input_schema.required.is_empty() {
+            // Build example input from schema properties
+            let example = build_example_input(&tool.input_schema);
+            lines.push(format!("   Input: {}", example));
+        } else {
+            lines.push("   No parameters required.".to_string());
+        }
+    }
+
+    lines.push(String::new());
+    lines.push(
+        "Tool call format:\n\
+         <tool_call>{\"name\": \"tool_name\", \"arguments\": {params}}</tool_call>\n\n\
+         Example:\n\
+         <tool_call>{\"name\": \"shell\", \"arguments\": {\"command\": \"ls -la\"}}</tool_call>\n\n\
+         Note: tool calls require all specified parameters. Empty arguments {} are invalid.".to_string()
+    );
+
+    lines.join("\n")
+}
+
+/// Build an example JSON input string from a ToolInputSchema.
+fn build_example_input(schema: &crate::api_types::ToolInputSchema) -> String {
+    let mut parts = Vec::new();
+    if let Some(props) = schema.properties.as_object() {
+        for key in &schema.required {
+            let desc = props.get(key)
+                .and_then(|v| v.get("description"))
+                .and_then(|d| d.as_str())
+                .unwrap_or("...");
+            parts.push(format!("\"{}\": \"<{}>\"", key, desc));
+        }
+    }
+    format!("{{{}}}", parts.join(", "))
 }

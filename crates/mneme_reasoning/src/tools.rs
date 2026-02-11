@@ -122,11 +122,28 @@ impl ToolHandler for ShellToolHandler {
     fn schema(&self) -> Tool { shell_tool() }
 
     async fn execute(&self, input: &serde_json::Value) -> ToolOutcome {
-        let cmd = match input.get("command").and_then(|v| v.as_str()) {
-            Some(c) => c,
-            None => return ToolOutcome {
+        // Lenient parsing: try multiple patterns for the command string.
+        // Some models send {"command": "ls"}, others {"cmd": "ls"},
+        // others just "ls" as a bare string, or put it in an unexpected key.
+        let cmd = input.get("command").and_then(|v| v.as_str())
+            .or_else(|| input.get("cmd").and_then(|v| v.as_str()))
+            .or_else(|| input.as_str())
+            .or_else(|| {
+                // Last resort: if the object has exactly one string value, use it
+                input.as_object()
+                    .filter(|obj| obj.len() == 1)
+                    .and_then(|obj| obj.values().next())
+                    .and_then(|v| v.as_str())
+            });
+
+        let cmd = match cmd {
+            Some(c) if !c.is_empty() => c,
+            _ => return ToolOutcome {
                 content: format!(
-                    "Missing 'command' parameter. Expected: {{\"command\": \"<shell command>\"}}. Got: {}",
+                    "ERROR: You called the shell tool but did not provide a command. \
+                     You MUST provide input as: {{\"command\": \"<shell command>\"}}. \
+                     For example, to list files: {{\"command\": \"ls -la\"}}. \
+                     You sent: {}",
                     input
                 ),
                 is_error: true,
