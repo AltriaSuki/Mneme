@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn test_rule_based_judge_violation() {
         let judge = RuleBasedJudge::new();
-        let values = ValueNetwork::default();
+        let values = ValueNetwork::seed();
         
         let situation = Situation {
             description: "用户问我是否喜欢他".to_string(),
@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn test_rule_based_judge_support() {
         let judge = RuleBasedJudge::new();
-        let values = ValueNetwork::default();
+        let values = ValueNetwork::seed();
         
         let situation = Situation {
             description: "用户遇到困难".to_string(),
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn test_conflict_detection() {
         let judge = RuleBasedJudge::new();
-        let values = ValueNetwork::default();
+        let values = ValueNetwork::seed();
         
         let situation = Situation {
             description: "朋友做了错事，要不要告诉他残忍的真相".to_string(),

@@ -85,6 +85,7 @@ pub struct LlmConfig {
     pub base_url: Option<String>,
     pub max_tokens: u32,
     pub temperature: f32,
+
 }
 
 impl Default for LlmConfig {
