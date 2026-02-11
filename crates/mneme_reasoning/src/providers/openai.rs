@@ -47,10 +47,11 @@ impl LlmClient for OpenAiClient {
         if self.api_key == "mock" {
             tokio::time::sleep(Duration::from_millis(500)).await;
             return Ok(MessagesResponse {
-                content: vec![ContentBlock::Text { 
-                    text: "(Mock OpenAI Response) I received your prompt.".to_string() 
+                content: vec![ContentBlock::Text {
+                    text: "(Mock OpenAI Response) I received your prompt.".to_string()
                 }],
                 stop_reason: Some("stop".to_string()),
+                usage: None,
             });
         }
 
@@ -228,9 +229,21 @@ impl LlmClient for OpenAiClient {
             }
         }
 
+        // Extract token usage
+        let usage = resp_json.get("usage").and_then(|u| {
+            let input = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let output = u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            if input > 0 || output > 0 {
+                Some(crate::api_types::TokenUsage { input_tokens: input, output_tokens: output })
+            } else {
+                None
+            }
+        });
+
         Ok(MessagesResponse {
             content: content_blocks,
             stop_reason: finish_reason,
+            usage,
         })
     }
 
@@ -388,6 +401,8 @@ where
     let mut stop_reason: Option<String> = None;
     // Track which tool call indices we've already sent ToolUseStart for
     let mut seen_tool_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    // Counter for assigning unique indices when the API omits them
+    let mut next_fallback_index: i64 = 1000;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk: bytes::Bytes = chunk_result.context("Error reading OpenAI SSE chunk")?;
@@ -433,7 +448,12 @@ where
             // Tool calls
             if let Some(tool_calls) = delta["tool_calls"].as_array() {
                 for tc in tool_calls {
-                    let index = tc["index"].as_i64().unwrap_or(0);
+                    let index = tc["index"].as_i64().unwrap_or_else(|| {
+                        let idx = next_fallback_index;
+                        next_fallback_index += 1;
+                        tracing::warn!("OpenAI SSE: tool_call missing 'index', assigning fallback {}", idx);
+                        idx
+                    });
                     let func = &tc["function"];
 
                     // First chunk for this tool call has id and name
@@ -632,5 +652,29 @@ mod tests {
         assert!(got_start);
         assert_eq!(input_parts.len(), 2);
         assert_eq!(stop, Some("tool_calls".into()));
+    }
+
+    #[tokio::test]
+    async fn test_openai_sse_missing_tool_index() {
+        // Two tool calls without "index" field — should get unique indices, not both 0
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"tc1\",\"function\":{\"name\":\"shell\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"tc2\",\"function\":{\"name\":\"browser_goto\",\"arguments\":\"{\\\"url\\\":\\\"http://x\\\"}\"}}]}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        parse_openai_sse(fake_stream(sse), &tx).await.unwrap();
+        drop(tx);
+
+        let mut starts = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            if let StreamEvent::ToolUseStart { id, name } = ev {
+                starts.push((id, name));
+            }
+        }
+        // Both tool calls should produce ToolUseStart (not collide on index 0)
+        assert_eq!(starts.len(), 2);
+        assert_eq!(starts[0].0, "tc1");
+        assert_eq!(starts[1].0, "tc2");
     }
 }

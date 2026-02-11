@@ -28,10 +28,11 @@ impl LlmClient for AnthropicClient {
             // Mock delay to simulate network
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             return Ok(MessagesResponse {
-                content: vec![ContentBlock::Text { 
-                    text: "(Mock Response) I received your prompt.".to_string() 
+                content: vec![ContentBlock::Text {
+                    text: "(Mock Response) I received your prompt.".to_string()
                 }],
                 stop_reason: Some("end_turn".to_string()),
+                usage: None,
             });
         }
 
@@ -316,7 +317,116 @@ where
         }
     }
 
+    // Process any remaining content in buffer (last event may lack trailing \n\n)
+    if !buffer.trim().is_empty() {
+        let mut event_type = String::new();
+        let mut event_data = String::new();
+
+        for line in buffer.lines() {
+            if let Some(t) = line.strip_prefix("event: ") {
+                event_type = t.trim().to_string();
+            } else if let Some(d) = line.strip_prefix("data: ") {
+                event_data = d.to_string();
+            }
+        }
+
+        if !event_data.is_empty() {
+            match event_type.as_str() {
+                "content_block_delta" => {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_data) {
+                        if let Some(delta) = v.get("delta") {
+                            let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            match delta_type {
+                                "text_delta" => {
+                                    if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                                        let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
+                                    }
+                                }
+                                "input_json_delta" => {
+                                    if let Some(json) = delta.get("partial_json").and_then(|t| t.as_str()) {
+                                        let _ = tx.send(StreamEvent::ToolInputDelta(json.to_string())).await;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                "message_delta" => {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_data) {
+                        if let Some(d) = v.get("delta") {
+                            if let Some(sr) = d.get("stop_reason").and_then(|s| s.as_str()) {
+                                stop_reason = Some(sr.to_string());
+                            }
+                        }
+                    }
+                }
+                "message_stop" => {
+                    let _ = tx.send(StreamEvent::Done { stop_reason: stop_reason.take() }).await;
+                    return Ok(());
+                }
+                "error" => {
+                    let _ = tx.send(StreamEvent::Error(event_data)).await;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Stream ended without message_stop — send Done anyway
     let _ = tx.send(StreamEvent::Done { stop_reason }).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api_types::StreamEvent;
+
+    /// Helper: create a fake byte stream from raw SSE text
+    fn fake_stream(data: &str) -> impl futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send {
+        let bytes = bytes::Bytes::from(data.to_string());
+        futures_util::stream::iter(vec![Ok(bytes)])
+    }
+
+    #[tokio::test]
+    async fn test_anthropic_sse_basic_text() {
+        let sse = "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\nevent: message_stop\ndata: {}\n\n";
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        parse_anthropic_sse(fake_stream(sse), &tx).await.unwrap();
+        drop(tx);
+
+        let mut texts = Vec::new();
+        let mut done = false;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                StreamEvent::TextDelta(t) => texts.push(t),
+                StreamEvent::Done { .. } => { done = true; }
+                _ => {}
+            }
+        }
+        assert!(done);
+        assert_eq!(texts, vec!["Hello"]);
+    }
+
+    #[tokio::test]
+    async fn test_anthropic_sse_buffer_residue() {
+        // Last event has NO trailing \n\n — previously lost
+        let sse = "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\nevent: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}}";
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        parse_anthropic_sse(fake_stream(sse), &tx).await.unwrap();
+        drop(tx);
+
+        let mut texts = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                StreamEvent::TextDelta(t) => texts.push(t),
+                StreamEvent::Done { .. } => {}
+                _ => {}
+            }
+        }
+        // Both deltas should be captured, including the residue
+        assert_eq!(texts, vec!["Hello", " world"]);
+    }
 }

@@ -851,10 +851,13 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **问题 C — 工具 ID/index 边界**: OpenAI SSE 中多个工具调用缺少 `index` 字段时都默认为 0，导致事件归属错误。
 
-**需要实现**:
-- [ ] Anthropic: 流结束时处理 buffer 中残留的不完整事件块
-- [ ] OpenAI: 参数解析失败时返回 `ToolOutcome::permanent_error` 而非空 `{}`
-- [ ] OpenAI: 工具调用 index 缺失时用递增计数器而非默认 0
+**已修复** ✅:
+- [x] Anthropic: 流结束时处理 buffer 中残留的不完整事件块
+- [x] OpenAI: 工具调用 index 缺失时用递增计数器（从 1000 起）而非默认 0
+- [x] 两个 provider 新增 SSE 解析单元测试
+
+**未修复**（影响较小，保留）:
+- [ ] OpenAI: 参数解析失败时返回错误而非空 `{}`（当前已有 warn 日志，改为硬错误可能破坏兼容 API）
 - [ ] 两个 provider 的超时统一为可配置参数
 
 ---
@@ -1011,7 +1014,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **OneBot 消息丢失** | mneme_onebot | WebSocket 断连期间消息直接丢失，无重发机制 | 🔴 Open |
 | Streaming 回调未生效 | mneme_reasoning/engine | `on_text_chunk` 已设置但 `process_thought_loop` 用 `complete()` 非流式调用 → stream_completion() + fallback | **Fixed** ✅ |
 | AgentLoop 背压丢弃 | mneme_reasoning/agent_loop | `try_send` 失败时静默丢弃 StateUpdate/AutonomousToolUse | **Fixed** ✅ |
-| SSE 最后事件丢失 | mneme_reasoning/anthropic | 流结束时无尾部 `\n\n` 的事件块不会被处理 | 🟡 Open |
+| SSE 最后事件丢失 | mneme_reasoning/anthropic | 流结束时无尾部 `\n\n` 的事件块不会被处理 | **Fixed** ✅ |
 | OpenAI 参数回退空对象 | mneme_reasoning/openai | 工具参数 JSON 解析失败时静默回退到 `{}`，效果同空输入 bug | 🟡 Open |
 | Consolidation TOCTOU | mneme_memory/consolidation | `is_consolidation_due()` 和 `consolidate()` 之间无原子性，可能重复整合 → AtomicBool compare_exchange 原子抢占 | **Fixed** ✅ |
 | Rules 触发匹配过宽 | mneme_memory/rules | `discriminant()` 只比较枚举变体不比较内部数据 → 完整 pattern matching | **Fixed** ✅ |
