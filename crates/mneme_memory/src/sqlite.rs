@@ -630,6 +630,11 @@ impl Memory for SqliteMemory {
         let _ = SqliteMemory::store_fact(self, subject, predicate, object, confidence).await?;
         Ok(())
     }
+
+    async fn recall_self_knowledge_by_domain(&self, domain: &str) -> Result<Vec<(String, f32)>> {
+        let entries = self.recall_self_knowledge(domain).await?;
+        Ok(entries.into_iter().map(|sk| (sk.content, sk.confidence)).collect())
+    }
 }
 #[async_trait]
 impl SocialGraph for SqliteMemory {

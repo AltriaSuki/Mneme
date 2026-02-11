@@ -110,6 +110,11 @@ pub trait Memory: Send + Sync {
     async fn store_fact(&self, _subject: &str, _predicate: &str, _object: &str, _confidence: f32) -> anyhow::Result<()> {
         Ok(())
     }
+    /// Recall self-knowledge entries by domain. Returns (content, confidence) pairs.
+    /// Default: empty (no self-knowledge store available).
+    async fn recall_self_knowledge_by_domain(&self, _domain: &str) -> anyhow::Result<Vec<(String, f32)>> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

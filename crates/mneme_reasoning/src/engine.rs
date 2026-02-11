@@ -3,6 +3,7 @@ use mneme_core::safety::CapabilityGuard;
 use mneme_limbic::LimbicSystem;
 use mneme_memory::{OrganismCoordinator, LifecycleState, SignalType};
 use crate::{prompts::{ContextAssembler, ContextLayers}, llm::{LlmClient, CompletionParams}};
+use crate::text_tool_parser;
 use anyhow::Result;
 use std::sync::Arc;
 use regex::Regex;
@@ -272,7 +273,7 @@ impl ReasoningEngine {
         let user_facts = user_facts.unwrap_or_default();
         
         // 2. Prepare Tools (from registry if available, else hardcoded)
-        let tools = if let Some(ref registry) = self.registry {
+        let all_tools = if let Some(ref registry) = self.registry {
             registry.available_tools()
         } else {
             vec![
@@ -284,7 +285,11 @@ impl ReasoningEngine {
                 crate::tools::browser_get_html_tool(),
             ]
         };
-        
+
+        // Text-only tool path: tools described in system prompt, never via API.
+        // Aligned with B-8: "工具的终极接口不是一个列表，而是 shell + 网络"
+        let text_tool_schemas = all_tools;
+
         // 3. Assemble 6-layer context with modulated budget
         let base_budget: usize = 32_000; // ~8k tokens worth of chars
         let context_budget = (base_budget as f32 * modulation.context_budget_factor) as usize;
@@ -300,6 +305,7 @@ impl ReasoningEngine {
             &somatic_marker,
             &context_layers,
             context_budget,
+            &text_tool_schemas,
         );
 
         // Current messages serves as the "Scratchpad" for the ReAct loop
@@ -319,9 +325,16 @@ impl ReasoningEngine {
             let response = self.client.complete(
                 &system_prompt,
                 scratchpad_messages.clone(),
-                tools.clone(),
+                vec![],  // Text-only: tools described in system prompt, not API
                 completion_params.clone(),
             ).await?;
+
+            // Record token usage for budget tracking
+            if let Some(ref budget) = self.token_budget {
+                if let Some(ref usage) = response.usage {
+                    budget.record_usage(usage.input_tokens, usage.output_tokens).await;
+                }
+            }
 
             let assistant_msg = Message {
                 role: Role::Assistant,
@@ -329,70 +342,62 @@ impl ReasoningEngine {
             };
             scratchpad_messages.push(assistant_msg);
 
-            let mut tool_results = Vec::new();
-
+            // Extract text content from response
             for block in &response.content {
-                match block {
-                    ContentBlock::Text { text } => {
-                        tracing::debug!("LLM Text: {}", text);
-                        
-                        // Parse and strip all <emotion> tags (robust: handles case, whitespace, multiple tags)
-                        let (clean_text, parsed_emotion) = parse_emotion_tags(text, &self.emotion_regex);
-                        if let Some(em) = parsed_emotion {
-                            final_emotion = em;
-                        }
-                        final_content.push_str(&clean_text);
-                    },
-                    ContentBlock::ToolUse { id, name, input } => {
-                        tracing::info!("Tool Use: {} input: {:?}", name, input);
-                        let outcome = self.execute_tool_with_retry(name, input).await;
-                        
-                        if outcome.is_error {
-                            tracing::warn!(
-                                "Tool '{}' failed ({:?}): {}",
-                                name,
-                                outcome.error_kind,
-                                outcome.content
-                            );
-                        }
-                        
-                        tool_results.push(ContentBlock::ToolResult {
-                            tool_use_id: id.clone(),
-                            content: sanitize_tool_result(&outcome.content),
-                            is_error: Some(outcome.is_error),
-                        });
-                    },
-                    _ => {}
+                if let ContentBlock::Text { text } = block {
+                    tracing::debug!("LLM Text: {}", text);
+                    let (clean_text, parsed_emotion) = parse_emotion_tags(text, &self.emotion_regex);
+                    if let Some(em) = parsed_emotion {
+                        final_emotion = em;
+                    }
+                    final_content.push_str(&clean_text);
                 }
             }
 
-            if !tool_results.is_empty() {
-                // Detect repeated permanent failures to avoid burning API tokens
-                let all_errors = tool_results.iter().all(|r| {
-                    matches!(r, ContentBlock::ToolResult { is_error: Some(true), .. })
+            // --- Text tool call parsing (always active) ---
+            // Parse <tool_call> tags from LLM text output
+            let parsed = text_tool_parser::parse_text_tool_calls(&final_content);
+            if !parsed.is_empty() {
+                tracing::info!("Parsed {} tool call(s) from text output", parsed.len());
+                final_content = text_tool_parser::strip_tool_calls(&final_content).trim().to_string();
+
+                let mut result_text = String::new();
+                let mut any_permanent_fail = false;
+                for tc in parsed {
+                    tracing::info!("Tool: {} input: {:?}", tc.name, tc.input);
+                    let outcome = self.execute_tool_with_retry(&tc.name, &tc.input).await;
+                    if outcome.is_error {
+                        tracing::warn!("Tool '{}' failed: {}", tc.name, outcome.content);
+                        result_text.push_str(&format!("[Tool Error: {}] {}\n", tc.name, outcome.content));
+                        if outcome.error_kind == Some(ToolErrorKind::Permanent) {
+                            any_permanent_fail = true;
+                        }
+                    } else {
+                        result_text.push_str(&format!("[Tool Result: {}]\n{}\n", tc.name, sanitize_tool_result(&outcome.content)));
+                    }
+                }
+
+                // Feed results back as plain text User message
+                scratchpad_messages.push(Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text { text: result_text }],
                 });
-                if all_errors {
+
+                if any_permanent_fail {
                     consecutive_permanent_fails += 1;
                 } else {
                     consecutive_permanent_fails = 0;
                 }
 
-                let tool_msg = Message {
-                    role: Role::User,
-                    content: tool_results,
-                };
-                scratchpad_messages.push(tool_msg);
-
                 if consecutive_permanent_fails >= 2 {
-                    tracing::warn!(
-                        "Tool calls failing repeatedly ({} rounds), aborting ReAct loop",
-                        consecutive_permanent_fails
-                    );
+                    tracing::warn!("Tool calls failing repeatedly, aborting ReAct loop");
                     break;
                 }
-                continue;
+
+                final_content.clear();
+                continue; // Back to ReAct loop for model to process results
             } else {
-                break;
+                break; // No tool calls → done
             }
         }
         
@@ -401,10 +406,14 @@ impl ReasoningEngine {
             final_content.clear();
         }
 
-        // Sanitize output: strip roleplay asterisks and casual markdown
-        // This is a code-level defense — we don't rely on the LLM to follow formatting rules.
+        // Sanitize output: respect learned expression preferences (ADR-007)
         if !final_content.is_empty() {
-            final_content = sanitize_chat_output(&final_content);
+            let expr_entries = self.memory
+                .recall_self_knowledge_by_domain("expression")
+                .await
+                .unwrap_or_default();
+            let prefs = derive_expression_preferences(&expr_entries);
+            final_content = sanitize_chat_output(&final_content, &prefs);
         }
 
         // Save history
@@ -527,7 +536,18 @@ impl ReasoningEngine {
         // Legacy hardcoded dispatch (fallback)
         match name {
             "shell" => {
-                if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                // Lenient parsing: try multiple patterns for the command string
+                let cmd = input.get("command").and_then(|v| v.as_str())
+                    .or_else(|| input.get("cmd").and_then(|v| v.as_str()))
+                    .or_else(|| input.as_str())
+                    .or_else(|| {
+                        input.as_object()
+                            .filter(|obj| obj.len() == 1)
+                            .and_then(|obj| obj.values().next())
+                            .and_then(|v| v.as_str())
+                    });
+
+                if let Some(cmd) = cmd.filter(|c| !c.is_empty()) {
                     // Safety guard check
                     if let Some(ref guard) = self.guard {
                         if let Err(denied) = guard.check_command(cmd) {
@@ -538,18 +558,19 @@ impl ReasoningEngine {
                         Ok(out) => ToolOutcome::ok(out),
                         Err(e) => {
                             let msg = e.to_string();
-                            // Classify: timeouts and spawn failures are transient
                             if msg.contains("timed out") || msg.contains("spawn") {
                                 ToolOutcome::transient_error(format!("Shell command failed (transient): {}", msg))
                             } else {
-                                // Non-zero exit, syntax error, etc. — permanent
                                 ToolOutcome::permanent_error(format!("Shell command failed: {}", msg))
                             }
                         }
                     }
                 } else {
                     ToolOutcome::permanent_error(format!(
-                        "Missing 'command' parameter. Expected input: {{\"command\": \"<shell command>\"}}. Got: {}",
+                        "ERROR: You called the shell tool but did not provide a command. \
+                         You MUST provide input as: {{\"command\": \"<shell command>\"}}. \
+                         For example, to list files: {{\"command\": \"ls -la\"}}. \
+                         You sent: {}",
                         input
                     ))
                 }
@@ -774,43 +795,101 @@ impl Reasoning for ReasoningEngine {
     }
 }
 
-/// Post-process LLM output to strip non-human formatting artifacts.
+/// Learned expression preferences derived from self_knowledge (domain="expression").
 ///
-/// This is a structural defense: instead of telling the LLM "don't use markdown",
-/// we just strip it. Same principle as ModulationVector — constrain structurally,
-/// not with instructions.
-pub fn sanitize_chat_output(text: &str) -> String {
-    let mut result = text.to_string();
-    
-    // 1. Strip markdown bold first: **text** → text
-    let bold_re = Regex::new(r"\*\*([^*]+)\*\*").unwrap();
-    result = bold_re.replace_all(&result, "$1").to_string();
-    
-    // 2. Strip roleplay asterisks: *action* or *心理描写* → text
-    //    Apply repeatedly until stable (handles nested/overlapping patterns).
-    let roleplay_re = Regex::new(r"\*([^*\n]+)\*").unwrap();
-    loop {
-        let next = roleplay_re.replace_all(&result, "$1").to_string();
-        if next == result { break; }
-        result = next;
+/// ADR-007: Expression is free — Mneme learns her own style over time.
+/// When no preferences exist, defaults to stripping all formatting (safe default).
+#[derive(Debug, Clone)]
+pub struct ExpressionPreferences {
+    pub allow_bold: bool,
+    pub allow_roleplay_asterisks: bool,
+    pub allow_headers: bool,
+    pub allow_bullets: bool,
+}
+
+impl Default for ExpressionPreferences {
+    fn default() -> Self {
+        // Safe default: strip everything (backward compatible)
+        Self {
+            allow_bold: false,
+            allow_roleplay_asterisks: false,
+            allow_headers: false,
+            allow_bullets: false,
+        }
     }
-    
-    // 3. Remove any remaining stray asterisks (in chat, * is always an artifact)
-    result = result.replace('*', "");
-    
-    // 4. Strip markdown headers: # text, ## text, etc.
-    let header_re = Regex::new(r"(?m)^#{1,6}\s+").unwrap();
-    result = header_re.replace_all(&result, "").to_string();
-    
-    // 5. Strip markdown bullet lists: - text or * text (at line start)
-    //    (* bullets already removed by step 3, but - bullets need stripping)
-    let bullet_re = Regex::new(r"(?m)^-\s+").unwrap();
-    result = bullet_re.replace_all(&result, "").to_string();
-    
-    // 6. Clean up excess whitespace from stripping
+}
+
+/// Derive expression preferences from self_knowledge entries.
+///
+/// Entries are (content, confidence) pairs from domain="expression".
+/// Recognized content patterns (case-insensitive):
+///   "allow_bold", "allow_roleplay", "allow_headers", "allow_bullets"
+/// A confidence >= 0.5 enables the preference.
+pub fn derive_expression_preferences(entries: &[(String, f32)]) -> ExpressionPreferences {
+    let mut prefs = ExpressionPreferences::default();
+    for (content, confidence) in entries {
+        let key = content.trim().to_lowercase();
+        let enabled = *confidence >= 0.5;
+        match key.as_str() {
+            "allow_bold" => prefs.allow_bold = enabled,
+            "allow_roleplay" | "allow_roleplay_asterisks" => prefs.allow_roleplay_asterisks = enabled,
+            "allow_headers" => prefs.allow_headers = enabled,
+            "allow_bullets" => prefs.allow_bullets = enabled,
+            _ => {
+                tracing::debug!("Unknown expression preference: '{}' (confidence={:.2})", content, confidence);
+            }
+        }
+    }
+    prefs
+}
+
+/// Post-process LLM output, respecting learned expression preferences (ADR-007).
+///
+/// When no preferences are learned, strips all formatting (safe default).
+/// As Mneme learns her style, individual formatting types can be preserved.
+pub fn sanitize_chat_output(text: &str, prefs: &ExpressionPreferences) -> String {
+    let mut result = text.to_string();
+
+    // 1. Bold: **text** → text (unless learned)
+    if !prefs.allow_bold {
+        let bold_re = Regex::new(r"\*\*([^*]+)\*\*").unwrap();
+        result = bold_re.replace_all(&result, "$1").to_string();
+    }
+
+    // 2. Roleplay asterisks: *action* → text (unless learned)
+    if !prefs.allow_roleplay_asterisks {
+        // Protect bold markers if bold is allowed (they'd be eaten by roleplay regex)
+        if prefs.allow_bold {
+            result = result.replace("**", "\x00B\x00");
+        }
+        let roleplay_re = Regex::new(r"\*([^*\n]+)\*").unwrap();
+        loop {
+            let next = roleplay_re.replace_all(&result, "$1").to_string();
+            if next == result { break; }
+            result = next;
+        }
+        result = result.replace('*', "");
+        if prefs.allow_bold {
+            result = result.replace("\x00B\x00", "**");
+        }
+    }
+
+    // 3. Headers: # text → text (unless learned)
+    if !prefs.allow_headers {
+        let header_re = Regex::new(r"(?m)^#{1,6}\s+").unwrap();
+        result = header_re.replace_all(&result, "").to_string();
+    }
+
+    // 4. Bullets: - text → text (unless learned)
+    if !prefs.allow_bullets {
+        let bullet_re = Regex::new(r"(?m)^-\s+").unwrap();
+        result = bullet_re.replace_all(&result, "").to_string();
+    }
+
+    // 5. Clean up excess whitespace from stripping
     let multi_newline = Regex::new(r"\n{3,}").unwrap();
     result = multi_newline.replace_all(&result, "\n\n").to_string();
-    
+
     result.trim().to_string()
 }
 
@@ -904,6 +983,7 @@ pub fn sanitize_tool_result(text: &str) -> String {
     result
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -954,10 +1034,53 @@ mod tests {
 
     #[test]
     fn test_sanitize_chat_output() {
-        assert_eq!(sanitize_chat_output("*叹气*你好"), "叹气你好");
-        assert_eq!(sanitize_chat_output("**重要**的事"), "重要的事");
-        assert_eq!(sanitize_chat_output("# 标题\n内容"), "标题\n内容");
-        assert_eq!(sanitize_chat_output("- 项目一\n- 项目二"), "项目一\n项目二");
+        let prefs = ExpressionPreferences::default();
+        assert_eq!(sanitize_chat_output("*叹气*你好", &prefs), "叹气你好");
+        assert_eq!(sanitize_chat_output("**重要**的事", &prefs), "重要的事");
+        assert_eq!(sanitize_chat_output("# 标题\n内容", &prefs), "标题\n内容");
+        assert_eq!(sanitize_chat_output("- 项目一\n- 项目二", &prefs), "项目一\n项目二");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_formatting_when_learned() {
+        let prefs = ExpressionPreferences {
+            allow_bold: true,
+            allow_roleplay_asterisks: true,
+            allow_headers: true,
+            allow_bullets: true,
+        };
+        assert_eq!(sanitize_chat_output("**重要**的事", &prefs), "**重要**的事");
+        assert_eq!(sanitize_chat_output("# 标题\n内容", &prefs), "# 标题\n内容");
+        assert_eq!(sanitize_chat_output("- 项目一\n- 项目二", &prefs), "- 项目一\n- 项目二");
+    }
+
+    #[test]
+    fn test_sanitize_partial_preferences() {
+        let prefs = ExpressionPreferences {
+            allow_bold: true,
+            allow_roleplay_asterisks: false,
+            allow_headers: false,
+            allow_bullets: true,
+        };
+        // Bold preserved, headers stripped, bullets preserved
+        assert_eq!(sanitize_chat_output("**重要**", &prefs), "**重要**");
+        assert_eq!(sanitize_chat_output("# 标题", &prefs), "标题");
+        assert_eq!(sanitize_chat_output("- 项目", &prefs), "- 项目");
+    }
+
+    #[test]
+    fn test_derive_expression_preferences() {
+        let entries = vec![
+            ("allow_bold".to_string(), 0.8),
+            ("allow_roleplay".to_string(), 0.3), // below 0.5 → disabled
+            ("allow_headers".to_string(), 0.6),
+            ("unknown_pref".to_string(), 0.9),   // ignored
+        ];
+        let prefs = derive_expression_preferences(&entries);
+        assert!(prefs.allow_bold);
+        assert!(!prefs.allow_roleplay_asterisks);
+        assert!(prefs.allow_headers);
+        assert!(!prefs.allow_bullets); // not mentioned → default false
     }
 
     // --- Emotion tag parsing tests ---
@@ -1106,4 +1229,5 @@ mod tests {
         let result = sanitize_tool_result(malicious);
         assert!(result.contains("[filtered]"));
     }
+
 }

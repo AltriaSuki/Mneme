@@ -53,13 +53,39 @@
 | `dynamics.rs` | `stress_decay_rate: 0.002` | 个体化的压力恢复速度 | 🟡 |
 | `somatic.rs` | `energy < 0.3 → 简洁回复` | 学习什么状态下该简洁 | 🔴 |
 | `somatic.rs` | `stress > 0.7 → 语气略急` | 学习压力如何影响表达 | 🔴 |
-| `state.rs` | 行为指导文本 | 从成功交互中学习表达方式 | 🟡 |
+| `state.rs` | 行为指导文本 `describe_for_context()` | 删除（ModulationVector 已替代）→ 审计 B-1 | ✅ |
+| `state.rs` | `ValueNetwork::default()` 预设道德权重 | 空初始化 → 从 self_knowledge 加载 → 审计 B-1 | ✅ |
 | `values.rs` | 初始价值权重 | 从用户反馈中调整 | 🟢 |
-| `prompts.rs` | 表达风格指引 | 个性化的沟通风格 | 🟡 |
+| `prompts.rs` | 工具说明规定性语气 | 改为中性技术规范 → 审计 B-14 | ✅ |
+| `prompts.rs` | 工具说明硬编码 | 从 ToolRegistry 动态生成 → 自适应 prompt | 🟡 |
+| `tools.rs` | 固定 6 工具列表 | shell + 网络为终极接口 → 审计 B-8 | 🟡 |
+| `persona/*.md` | 行为处方式种子文件 | 改为纯事实性种子记忆 → 审计 B-2 | ✅ |
+| `engine.rs` | `sanitize_chat_output()` 固定过滤 | 查询 self_knowledge 表达偏好 → 审计 ADR-007 | ✅ |
 | `somatic.rs` | ~~**文字指令注入模式**~~ | ~~→ 结构性调制（无状态 LLM 范式）~~ | ✅ |
 | `engine.rs` | ~~`max_tokens` 固定~~ | ~~→ 由 energy/stress 调制~~ | ✅ |
 | `engine.rs` | ~~`temperature` 固定~~ | ~~→ 由 arousal/stress 调制~~ | ✅ |
 | `engine.rs` | ~~记忆召回无偏差~~ | ~~→ 由 mood/stress 偏置 recall~~ | ✅ |
+
+### Manifesto 合规审计（2026-02-11）
+
+以下是对照 `MANIFESTO.md` 核心信念和 ADR 的代码审计结果：
+
+| 违规 | 严重度 | 位置 | Manifesto 条款 | 说明 |
+|------|--------|------|----------------|------|
+| `describe_for_context()` 硬编码行为指令 | ✅ 已修复 | `state.rs:62-119` | B-1 存在先于本质 | 用文字告诉 LLM "回复简洁，不展开复杂话题" — 这是导演模式，应由 ModulationVector 结构性调制 → 已删除 |
+| `ValueNetwork::default()` 预设道德权重 | ✅ 已修复 | `state.rs:347-361` | B-1 存在先于本质 | honesty=0.8, kindness=0.7 等硬编码价值观，每个实例应从经历中形成 → 空初始化 |
+| persona/*.md 含行为处方 | ✅ 已修复 | `persona/broca.md` 等 | B-2 Persona 是输出不是输入 | "你说话简短、直接"、"天真的、好奇的" — 种子文件应只提供初始记忆，不应规定行为方式 → 重写为事实性种子记忆 |
+| `sanitize_chat_output()` 固定过滤器 | ✅ 已修复 | `engine.rs:799-831` | ADR-007 表达自由 | `ExpressionPreferences` + `derive_expression_preferences()` 从 self_knowledge 读取表达偏好，sanitize 按偏好保留格式 |
+| 工具说明使用规定性语言 | ✅ 已修复 | `prompts.rs:164-169` | B-14 不回避冲突 | "必须严格按照以下格式输出" — 工具格式说明应是技术规范，不是命令式语气 → 中性英文技术规范 |
+| 工具列表固定 | 🟡 中 | `tools.rs:12-106` | B-8 工具的终极接口 | 6 个硬编码工具定义，manifesto 说"工具的终极接口不是一个列表，而是 shell + 网络" |
+
+**修复优先级**：
+- 🔴 `describe_for_context()` — 应删除或改为纯数值注入（ModulationVector 已实现结构性调制，文字指令是冗余的导演模式残留）
+- 🔴 `ValueNetwork::default()` — 应改为空或从 self_knowledge 加载
+- 🟡 persona/*.md — 重写为纯事实性种子记忆（"我刚出生"），删除行为规定
+- 🟡 `sanitize_chat_output()` — ~~加入 self_knowledge 查询，尊重已学习的表达偏好~~ ✅ `ExpressionPreferences` 已实现
+- 🟡 工具说明语气 — 改为中性技术规范
+- 🟡 工具列表 — 长期目标，当前可接受
 
 ### 实现路径
 
@@ -422,6 +448,50 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
+### 45. 🏗️ Coordinator 并发安全
+**模块**: `mneme_memory/src/coordinator.rs`
+**优先级**: 🔴 高
+
+**问题 A — 状态更新竞态**:
+`trigger_sleep()` 先 `state.read()` 做 consolidation，再 `state.write()` 写回结果。期间 `process_interaction()` 的状态修改会被覆盖丢失。
+
+**问题 B — 多 RwLock 死锁风险**:
+`process_interaction()` 先锁 `state` 再锁 `prev_somatic`；其他方法可能以不同顺序获取锁。无统一锁顺序约定。
+
+**需要实现**:
+- [x] 状态版本号 → 改用 `state_mutation_lock: tokio::sync::Mutex<()>` 序列化所有状态变更操作 ✅
+- [x] 统一锁顺序文档：`state_mutation_lock` → `state` → `prev_somatic` → `episode_buffer` → `feedback_buffer` ✅
+- [ ] 或改用 actor/mpsc 模式替代多 RwLock（见 #17 代码组织优化）
+
+---
+
+### 46. 🏗️ CLI 关机可靠性
+**模块**: `mneme_cli/src/main.rs`
+**优先级**: 🔴 高
+
+**问题**: 三条关机路径（quit 命令、Ctrl-C readline、Ctrl-C tokio signal）都用 `std::process::exit(0)` + 500ms `sleep` 硬等待。如果 `coordinator.shutdown()` 超过 500ms，数据库写入可能不完整。
+
+**需要实现**:
+- [x] 用 `tokio::sync::oneshot` channel 替代 sleep 硬等待 ✅
+- [x] `graceful_shutdown()` 带 5s timeout，shutdown 完成后再 exit ✅
+- [x] 统一关机路径为一个 async 函数，避免三处重复代码 ✅
+
+---
+
+### 47. 🏗️ goals.rs / rules.rs 数据库集成验证
+**模块**: `mneme_memory/src/goals.rs`, `mneme_memory/src/rules.rs`
+**优先级**: 🔴 高
+
+**问题**: 这两个是 untracked 新文件。`GoalManager` 调用 `db.load_active_goals()` / `db.create_goal()` 等方法，`RuleEngine` 调用 `db.load_behavior_rules()`。如果这些方法在 `SqliteMemory` 中未实现，运行时会 panic。
+
+**需要实现**:
+- [x] 确认 `SqliteMemory` 已实现所有 Goal/Rule 相关 DB 方法 ✅
+- [x] 补充集成测试：GoalManager + SqliteMemory 端到端 ✅
+- [x] 补充集成测试：RuleEngine + SqliteMemory 端到端 ✅
+- [x] `rules.rs` 触发匹配修复：`discriminant()` 只比较枚举变体，不比较内部数据（如 `field`, `threshold`）→ 完整 pattern matching ✅
+
+---
+
 ## 🟡 中优先级 (Medium Priority)
 
 ### 5. 🧬 反馈信号收集与持久化
@@ -537,6 +607,39 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 - [x] `ToolRegistry.dispatch()` 替代 engine.rs 中硬编码 match ✅
 - [x] 安全 guard 集成：dispatch 前检查 `CapabilityGuard` ✅
 - [x] CLI main.rs 中注册 6 个工具（shell + 5 browser） ✅
+
+---
+
+### 44. 🏗️ 动态工具 Prompt 生成（消除 prompts.rs ↔ ToolRegistry 重复）
+**模块**: `mneme_reasoning/src/prompts.rs`, `mneme_reasoning/src/tool_registry.rs`
+**优先级**: 🟡 中
+**前置**: #30 (工具注册系统)
+
+**问题**: `prompts.rs` 中的工具使用说明是手写的硬编码字符串，与 `ToolRegistry` 中注册的工具信息（`name`, `description`, `input_schema`）完全重复。每次新增/修改工具需要改两处代码。
+
+**背景**: v0.6.0 后发现沉浸式 persona（"刚出生的小女孩"）会干扰工具调用——LLM 角色扮演过于投入，发送空 `{}` 工具输入。临时修复：将工具说明独立为「系统底层能力」元层（不受角色设定影响）。但工具列表仍然是硬编码的。
+
+**短期目标 — 从 Registry 动态生成 Prompt**:
+- [ ] `ToolRegistry` 新增 `format_for_prompt() -> String` 方法
+- [ ] 从每个 handler 的 `schema()` 自动提取 name、description、properties、required
+- [ ] 生成格式化的工具说明文本（含输入格式和示例）
+- [ ] `ContextAssembler::build_full_system_prompt()` 接收 `Option<&ToolRegistry>` 参数
+- [ ] 移除 `prompts.rs` 中硬编码的工具列表
+
+**长期目标 — Prompt 自适应优化（🧬 个性参数）**:
+
+| 阶段 | 方式 | 说明 |
+|------|------|------|
+| **当前** | 硬编码字符串 | 开发者手写，改动需重新编译 |
+| **短期** | Registry 动态生成 | 消除重复，新增工具自动生效 |
+| **中期** | 模板化 + 持久化 | prompt 模板存入 SQLite，可热更新 |
+| **长期** | 自适应优化 | 记录 prompt 版本 ↔ 工具调用成功率，sleep 时分析失败模式并微调模板 |
+
+**长期实现路径**:
+1. **Prompt 模板化** — 将硬编码字符串变为可持久化的模板（SQLite `prompt_templates` 表）
+2. **效果关联** — 每次工具调用记录 `(prompt_version, tool_name, success)` 三元组
+3. **离线优化** — sleep consolidation 阶段分析失败模式，微调模板措辞
+4. **基础设施复用** — `coordinator.record_feedback()` + `CurveLearner` 已有反馈回路基础
 
 ---
 
@@ -709,6 +812,83 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
+### 48. 🏗️ Engine Streaming 真正生效
+**模块**: `mneme_reasoning/src/engine.rs`
+**优先级**: 🟡 中
+
+**问题**: `on_text_chunk` 回调已在 CLI 中设置（`main.rs:221-226`），但 `process_thought_loop()` 调用的是 `client.complete()`（非流式）。`stream_complete()` 已实现但未在 engine 中使用。用户看不到实时输出。
+
+**需要实现**:
+- [x] `process_thought_loop()` 改用 `stream_complete()` 替代 `complete()` ✅
+- [x] 流式文本 chunk 通过 `on_text_chunk` 回调实时输出 ✅
+- [x] 工具调用 JSON 在流式模式下正确累积（`ToolInputDelta` → 完整 JSON） ✅
+- [x] 回退机制：`stream_complete()` 失败时 fallback 到 `complete()` ✅
+
+---
+
+### 49. 🏗️ AgentLoop 可靠性
+**模块**: `mneme_reasoning/src/agent_loop.rs`
+**优先级**: 🟡 中
+
+**问题 A — 背压静默丢弃**: `try_send(AgentAction::StateUpdate)` 失败时用 `let _ =` 忽略。channel 满时 StateUpdate 和 AutonomousToolUse 被静默丢弃。
+
+**问题 B — 慢 evaluator 阻塞**: 如果某个 TriggerEvaluator 耗时过长，整个 tick/trigger 循环被阻塞。
+
+**需要实现**:
+- [ ] `try_send` 失败时 log warning，或改用带超时的 `send_timeout()`
+- [ ] receiver dropped 检测统一：`try_send` 和 `send` 行为一致
+- [ ] 为 evaluator 添加超时（`tokio::time::timeout`），单个 evaluator 超时不影响其他
+
+---
+
+### 50. 🏗️ SSE 解析健壮性
+**模块**: `mneme_reasoning/src/providers/anthropic.rs`, `openai.rs`
+**优先级**: 🟡 中
+
+**问题 A — Anthropic 最后事件丢失**: SSE 解析用 `\n\n` 分隔事件块。流结束时无尾部 `\n\n` 的事件块不会被处理。
+
+**问题 B — OpenAI 参数回退空对象**: 工具参数 JSON 解析失败时静默回退到 `{}`，效果同 persona 干扰 bug。
+
+**问题 C — 工具 ID/index 边界**: OpenAI SSE 中多个工具调用缺少 `index` 字段时都默认为 0，导致事件归属错误。
+
+**需要实现**:
+- [ ] Anthropic: 流结束时处理 buffer 中残留的不完整事件块
+- [ ] OpenAI: 参数解析失败时返回 `ToolOutcome::permanent_error` 而非空 `{}`
+- [ ] OpenAI: 工具调用 index 缺失时用递增计数器而非默认 0
+- [ ] 两个 provider 的超时统一为可配置参数
+
+---
+
+### 51. 🏗️ OneBot 可靠性
+**模块**: `mneme_onebot/src/client.rs`
+**优先级**: 🟡 中
+
+**问题 A — 消息丢失**: WebSocket 断连期间发送的消息直接丢失，无重发机制。
+
+**问题 B — 重连无熔断**: 断连后无限重试，无最大次数限制。服务器永久下线时 task 永远运行。
+
+**问题 C — 消息路由静默失败**: `main.rs:548-554` 中 `group_str.parse::<i64>()` 失败时消息不发送也不报错。
+
+**需要实现**:
+- [ ] 重连熔断：最大重试次数 + 指数退避上限后停止
+- [ ] 消息队列：断连期间缓存待发消息，重连后重发
+- [ ] 消息路由失败时 log error
+- [ ] 连接状态暴露给 CLI `status` 命令
+
+---
+
+### 52. 🏗️ Consolidation 原子性
+**模块**: `mneme_memory/src/consolidation.rs`
+**优先级**: 🟡 中
+
+**问题**: `is_consolidation_due()` 和 `consolidate()` 之间无原子性（TOCTOU）。两个线程可能同时判断"该整合了"，然后都执行整合。
+
+**需要实现**:
+- [x] 用 `AtomicBool` 保护 consolidation 入口，确保同一时间只有一个整合在运行 ✅
+- [x] 并发调用返回 `ConsolidationResult::skipped("already in progress")` ✅
+
+---
+
 ## 🟢 低优先级 (Low Priority)
 
 ### 13. 🧬 离线学习管道
@@ -811,6 +991,8 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] `LimbicSystem` 测试补全 ✅ — 7 个新测试覆盖 state roundtrip、阈值检测、subscribe、modulation、curves
 - [x] `Affect` 测试补全 ✅ — 12 个新测试覆盖 from_polar、lerp、to_discrete_label、describe、边界值
 - [x] `state.rs` 测试补全 ✅ — 14 个新测试覆盖 attachment 四象限转换、moral cost 边界、normalize NaN/Inf、describe_for_context、project persona
+- [x] Coordinator 集成测试 ✅ — 5 个测试（并发安全、生命周期转换、反馈持久化、状态持久化、规则引擎加载）
+- [x] CLI smoke tests ✅ — 3 个测试（--help、--version、无效配置不 panic）
 - [ ] 集成测试补充
 - [ ] Mock 基础设施完善
 - [ ] CI/CD 配置
@@ -822,6 +1004,21 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 
 | Bug | 模块 | 描述 | 状态 |
 |-----|------|------|------|
+| **Coordinator 状态竞态** | mneme_memory/coordinator | `trigger_sleep()` read→consolidate→write 期间 `process_interaction()` 的修改会被覆盖 → state_mutation_lock 序列化 | **Fixed** ✅ |
+| **多 RwLock 死锁风险** | mneme_memory/coordinator | `state` 和 `prev_somatic` 锁获取顺序不一致，可能死锁 → 锁顺序文档化 | **Fixed** ✅ |
+| **CLI 关机竞态** | mneme_cli | 三条关机路径都用 500ms sleep 硬等待，shutdown 超时则数据库写入不完整 → oneshot channel + graceful_shutdown 5s timeout | **Fixed** ✅ |
+| **goals/rules DB 集成缺失** | mneme_memory | `GoalManager`/`RuleEngine` 调用未实现的 DB 方法，运行时可能 panic → 已验证全部 7 个 DB 方法已实现 + 集成测试 | **Fixed** ✅ |
+| **OneBot 消息丢失** | mneme_onebot | WebSocket 断连期间消息直接丢失，无重发机制 | 🔴 Open |
+| Streaming 回调未生效 | mneme_reasoning/engine | `on_text_chunk` 已设置但 `process_thought_loop` 用 `complete()` 非流式调用 → stream_completion() + fallback | **Fixed** ✅ |
+| AgentLoop 背压丢弃 | mneme_reasoning/agent_loop | `try_send` 失败时静默丢弃 StateUpdate/AutonomousToolUse | 🟡 Open |
+| SSE 最后事件丢失 | mneme_reasoning/anthropic | 流结束时无尾部 `\n\n` 的事件块不会被处理 | 🟡 Open |
+| OpenAI 参数回退空对象 | mneme_reasoning/openai | 工具参数 JSON 解析失败时静默回退到 `{}`，效果同空输入 bug | 🟡 Open |
+| Consolidation TOCTOU | mneme_memory/consolidation | `is_consolidation_due()` 和 `consolidate()` 之间无原子性，可能重复整合 → AtomicBool compare_exchange 原子抢占 | **Fixed** ✅ |
+| Rules 触发匹配过宽 | mneme_memory/rules | `discriminant()` 只比较枚举变体不比较内部数据 → 完整 pattern matching | **Fixed** ✅ |
+| OneBot 重连无熔断 | mneme_onebot/client | WebSocket 断连后无限重试，无最大次数限制 | 🟡 Open |
+| Regex 重复编译 | mneme_reasoning/engine | `sanitize_chat_output`/`is_silence_response` 每次调用都编译新 Regex | 🟢 Open |
+| API 超时硬编码不一致 | mneme_reasoning/providers | Anthropic 120s vs OpenAI 60s，不可配置 | 🟢 Open |
+| Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | 🟢 Open |
 | Browser session lost | mneme_browser | 长时间不用后会话丢失 | Open |
 | Shell timeout recovery | mneme_os | 命令超时后无法恢复 | Open |
 | Memory leak in history | mneme_reasoning | history 虽有 prune 但仍可能积累 | Investigating |
@@ -835,6 +1032,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | ~~Shell 无权限控制~~ | mneme_os | ~~LocalShell 可执行任意命令~~ → CapabilityGuard 三级沙箱 (#29) | **Fixed** ✅ |
 | ~~输出含 roleplay 动作描写~~ | prompts/broca | `*感觉有点熟悉*` 等星号旁白，人类不这样聊天 | **Fixed** ✅ |
 | ~~日常聊天用 markdown~~ | prompts/broca | 聊天中使用加粗/列表/标题，不自然 | **Fixed** ✅ |
+| ~~Persona 干扰工具调用~~ | prompts.rs | 沉浸式角色设定导致 LLM 发送空 `{}` 工具输入 → 工具说明独立为元系统层 | **Fixed** ✅ |
 
 ---
 
@@ -1266,4 +1464,4 @@ CREATE TABLE self_knowledge (
 
 ---
 
-*最后更新: 2026-02-10*
+*最后更新: 2026-02-11*
