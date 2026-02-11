@@ -25,7 +25,7 @@ impl OpenAiClient {
 
         Ok(Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(60))
+                .timeout(Duration::from_secs(120))
                 .build()?,
             api_key,
             base_url,
