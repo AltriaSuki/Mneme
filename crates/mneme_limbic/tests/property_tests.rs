@@ -150,7 +150,8 @@ proptest! {
     #[test]
     fn somatic_marker_from_state_never_panics(state in arb_organism_state()) {
         let marker = SomaticMarker::from_state(&state);
-        prop_assert!(!marker.description.is_empty());
+        // Marker should have valid numeric fields
+        prop_assert!(marker.energy >= 0.0 && marker.energy <= 1.0);
     }
 
     /// **format_for_prompt** always produces a well-formed string.

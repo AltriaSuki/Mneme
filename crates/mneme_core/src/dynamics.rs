@@ -106,17 +106,25 @@ impl DefaultDynamics {
         fast.stress += d_stress * dt;
         
         // === Affect dynamics ===
-        // Affect moves toward stimulus-induced target
-        let target_valence = input.content_valence * self.affect_sensitivity 
-            + medium.mood_bias * 0.3; // Biased by mood
+        // Affect moves toward stimulus-induced target.
+        // During idle (no stimulus), affect decays toward neutral — mood_bias
+        // should NOT pull valence negative when nothing is happening, otherwise
+        // a negative mood creates a feedback loop: negative affect → stress ↑ →
+        // more negative affect → stress ↑↑ (death spiral).
+        let mood_influence = if has_stimulus { medium.mood_bias * 0.3 } else { 0.0 };
+        let target_valence = input.content_valence * self.affect_sensitivity + mood_influence;
         let target_arousal = input.content_intensity * 0.5 + input.surprise * 0.3 + 0.2;
-        
+
         let affect_rate = 0.1; // How quickly affect changes
         fast.affect.valence += affect_rate * (target_valence - fast.affect.valence) * dt;
         fast.affect.arousal += affect_rate * (target_arousal - fast.affect.arousal) * dt;
-        
-        // Stress pulls valence down
-        fast.affect.valence -= fast.stress * 0.1 * dt;
+
+        // Stress pulls valence down — but only during active interaction.
+        // During idle, this coupling creates a positive feedback loop that
+        // prevents homeostatic recovery.
+        if has_stimulus {
+            fast.affect.valence -= fast.stress * 0.1 * dt;
+        }
         
         // === Curiosity dynamics ===
         // Curiosity increases with positive surprise, decreases with stress
@@ -156,8 +164,12 @@ impl DefaultDynamics {
         let tau = self.mood_time_constant;
         
         // === Mood bias ===
-        // Integrates affect valence over time
-        let d_mood = (fast.affect.valence - medium.mood_bias) / tau;
+        // Integrates affect valence over time.
+        // During idle (no stimulus), mood decays faster toward neutral — the
+        // organism shouldn't stay sad for hours just because of one bad interaction.
+        let has_stimulus = input.is_social || input.content_intensity > 0.01;
+        let effective_tau = if has_stimulus { tau } else { tau * 0.3 }; // 3x faster idle recovery
+        let d_mood = (fast.affect.valence - medium.mood_bias) / effective_tau;
         medium.mood_bias += d_mood * dt_hours;
         medium.mood_bias = medium.mood_bias.clamp(-1.0, 1.0);
         
@@ -471,5 +483,39 @@ mod tests {
         state.fast.social_need = 1.0;
         let err = homeostatic_error(&state, &dynamics);
         assert!(err > 0.3, "Error far from equilibrium should be high, got {}", err);
+    }
+
+    /// Regression test: organism with negative mood should converge toward
+    /// homeostasis during idle, NOT diverge into a stress death spiral.
+    #[test]
+    fn test_idle_convergence_with_negative_mood() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+
+        // Start with the problematic state the user reported:
+        // negative mood, high stress, low energy
+        state.fast.energy = 0.56;
+        state.fast.stress = 0.67;
+        state.medium.mood_bias = -0.35;
+        state.fast.affect.valence = -0.2;
+
+        let input = SensoryInput::default(); // Idle — no stimulus
+
+        // Simulate 10 minutes of idle ticks (600 x 1-second steps)
+        for _ in 0..600 {
+            dynamics.step(&mut state, &input, Duration::from_secs(1));
+        }
+
+        // After 10 minutes idle, stress should have DECREASED toward target (0.2)
+        assert!(state.fast.stress < 0.5,
+            "Stress should decrease during idle, got {:.3}", state.fast.stress);
+
+        // Energy should have INCREASED toward target (0.7)
+        assert!(state.fast.energy > 0.6,
+            "Energy should recover during idle, got {:.3}", state.fast.energy);
+
+        // Mood bias should have moved toward neutral
+        assert!(state.medium.mood_bias > -0.3,
+            "Mood bias should recover toward neutral during idle, got {:.3}", state.medium.mood_bias);
     }
 }

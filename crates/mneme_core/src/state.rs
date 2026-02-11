@@ -57,66 +57,6 @@ impl OrganismState {
         }
     }
 
-    /// Generate a natural language description for LLM context injection
-    /// NOTE: This describes HOW to behave, not WHAT you are feeling
-    pub fn describe_for_context(&self) -> String {
-        let mut behaviors = Vec::new();
-        
-        // Energy affects response style
-        if self.fast.energy < 0.3 {
-            behaviors.push("回复简洁，不展开复杂话题");
-        } else if self.fast.energy > 0.7 {
-            behaviors.push("可以深入讨论，思维活跃");
-        }
-        
-        // Stress affects tone
-        if self.fast.stress > 0.7 {
-            behaviors.push("语气可能带点急躁或敏感");
-        } else if self.fast.stress < 0.2 {
-            behaviors.push("心态平和从容");
-        }
-        
-        // Mood affects positivity
-        if self.medium.mood_bias > 0.3 {
-            behaviors.push("倾向于看到事物积极的一面");
-        } else if self.medium.mood_bias < -0.3 {
-            behaviors.push("语气略显低沉，不太活泼");
-        }
-        
-        // Social need affects engagement
-        if self.fast.social_need > 0.7 {
-            behaviors.push("愿意主动延续话题");
-        } else if self.fast.social_need < 0.2 {
-            behaviors.push("倾向于简短回应");
-        }
-        
-        // Curiosity affects exploration
-        if self.fast.curiosity > 0.7 {
-            behaviors.push("对新事物感兴趣，愿意追问");
-        }
-
-        // Boredom affects engagement
-        if self.fast.boredom > 0.7 {
-            behaviors.push("感到无聊，渴望新鲜话题");
-        } else if self.fast.boredom > 0.5 {
-            behaviors.push("对当前话题兴趣不大");
-        }
-        
-        // Affect (valence + arousal) - the core emotional tone
-        let affect_behavior = match (self.fast.affect.valence > 0.2, self.fast.affect.arousal > 0.5) {
-            (true, true) => "语气活泼热情",
-            (true, false) => "语气温和友善",
-            (false, true) => "语气有些烦躁",
-            (false, false) => "语气平淡冷静",
-        };
-        behaviors.push(affect_behavior);
-        
-        if behaviors.is_empty() {
-            "以自然的方式回应".to_string()
-        } else {
-            format!("当前状态下的表达倾向：{}", behaviors.join("，"))
-        }
-    }
 }
 
 /// Projected persona for external observation
@@ -346,9 +286,17 @@ pub struct ValueEntry {
 
 impl Default for ValueNetwork {
     fn default() -> Self {
+        // B-1: Existence precedes essence — values emerge from experience,
+        // not from factory presets. A new instance starts with no values.
+        Self { values: std::collections::HashMap::new() }
+    }
+}
+
+impl ValueNetwork {
+    /// Create a value network with seed values (for testing or explicit bootstrapping).
+    /// In production, values should be loaded from self_knowledge or built from experience.
+    pub fn seed() -> Self {
         let mut values = std::collections::HashMap::new();
-        
-        // Default value set with initial weights
         values.insert("honesty".to_string(), ValueEntry { weight: 0.8, rigidity: 0.5 });
         values.insert("kindness".to_string(), ValueEntry { weight: 0.7, rigidity: 0.4 });
         values.insert("curiosity".to_string(), ValueEntry { weight: 0.6, rigidity: 0.3 });
@@ -356,12 +304,9 @@ impl Default for ValueNetwork {
         values.insert("growth".to_string(), ValueEntry { weight: 0.5, rigidity: 0.3 });
         values.insert("connection".to_string(), ValueEntry { weight: 0.6, rigidity: 0.4 });
         values.insert("autonomy".to_string(), ValueEntry { weight: 0.5, rigidity: 0.4 });
-        
         Self { values }
     }
-}
 
-impl ValueNetwork {
     /// Get top N values by weight
     pub fn top_values(&self, n: usize) -> Vec<(String, f32)> {
         let mut sorted: Vec<_> = self.values.iter()
@@ -433,8 +378,16 @@ mod tests {
     }
 
     #[test]
-    fn test_value_network() {
+    fn test_value_network_default_is_empty() {
         let net = ValueNetwork::default();
+        assert!(net.values.is_empty(), "B-1: default ValueNetwork should be empty");
+        assert!(net.top_values(3).is_empty());
+        assert_eq!(net.compute_moral_cost(&["honesty"]), 0.0);
+    }
+
+    #[test]
+    fn test_value_network_seed() {
+        let net = ValueNetwork::seed();
         let top = net.top_values(3);
         assert_eq!(top.len(), 3);
         assert!(top[0].1 >= top[1].1); // Sorted by weight
@@ -442,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_moral_cost() {
-        let net = ValueNetwork::default();
+        let net = ValueNetwork::seed();
         let cost = net.compute_moral_cost(&["honesty"]);
         assert!(cost > 0.5); // Honesty has high weight
     }
@@ -497,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_moral_cost_multiple_values() {
-        let net = ValueNetwork::default();
+        let net = ValueNetwork::seed();
         let cost_one = net.compute_moral_cost(&["honesty"]);
         let cost_two = net.compute_moral_cost(&["honesty", "kindness"]);
         assert!(cost_two > cost_one, "Violating more values should cost more");
@@ -505,14 +458,14 @@ mod tests {
 
     #[test]
     fn test_moral_cost_unknown_value() {
-        let net = ValueNetwork::default();
+        let net = ValueNetwork::seed();
         let cost = net.compute_moral_cost(&["nonexistent_value"]);
         assert_eq!(cost, 0.0, "Unknown values should have zero cost");
     }
 
     #[test]
     fn test_moral_cost_capped_at_one() {
-        let net = ValueNetwork::default();
+        let net = ValueNetwork::seed();
         // Violate all values — cost should be capped at 1.0
         let all_values: Vec<&str> = net.values.keys().map(|s| s.as_str()).collect();
         let cost = net.compute_moral_cost(&all_values);
@@ -521,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_top_values_ordering() {
-        let net = ValueNetwork::default();
+        let net = ValueNetwork::seed();
         let top = net.top_values(5);
         for i in 1..top.len() {
             assert!(top[i - 1].1 >= top[i].1, "top_values should be sorted descending");
@@ -530,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_top_values_exceeds_count() {
-        let net = ValueNetwork::default();
+        let net = ValueNetwork::seed();
         let top = net.top_values(100);
         assert_eq!(top.len(), net.values.len(), "Should return all values if n > count");
     }
@@ -574,28 +527,11 @@ mod tests {
     }
 
     #[test]
-    fn test_describe_for_context_low_energy() {
-        let mut state = OrganismState::default();
-        state.fast.energy = 0.1;
-        let desc = state.describe_for_context();
-        assert!(desc.contains("简洁"), "Low energy should mention 简洁, got: {}", desc);
-    }
-
-    #[test]
-    fn test_describe_for_context_high_stress() {
-        let mut state = OrganismState::default();
-        state.fast.stress = 0.9;
-        let desc = state.describe_for_context();
-        assert!(desc.contains("急躁") || desc.contains("敏感"),
-            "High stress should mention 急躁/敏感, got: {}", desc);
-    }
-
-    #[test]
     fn test_project_persona() {
+        // B-1: default state has no values — dominant_values should be empty
         let state = OrganismState::default();
         let persona = state.project();
         assert_eq!(persona.attachment_style, AttachmentStyle::Secure);
-        assert!(!persona.dominant_values.is_empty());
-        assert_eq!(persona.dominant_values.len(), 3);
+        assert!(persona.dominant_values.is_empty());
     }
 }
