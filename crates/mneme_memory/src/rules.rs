@@ -194,7 +194,19 @@ impl RuleEngine {
 // ============================================================================
 
 fn trigger_matches(rule_trigger: &RuleTrigger, ctx_trigger: &RuleTrigger) -> bool {
-    std::mem::discriminant(rule_trigger) == std::mem::discriminant(ctx_trigger)
+    match (rule_trigger, ctx_trigger) {
+        (RuleTrigger::OnMessage, RuleTrigger::OnMessage) => true,
+        (RuleTrigger::OnTick, RuleTrigger::OnTick) => true,
+        (
+            RuleTrigger::OnStateChange { field: rf, threshold: rt },
+            RuleTrigger::OnStateChange { field: cf, threshold: ct },
+        ) => rf == cf && (rt - ct).abs() < f32::EPSILON,
+        (
+            RuleTrigger::OnSchedule { cron: rc },
+            RuleTrigger::OnSchedule { cron: cc },
+        ) => rc == cc,
+        _ => false,
+    }
 }
 
 fn get_state_field(state: &OrganismState, field: &str) -> Option<f32> {
@@ -377,6 +389,34 @@ mod tests {
         assert!(rules.iter().any(|r| r.name == "low_energy_silence"));
         assert!(rules.iter().any(|r| r.name == "night_drowsy"));
         assert!(rules.iter().any(|r| r.name == "greeting_quick"));
+    }
+
+    #[test]
+    fn test_trigger_matches_compares_inner_data() {
+        // OnMessage/OnTick: variant-only match
+        assert!(trigger_matches(&RuleTrigger::OnMessage, &RuleTrigger::OnMessage));
+        assert!(trigger_matches(&RuleTrigger::OnTick, &RuleTrigger::OnTick));
+        assert!(!trigger_matches(&RuleTrigger::OnMessage, &RuleTrigger::OnTick));
+
+        // OnStateChange: must match field AND threshold
+        let energy_rule = RuleTrigger::OnStateChange { field: "energy".into(), threshold: 0.3 };
+        let energy_ctx = RuleTrigger::OnStateChange { field: "energy".into(), threshold: 0.3 };
+        let stress_ctx = RuleTrigger::OnStateChange { field: "stress".into(), threshold: 0.3 };
+        let energy_diff = RuleTrigger::OnStateChange { field: "energy".into(), threshold: 0.9 };
+        assert!(trigger_matches(&energy_rule, &energy_ctx));
+        assert!(!trigger_matches(&energy_rule, &stress_ctx), "different field should not match");
+        assert!(!trigger_matches(&energy_rule, &energy_diff), "different threshold should not match");
+
+        // OnSchedule: must match cron expression
+        let cron_a = RuleTrigger::OnSchedule { cron: "0 * * * *".into() };
+        let cron_b = RuleTrigger::OnSchedule { cron: "0 * * * *".into() };
+        let cron_c = RuleTrigger::OnSchedule { cron: "30 * * * *".into() };
+        assert!(trigger_matches(&cron_a, &cron_b));
+        assert!(!trigger_matches(&cron_a, &cron_c), "different cron should not match");
+
+        // Cross-variant never matches
+        assert!(!trigger_matches(&energy_rule, &RuleTrigger::OnTick));
+        assert!(!trigger_matches(&cron_a, &RuleTrigger::OnMessage));
     }
 
     #[test]
