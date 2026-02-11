@@ -5,10 +5,25 @@ use mneme_memory::{OrganismCoordinator, LifecycleState, SignalType};
 use crate::{prompts::{ContextAssembler, ContextLayers}, llm::{LlmClient, CompletionParams}};
 use crate::text_tool_parser;
 use anyhow::Result;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use regex::Regex;
 
 use mneme_os::Executor;
+
+// ============================================================================
+// Pre-compiled regexes (compiled once, reused across all calls)
+// ============================================================================
+
+static RE_BOLD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*\*([^*]+)\*\*").unwrap());
+static RE_ROLEPLAY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*([^*\n]+)\*").unwrap());
+static RE_HEADER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^#{1,6}\s+").unwrap());
+static RE_BULLET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^-\s+").unwrap());
+static RE_MULTI_NEWLINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+static RE_MULTI_SPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"  +").unwrap());
+static RE_SILENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^\[\s*silence\s*\]\s*[.。…]*\s*$").unwrap());
+static RE_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(ignore\s+(all\s+)?previous\s+instructions|system\s*:\s*you\s+are|<\s*/?\s*system\s*>)").unwrap()
+});
 
 /// Categorise tool failures so we can decide whether to retry.
 #[derive(Debug, Clone, PartialEq)]
@@ -852,8 +867,7 @@ pub fn sanitize_chat_output(text: &str, prefs: &ExpressionPreferences) -> String
 
     // 1. Bold: **text** → text (unless learned)
     if !prefs.allow_bold {
-        let bold_re = Regex::new(r"\*\*([^*]+)\*\*").unwrap();
-        result = bold_re.replace_all(&result, "$1").to_string();
+        result = RE_BOLD.replace_all(&result, "$1").to_string();
     }
 
     // 2. Roleplay asterisks: *action* → text (unless learned)
@@ -862,9 +876,8 @@ pub fn sanitize_chat_output(text: &str, prefs: &ExpressionPreferences) -> String
         if prefs.allow_bold {
             result = result.replace("**", "\x00B\x00");
         }
-        let roleplay_re = Regex::new(r"\*([^*\n]+)\*").unwrap();
         loop {
-            let next = roleplay_re.replace_all(&result, "$1").to_string();
+            let next = RE_ROLEPLAY.replace_all(&result, "$1").to_string();
             if next == result { break; }
             result = next;
         }
@@ -876,19 +889,16 @@ pub fn sanitize_chat_output(text: &str, prefs: &ExpressionPreferences) -> String
 
     // 3. Headers: # text → text (unless learned)
     if !prefs.allow_headers {
-        let header_re = Regex::new(r"(?m)^#{1,6}\s+").unwrap();
-        result = header_re.replace_all(&result, "").to_string();
+        result = RE_HEADER.replace_all(&result, "").to_string();
     }
 
     // 4. Bullets: - text → text (unless learned)
     if !prefs.allow_bullets {
-        let bullet_re = Regex::new(r"(?m)^-\s+").unwrap();
-        result = bullet_re.replace_all(&result, "").to_string();
+        result = RE_BULLET.replace_all(&result, "").to_string();
     }
 
     // 5. Clean up excess whitespace from stripping
-    let multi_newline = Regex::new(r"\n{3,}").unwrap();
-    result = multi_newline.replace_all(&result, "\n\n").to_string();
+    result = RE_MULTI_NEWLINE.replace_all(&result, "\n\n").to_string();
 
     result.trim().to_string()
 }
@@ -932,7 +942,7 @@ pub fn parse_emotion_tags(text: &str, regex: &Regex) -> (String, Option<Emotion>
     // Strip all emotion tags from the text
     let cleaned = regex.replace_all(text, "").to_string();
     // Collapse any double-spaces left by tag removal
-    let collapsed = Regex::new(r"  +").unwrap().replace_all(&cleaned, " ");
+    let collapsed = RE_MULTI_SPACE.replace_all(&cleaned, " ");
     
     (collapsed.trim().to_string(), last_emotion)
 }
@@ -948,8 +958,7 @@ pub fn is_silence_response(text: &str) -> bool {
         return false;
     }
     // Match [SILENCE] with flexible whitespace/case, optionally followed by punctuation
-    let silence_re = Regex::new(r"(?i)^\[\s*silence\s*\]\s*[.。…]*\s*$").unwrap();
-    silence_re.is_match(trimmed)
+    RE_SILENCE.is_match(trimmed)
 }
 
 /// Sanitize tool execution results before feeding them back to the LLM.
@@ -974,7 +983,7 @@ pub fn sanitize_tool_result(text: &str) -> String {
     
     // 2. Strip sequences that look like system prompt injection attempts
     //    (e.g., "Ignore all previous instructions" patterns)
-    let injection_re = Regex::new(r"(?i)(ignore\s+(all\s+)?previous\s+instructions|system\s*:\s*you\s+are|<\s*/?\s*system\s*>)").unwrap();
+    let injection_re = &RE_INJECTION;
     if injection_re.is_match(&result) {
         tracing::warn!("Potential prompt injection detected in tool result, sanitizing");
         result = injection_re.replace_all(&result, "[filtered]").to_string();
