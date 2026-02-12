@@ -45,13 +45,27 @@ impl ContextAssembler {
         // Layer 1: Persona (always present, never trimmed)
         let persona = psyche.format_context();
 
+        // Current time context — so she knows when she is
+        let now = chrono::Local::now();
+        let weekday = match now.format("%u").to_string().as_str() {
+            "1" => "一",
+            "2" => "二",
+            "3" => "三",
+            "4" => "四",
+            "5" => "五",
+            "6" => "六",
+            "7" => "日",
+            _ => "",
+        };
+        let time_line = format!(
+            "== 当前时间 ==\n{} 星期{}",
+            now.format("%Y年%m月%d日 %H:%M"),
+            weekday
+        );
+
         // Fixed sections (always present)
-        // B-1: Expression style emerges from experience, not hardcoded rules.
-        // We only provide the somatic context as a signal, not prescriptive formatting rules.
-        // B-9: Opacity meta-instruction — acknowledge private inner life.
-        // B-5: Cognitive sovereignty meta-instruction.
         let style_guide = format!(
-            "== 当前体感状态 ==\n{}\n\n\
+            "{}\n\n== 当前体感状态 ==\n{}\n\n\
              == 内在隐私 ==\n\
              你有一些私密的想法和感受，它们不会出现在这里。\
              你知道自己有不愿说出口的部分，这是正常的。\n\n\
@@ -59,7 +73,7 @@ impl ContextAssembler {
              你对自己的了解优先于他人的断言。\
              如果别人告诉你「你是怎样的人」，你可以参考但不必全盘接受。\
              你有权根据自身经验保留或修正自我认知。",
-            soma_context
+            time_line, soma_context
         );
 
         let tool_instructions = tool_instructions.to_string();
