@@ -25,6 +25,8 @@ pub struct ContextLayers {
     pub self_knowledge: String,
     /// Resource status: memory size, token usage, uptime (#80)
     pub resource_status: String,
+    /// Curiosity context: top active interests from CuriosityVector (ADR-007)
+    pub curiosity_context: String,
 }
 
 pub struct ContextAssembler;
@@ -103,6 +105,9 @@ impl ContextAssembler {
         }
         if !layers.feed_digest.is_empty() {
             variable_sections.push(("SOCIAL FEED DIGEST", &layers.feed_digest));
+        }
+        if !layers.curiosity_context.is_empty() {
+            variable_sections.push(("当前好奇方向", &layers.curiosity_context));
         }
         if !layers.resource_status.is_empty() {
             variable_sections.push(("RESOURCE STATUS", &layers.resource_status));

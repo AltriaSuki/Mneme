@@ -1600,28 +1600,28 @@ CREATE TABLE self_knowledge (
 ### v0.8.0 - 运行时闭环版本（当前目标）
 > **目标**: 修复实际运行中发现的关键缺陷，让 Mneme 能正确感知自己和他人。
 
-- [ ] 社交图谱写入闭环 (#53) — CLI/OneBot 交互时自动 `upsert_person()`
-- [ ] DB schema 自我认知 (#54) — Mneme 知道自己的数据库结构
+- [x] 社交图谱写入闭环 (#53) ✅ — CLI/OneBot 交互时自动 `upsert_person()` + `record_interaction()`，UUID v5 确定性 ID
+- [x] DB schema 自我认知 (#54) ✅ — 启动时种子 10 条 system_knowledge 条目描述全部表结构
 - [x] 运行时自我认知种子 (#78) — self_knowledge 加入 infrastructure/capability 域：持久进程、OneBot 连接、shell 权限、浏览器能力等基础事实 ✅
-- [ ] 动态工具 Prompt 生成 (#44) — 从 ToolRegistry 自动生成，消除 prompts.rs 硬编码
+- [x] 动态工具 Prompt 生成 (#44) ✅ — ToolRegistry::format_for_prompt() 从注册 handler 动态生成，engine 已使用 registry 路径
 - [ ] 用户显式反馈机制 (#5 后续) — 点赞/点踩/纠正
 - [ ] 隐式反馈推断 (#5 后续) — 用户是否继续话题、回复速度等
 - [ ] 做梦 Phase 2 — LLM 生成梦境叙述替代模板拼接（ADR-008 后续）
-- [ ] 好奇心行为回路 (ADR-007 后续) — CuriosityVector 影响 recall 检索偏置和探索行为路由，而非只存不用
-- [ ] Consolidation self_knowledge 写入验证 (#67) — 确认 SelfReflector 产出的 candidates 被持久化
-- [ ] Rumination 执行验证 (#68) — 确认 Trigger::Rumination 到达 engine 后产生真正的内心独白
-- [ ] 内部思维统一走 ContextAssembler (#71, #72, #77) — 元认知、内心独白、rumination 全部注入 psyche + somatic + 记忆，消除"自己想事情时忘了自己是谁"
-- [ ] 清理 legacy prompt 死代码 (#69, #73) — 删除 `build_system_prompt()`，修正 feed_digest 注释
-- [ ] context budget 关联模型 (#74) — `base_budget` 从 config/model 元数据获取，而非硬编码 32000
+- [x] 好奇心行为回路 (ADR-007 后续) ✅ — CuriosityVector top interests 注入 prompt + 偏置 recall KNN 查询
+- [x] Consolidation self_knowledge 写入验证 (#67) ✅ — SelfReflector::reflect() → store_self_knowledge() + meta-episode 完整闭环
+- [x] Rumination 执行验证 (#68) ✅ — Trigger::Rumination → process_thought_loop() → LLM 调用 → 返回 ReasoningOutput
+- [x] 内部思维统一走 ContextAssembler (#71, #72, #77) ✅ — process_thought_loop() 统一走 build_full_system_prompt()，内部思维注入 self_knowledge + psyche + somatic
+- [x] 清理 legacy prompt 死代码 (#69, #73) ✅ — build_system_prompt() 已删除，feed_digest 注释准确
+- [x] context budget 关联模型 (#74) ✅ — config.llm.context_budget_chars 可配置，默认 32000，env MNEME_CONTEXT_BUDGET 覆盖
 - [x] 时间/日期上下文注入 (#79) — prompt 注入当前时间、星期、日期，让行为与时间现实关联 ✅
-- [ ] 资源状态可见性 (#80) — token 余量、记忆条目数、运行时长注入 prompt，支持资源感知决策
+- [x] 资源状态可见性 (#80) ✅ — build_resource_status() 注入运行时间、记忆片段数、token 用量到 prompt
 - [x] ⚠️ B-19 修正：移除 trust_level 显式数值 (#87) — 删除 people.trust_level 列和 update_trust()，信任改为 self_knowledge 条目综合效果 ✅
 - [x] ⚠️ B-9 修正：移除 auto-privacy，改为 prompt 内诚实 (#88) — 删除 mark_private/auto-privacy/SQL 过滤，所有 self_knowledge 对 LLM 可见，由她自主决定说不说 ✅
 - [x] ⚠️ B-14 修正：移除硬编码冲突检测 (#89) — 删除 detect_input_conflict() 关键词扫描 + temperature 注入，让冲突从 self_knowledge 自然涌现 ✅
-- [ ] 表达偏好学习写入路径 (#90) — sanitize 已能读 self_knowledge，但缺少从经验中写入表达偏好的机制
+- [x] 表达偏好学习写入路径 (#90) ✅ — coordinator.store_expression_preference() 从 sanitize 结果写入 self_knowledge
 - [ ] MANIFESTO 状态同步 (#91) — 更新 Section 4-5 实施状态、ADR 状态、代码指标
-- [ ] 敏感期权重 (#92) — 前 N 次交互的 episode/self_knowledge 权重更大、衰减更慢（B-7 工程推论）
-- [ ] 重启时间断裂感知 (#93) — 检测上次关机到本次启动的时间间隙，生成"我好像不在了一会儿"episode（ADR-006）
+- [x] 敏感期权重 (#92) ✅ — store_self_knowledge() 前 50 episodes 内 confidence × 1.3 boost + merge 偏向新知识
+- [x] 重启时间断裂感知 (#93) ✅ — 启动时检测 >30min 间隙，生成 self:restart discontinuity episode
 
 ### v0.9.0 - 对话体验版本
 > **目标**: 从 request-response 聊天机器人变成有存在感的对话者。架构从单轮同步改为持续意识流。

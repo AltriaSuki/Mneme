@@ -323,6 +323,22 @@ impl ReasoningEngine {
 
         let somatic_marker = interaction_result.somatic_marker;
 
+        // === Extract curiosity interests (ADR-007 behavior loop) ===
+        let top_interests = interaction_result
+            .state_snapshot
+            .fast
+            .curiosity_vector
+            .top_interests(5);
+        let curiosity_context = if top_interests.is_empty() {
+            String::new()
+        } else {
+            top_interests
+                .iter()
+                .map(|(topic, intensity)| format!("- {} ({:.0}%)", topic, intensity * 100.0))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
         // === Compute Modulation Vector (temporally smoothed — emotion inertia) ===
         let modulation = self.limbic.get_modulation_vector().await;
 
@@ -344,10 +360,23 @@ impl ReasoningEngine {
 
         // 1. Blended recall: episodes + facts in one call
         //    B-10: Use reconstructed recall (mood/stress colored) instead of plain recall
+        //    ADR-007: Augment query with top curiosity interests to bias retrieval
         let stress = somatic_marker.stress;
+        let recall_query = if top_interests.is_empty() {
+            input_text.to_string()
+        } else {
+            // Append top-2 curiosity topics to bias KNN toward current interests
+            let curiosity_suffix: String = top_interests
+                .iter()
+                .take(2)
+                .map(|(t, _)| *t)
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{} {}", input_text, curiosity_suffix)
+        };
         let recalled_episodes = self
             .memory
-            .recall_reconstructed(input_text, modulation.recall_mood_bias, stress)
+            .recall_reconstructed(&recall_query, modulation.recall_mood_bias, stress)
             .await?;
         let facts = self
             .memory
@@ -401,6 +430,7 @@ impl ReasoningEngine {
             social_context,
             self_knowledge,
             resource_status,
+            curiosity_context,
         };
 
         let system_prompt = ContextAssembler::build_full_system_prompt(
