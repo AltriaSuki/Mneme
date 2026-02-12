@@ -2,7 +2,8 @@ use clap::Parser;
 use mneme_core::config::MnemeConfig;
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
 use mneme_expression::{
-    ConsciousnessGate, Humanizer, PresenceScheduler, RuminationEvaluator, ScheduledTriggerEvaluator,
+    AttentionGate, ConsciousnessGate, HabitDetector, Humanizer, MetacognitionEvaluator,
+    PresenceScheduler, RuminationEvaluator, ScheduledTriggerEvaluator,
 };
 use mneme_limbic::LimbicSystem;
 use mneme_memory::{OrganismConfig, OrganismCoordinator, SqliteMemory};
@@ -273,11 +274,20 @@ async fn main() -> anyhow::Result<()> {
 
     // 5. Initialize Proactive Triggers via AgentLoop
     info!("Initializing proactive triggers...");
-    let evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![
+    let inner_evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![
         Box::new(ScheduledTriggerEvaluator::new()),
         Box::new(RuminationEvaluator::new(coordinator.state())),
         Box::new(ConsciousnessGate::new(coordinator.state())),
+        Box::new(MetacognitionEvaluator::new(
+            coordinator.state(),
+            coordinator.interaction_count_ref(),
+        )),
+        Box::new(HabitDetector::new(memory.clone())),
     ];
+
+    // B-17: Wrap all evaluators in AttentionGate for single-focus competition
+    let attention_gate = AttentionGate::new(inner_evaluators);
+    let evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![Box::new(attention_gate)];
 
     // Initialize Presence Scheduler (filters triggers by active hours)
     let presence = PresenceScheduler::default();

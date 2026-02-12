@@ -2,12 +2,14 @@ use mneme_core::Emotion;
 use rand::Rng;
 use std::time::Duration;
 
+mod attention;
 mod consciousness;
 mod habits;
 mod metacognition;
 mod presence;
 mod rumination;
 mod scheduled;
+pub use attention::{AttentionConfig, AttentionGate};
 pub use consciousness::{ConsciousnessConfig, ConsciousnessGate};
 pub use habits::{HabitConfig, HabitDetector};
 pub use metacognition::{MetacognitionConfig, MetacognitionEvaluator};
