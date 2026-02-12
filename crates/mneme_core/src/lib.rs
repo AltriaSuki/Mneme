@@ -227,6 +227,8 @@ pub struct PersonContext {
     pub interaction_count: i64,
     pub last_interaction_ts: Option<i64>,
     pub relationship_notes: String,
+    /// B-19: Trust level (0.0-1.0). Default 0.5 (neutral).
+    pub trust_level: f32,
 }
 
 #[async_trait]
@@ -251,6 +253,12 @@ pub trait SocialGraph: Send + Sync {
 
     /// Get rich context about a person (for prompt injection)
     async fn get_person_context(&self, person_id: Uuid) -> anyhow::Result<Option<PersonContext>>;
+
+    /// B-19: Update trust level for a person. Delta is clamped to [-0.1, 0.1] per call.
+    async fn update_trust(&self, person_id: Uuid, delta: f32) -> anyhow::Result<()> {
+        let _ = (person_id, delta);
+        Ok(())
+    }
 }
 
 #[async_trait]

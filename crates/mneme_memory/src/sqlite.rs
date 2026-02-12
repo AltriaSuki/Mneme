@@ -137,7 +137,8 @@ impl SqliteMemory {
             r#"
             CREATE TABLE IF NOT EXISTS people (
                 id TEXT PRIMARY KEY,
-                name TEXT NOT NULL
+                name TEXT NOT NULL,
+                trust_level REAL NOT NULL DEFAULT 0.5
             );
             "#,
         )
@@ -793,7 +794,7 @@ impl SocialGraph for SqliteMemory {
         let id_str = person_id.to_string();
 
         // Fetch person
-        let person_row = sqlx::query("SELECT id, name FROM people WHERE id = ?")
+        let person_row = sqlx::query("SELECT id, name, trust_level FROM people WHERE id = ?")
             .bind(&id_str)
             .fetch_optional(&self.pool)
             .await
@@ -805,6 +806,7 @@ impl SocialGraph for SqliteMemory {
         };
 
         let name: String = person_row.get("name");
+        let trust_level: f64 = person_row.get("trust_level");
 
         // Fetch aliases
         let aliases_rows: Vec<(String, String)> =
@@ -852,7 +854,23 @@ impl SocialGraph for SqliteMemory {
             interaction_count,
             last_interaction_ts,
             relationship_notes,
+            trust_level: trust_level as f32,
         }))
+    }
+
+    /// B-19: Update trust level for a person. Delta clamped to [-0.1, 0.1].
+    async fn update_trust(&self, person_id: Uuid, delta: f32) -> Result<()> {
+        let clamped = delta.clamp(-0.1, 0.1);
+        let id_str = person_id.to_string();
+        sqlx::query(
+            "UPDATE people SET trust_level = MIN(1.0, MAX(0.0, trust_level + ?)) WHERE id = ?",
+        )
+        .bind(clamped as f64)
+        .bind(&id_str)
+        .execute(&self.pool)
+        .await
+        .context("Failed to update trust level")?;
+        Ok(())
     }
 }
 

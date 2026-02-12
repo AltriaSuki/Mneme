@@ -870,6 +870,19 @@ impl ReasoningEngine {
                 if ctx.interaction_count > 0 {
                     parts.push(format!("互动次数: {}", ctx.interaction_count));
                 }
+                // B-19: Include trust level in social context
+                let trust_label = if ctx.trust_level > 0.7 {
+                    "高信任"
+                } else if ctx.trust_level < 0.3 {
+                    "低信任"
+                } else {
+                    "中等信任"
+                };
+                parts.push(format!(
+                    "信任度: {:.0}% ({})",
+                    ctx.trust_level * 100.0,
+                    trust_label
+                ));
                 if !ctx.relationship_notes.is_empty() {
                     parts.push(format!("关系备注: {}", ctx.relationship_notes));
                 }
