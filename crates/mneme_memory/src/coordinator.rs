@@ -281,6 +281,24 @@ impl OrganismCoordinator {
         }
     }
 
+    /// Store an expression preference learned from user feedback (#90).
+    pub async fn store_expression_preference(&self, key: &str, confidence: f32) {
+        if let Some(ref db) = self.db {
+            if let Err(e) = db
+                .store_self_knowledge("expression", key, confidence, "self:expression_feedback", None)
+                .await
+            {
+                tracing::warn!("Failed to store expression preference: {}", e);
+            } else {
+                tracing::info!(
+                    "Expression preference learned: {} (confidence={:.2})",
+                    key,
+                    confidence
+                );
+            }
+        }
+    }
+
     /// Process an incoming interaction
     ///
     /// This is the main entry point for handling user messages.
