@@ -912,6 +912,66 @@ impl ReasoningEngine {
         }
     }
 
+    /// Ensure the speaker exists in the social graph and record the interaction (#53).
+    ///
+    /// Uses deterministic UUIDs (v5) so the same platform+author always maps to the
+    /// same person ID. Creates the person on first encounter, then records each
+    /// interaction so relationship context accumulates over time.
+    async fn ensure_social_graph_entry(&self, source: &str, author: &str, summary: &str) {
+        let graph = match &self.social_graph {
+            Some(g) => g,
+            None => return,
+        };
+
+        let platform = source.split(':').next().unwrap_or(source);
+
+        // Skip internal sources (self-generated events)
+        if platform == "self" || author == "Mneme" {
+            return;
+        }
+
+        // Deterministic person ID from platform + author
+        let person_id =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, format!("mneme:person:{}:{}", platform, author).as_bytes());
+
+        // Find or create
+        let existing = match graph.find_person(platform, author).await {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::debug!("Social graph find_person failed: {}", e);
+                return;
+            }
+        };
+
+        if existing.is_none() {
+            let mut aliases = std::collections::HashMap::new();
+            aliases.insert(platform.to_string(), author.to_string());
+            let person = mneme_core::Person {
+                id: person_id,
+                name: author.to_string(),
+                aliases,
+            };
+            if let Err(e) = graph.upsert_person(&person).await {
+                tracing::warn!("Failed to upsert person in social graph: {}", e);
+                return;
+            }
+            tracing::info!("Social graph: created person {} ({}:{})", person_id, platform, author);
+        }
+
+        // Mneme's own stable person ID
+        let mneme_id =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, b"mneme:self");
+
+        // Record the interaction (truncate summary to keep DB lean)
+        let short_summary: String = summary.chars().take(200).collect();
+        if let Err(e) = graph
+            .record_interaction(person_id, mneme_id, &short_summary)
+            .await
+        {
+            tracing::debug!("Failed to record interaction: {}", e);
+        }
+    }
+
     /// Recall self-knowledge entries formatted for system prompt injection.
     ///
     /// Used during internal thoughts (metacognition, inner monologue, rumination)
@@ -1132,6 +1192,14 @@ impl Reasoning for ReasoningEngine {
                         .store_expression_preference(&fb.key, fb.confidence)
                         .await;
                 }
+
+                // #53: Social graph write loop — ensure speaker exists, record interaction
+                self.ensure_social_graph_entry(
+                    &content.source,
+                    &content.author,
+                    &content.body,
+                )
+                .await;
 
                 Ok(ReasoningOutput {
                     content: response_text,

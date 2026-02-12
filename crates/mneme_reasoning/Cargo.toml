@@ -20,7 +20,7 @@ bytes = "1"
 mneme_os = { path = "../mneme_os" }
 mneme_browser = { path = "../mneme_browser" }
 chrono = "0.4"
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { version = "1.0", features = ["v4", "v5"] }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full", "test-util"] }
