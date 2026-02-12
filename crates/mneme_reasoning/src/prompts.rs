@@ -23,6 +23,8 @@ pub struct ContextLayers {
     pub social_context: String,
     /// Self-knowledge: accumulated self-understanding (populated for internal thoughts)
     pub self_knowledge: String,
+    /// Resource status: memory size, token usage, uptime (#80)
+    pub resource_status: String,
 }
 
 pub struct ContextAssembler;
@@ -101,6 +103,9 @@ impl ContextAssembler {
         }
         if !layers.feed_digest.is_empty() {
             variable_sections.push(("SOCIAL FEED DIGEST", &layers.feed_digest));
+        }
+        if !layers.resource_status.is_empty() {
+            variable_sections.push(("RESOURCE STATUS", &layers.resource_status));
         }
 
         // Fit variable sections within remaining budget

@@ -735,6 +735,14 @@ impl Memory for SqliteMemory {
             })
             .collect())
     }
+
+    async fn episode_count(&self) -> Result<u64> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM episodes")
+            .fetch_one(&self.pool)
+            .await
+            .context("Failed to count episodes")?;
+        Ok(count as u64)
+    }
 }
 #[async_trait]
 impl SocialGraph for SqliteMemory {

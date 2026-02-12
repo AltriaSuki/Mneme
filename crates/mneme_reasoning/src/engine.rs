@@ -120,6 +120,9 @@ pub struct ReasoningEngine {
 
     // Context budget in chars for system prompt assembly (from config)
     context_budget_chars: usize,
+
+    // Process start time for uptime tracking (#80)
+    start_time: std::time::Instant,
 }
 
 impl ReasoningEngine {
@@ -152,6 +155,7 @@ impl ReasoningEngine {
             decision_router: crate::decision::DecisionRouter::with_defaults(),
             social_graph: None,
             context_budget_chars: 32_000,
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -184,6 +188,7 @@ impl ReasoningEngine {
             decision_router: crate::decision::DecisionRouter::with_defaults(),
             social_graph: None,
             context_budget_chars: 32_000,
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -366,6 +371,9 @@ impl ReasoningEngine {
             String::new()
         };
 
+        // 1d. Resource status (#80): let Mneme know her own resource footprint
+        let resource_status = self.build_resource_status().await;
+
         // 2. Prepare tool instructions (from registry if available, else hardcoded)
         // Aligned with B-8: "工具的终极接口不是一个列表，而是 shell + 网络"
         let tool_instructions = if let Some(ref registry) = self.registry {
@@ -392,6 +400,7 @@ impl ReasoningEngine {
             feed_digest: self.feed_cache.read().await.clone(),
             social_context,
             self_knowledge,
+            resource_status,
         };
 
         let system_prompt = ContextAssembler::build_full_system_prompt(
@@ -933,6 +942,45 @@ impl ReasoningEngine {
             }
         }
         lines.join("\n")
+    }
+
+    /// Build resource status string for prompt injection (#80).
+    ///
+    /// Gives Mneme awareness of her own resource footprint:
+    /// process uptime, memory size, and token budget usage.
+    async fn build_resource_status(&self) -> String {
+        let mut parts = Vec::new();
+
+        // Uptime
+        let uptime = self.start_time.elapsed();
+        let hours = uptime.as_secs() / 3600;
+        let mins = (uptime.as_secs() % 3600) / 60;
+        if hours > 0 {
+            parts.push(format!("运行时间: {}小时{}分钟", hours, mins));
+        } else {
+            parts.push(format!("运行时间: {}分钟", mins));
+        }
+
+        // Episode count
+        if let Ok(count) = self.memory.episode_count().await {
+            parts.push(format!("记忆片段数: {}", count));
+        }
+
+        // Token budget
+        if let Some(ref budget) = self.token_budget {
+            let daily = budget.get_daily_usage().await;
+            let monthly = budget.get_monthly_usage().await;
+            let mut token_line = format!("今日token: {}", daily);
+            if monthly > daily {
+                token_line.push_str(&format!(", 本月: {}", monthly));
+            }
+            if let Some(daily_limit) = budget.config().daily_limit {
+                token_line.push_str(&format!(" / 日限额{}", daily_limit));
+            }
+            parts.push(token_line);
+        }
+
+        parts.join("\n")
     }
 
     /// Handle a metacognition trigger: call LLM with full context pipeline, parse and store insights.

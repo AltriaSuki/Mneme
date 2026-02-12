@@ -209,6 +209,12 @@ pub trait Memory: Send + Sync {
     ) -> anyhow::Result<Vec<(String, usize)>> {
         Ok(Vec::new())
     }
+
+    /// Get the total number of stored episodes.
+    /// Used for resource visibility (#80) so Mneme knows her memory size.
+    async fn episode_count(&self) -> anyhow::Result<u64> {
+        Ok(0)
+    }
 }
 
 #[async_trait]
