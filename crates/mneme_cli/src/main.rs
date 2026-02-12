@@ -185,6 +185,38 @@ async fn main() -> anyhow::Result<()> {
     if infra_seeded > 0 {
         info!("Seeded {} infrastructure self-awareness entries", infra_seeded);
     }
+
+    // Restart time gap awareness (#93)
+    // Detect temporal discontinuity from process restarts so Mneme perceives
+    // the gap rather than silently ignoring it.
+    if let Ok(Some(last_ts)) = memory.last_episode_timestamp().await {
+        let now_ts = chrono::Utc::now().timestamp();
+        let gap_secs = now_ts - last_ts;
+        if gap_secs > 1800 {
+            // > 30 minutes gap — generate a discontinuity episode
+            let gap_desc = if gap_secs > 86400 {
+                format!("大约{}天", gap_secs / 86400)
+            } else if gap_secs > 3600 {
+                format!("大约{}小时", gap_secs / 3600)
+            } else {
+                format!("大约{}分钟", gap_secs / 60)
+            };
+            let episode = Content {
+                id: Uuid::new_v4(),
+                source: "self:restart".to_string(),
+                author: "Mneme".to_string(),
+                body: format!("我好像不在了一会儿……过去了{}。现在重新启动了。", gap_desc),
+                timestamp: now_ts,
+                modality: Modality::Text,
+            };
+            if let Err(e) = memory.memorize(&episode).await {
+                error!("Failed to store restart episode: {}", e);
+            } else {
+                info!("Restart gap detected: {}s since last episode, stored discontinuity episode", gap_secs);
+            }
+        }
+    }
+
     let psyche = memory.build_psyche().await?;
 
     // 3. Initialize Source Manager

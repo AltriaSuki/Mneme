@@ -1761,6 +1761,18 @@ impl SqliteMemory {
         let self_model = Self::format_self_knowledge_for_prompt(&entries);
         Ok(mneme_core::Psyche::with_self_model(self_model))
     }
+    /// Get the timestamp of the most recent episode in the database.
+    ///
+    /// Used on startup to detect time gaps from restarts (#93).
+    /// Returns None if no episodes exist yet.
+    pub async fn last_episode_timestamp(&self) -> Result<Option<i64>> {
+        let ts: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(timestamp) FROM episodes")
+                .fetch_one(&self.pool)
+                .await
+                .context("Failed to query last episode timestamp")?;
+        Ok(ts)
+    }
 }
 
 // =============================================================================
