@@ -1,2 +1,2 @@
-pub use crate::{Content, Event, Modality, Memory, Perception, Reasoning, Expression};
 pub use crate::persona::Psyche;
+pub use crate::{Content, Event, Expression, Memory, Modality, Perception, Reasoning};

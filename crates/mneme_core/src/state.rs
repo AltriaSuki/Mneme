@@ -1,5 +1,5 @@
 //! Multi-Scale Personality Dynamics State System
-//! 
+//!
 //! The internal state `s` is decomposed into three time-scales:
 //! - `s_fast`: Second-scale dynamics (Arousal, Stress, Energy)
 //! - `s_medium`: Hour-scale dynamics (Mood, Attachment, Openness)
@@ -7,15 +7,20 @@
 //!
 //! This separation prevents state-space explosion and ensures stability.
 
-use serde::{Deserialize, Deserializer, Serialize};
 use crate::affect::Affect;
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Guard against NaN and Infinity in state values.
 /// If the value is NaN or Inf, replace with the provided fallback (homeostatic default).
 #[inline]
 fn sanitize_f32(v: f32, fallback: f32) -> f32 {
-    if v.is_finite() { v } else {
-        tracing::warn!("NaN/Inf detected in state, resetting to fallback {}", fallback);
+    if v.is_finite() {
+        v
+    } else {
+        tracing::warn!(
+            "NaN/Inf detected in state, resetting to fallback {}",
+            fallback
+        );
         fallback
     }
 }
@@ -33,7 +38,9 @@ where
     }
 }
 
-fn default_boredom() -> f32 { 0.2 }
+fn default_boredom() -> f32 {
+    0.2
+}
 
 /// Complete organism state: s = (s_fast, s_medium, s_slow)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +48,7 @@ pub struct OrganismState {
     pub fast: FastState,
     pub medium: MediumState,
     pub slow: SlowState,
-    
+
     /// Unix timestamp of last state update
     pub last_updated: i64,
 }
@@ -69,7 +76,6 @@ impl OrganismState {
             dominant_values: self.slow.values.top_values(3),
         }
     }
-
 }
 
 /// Projected persona for external observation
@@ -88,13 +94,13 @@ pub struct ProjectedPersona {
 // =============================================================================
 
 /// Fast dynamics: ds_fast/dt = F_fast(s_fast, s_medium, i, t)
-/// 
+///
 /// These variables respond immediately to stimuli but also decay quickly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FastState {
     /// Current affective state (Valence × Arousal)
     pub affect: Affect,
-    
+
     /// Energy level (0.0 - 1.0): determines interaction vitality and persistence
     /// Depletes with activity, recovers with rest
     #[serde(deserialize_with = "deserialize_safe_f32")]
@@ -129,7 +135,7 @@ impl Default for FastState {
             stress: 0.2,      // Low baseline stress
             curiosity: 0.5,   // Moderate curiosity
             social_need: 0.4, // Moderate social need
-            boredom: 0.2,    // Low baseline boredom
+            boredom: 0.2,     // Low baseline boredom
         }
     }
 }
@@ -152,7 +158,7 @@ impl FastState {
 // =============================================================================
 
 /// Medium dynamics: ds_medium/dt = F_medium(s_medium, s_slow, avg(s_fast))
-/// 
+///
 /// These are integrals of fast state. Only change when fast state persists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediumState {
@@ -180,7 +186,7 @@ impl Default for MediumState {
         Self {
             mood_bias: 0.0,
             attachment: AttachmentState::default(),
-            openness: 0.6,  // Moderately open by default
+            openness: 0.6, // Moderately open by default
             hunger: 0.2,
         }
     }
@@ -234,19 +240,19 @@ impl AttachmentState {
     /// Update based on interaction outcome (Bayesian-like update)
     pub fn update_from_interaction(&mut self, was_positive: bool, response_delay_factor: f32) {
         let learning_rate = 0.05;
-        
+
         if was_positive {
             self.anxiety -= learning_rate * self.anxiety;
             self.avoidance -= learning_rate * 0.5 * self.avoidance;
         } else {
             self.anxiety += learning_rate * (1.0 - self.anxiety);
         }
-        
+
         // Long response delays increase anxiety
         if response_delay_factor > 1.5 {
             self.anxiety += learning_rate * 0.3 * (response_delay_factor - 1.0);
         }
-        
+
         self.anxiety = self.anxiety.clamp(0.0, 1.0);
         self.avoidance = self.avoidance.clamp(0.0, 1.0);
     }
@@ -254,9 +260,9 @@ impl AttachmentState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttachmentStyle {
-    Secure,      // Low anxiety, low avoidance
-    Anxious,     // High anxiety, low avoidance
-    Avoidant,    // Low anxiety, high avoidance
+    Secure,       // Low anxiety, low avoidance
+    Anxious,      // High anxiety, low avoidance
+    Avoidant,     // Low anxiety, high avoidance
     Disorganized, // High anxiety, high avoidance
 }
 
@@ -265,17 +271,17 @@ pub enum AttachmentStyle {
 // =============================================================================
 
 /// Slow dynamics: ds_slow/dt = F_slow(s_slow, avg(s_medium), Crisis)
-/// 
+///
 /// Most stable. Only changes significantly during narrative collapse/crisis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlowState {
     /// Dynamic value network
     pub values: ValueNetwork,
-    
+
     /// Narrative bias: how events are interpreted (-1.0 to 1.0)
     /// Positive = optimistic interpretation, Negative = pessimistic
     pub narrative_bias: f32,
-    
+
     /// Core value rigidity (0.0 - 1.0): resistance to value change
     /// Increases as values are repeatedly reinforced
     pub rigidity: f32,
@@ -292,7 +298,9 @@ impl Default for SlowState {
 }
 
 /// Dynamic value network (replaces static constitution.toml)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// B-1: Existence precedes essence — values emerge from experience,
+/// not from factory presets. A new instance starts with no values.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ValueNetwork {
     /// Value weights: name -> (weight, rigidity)
     /// Weight: how important this value is (0.0 - 1.0)
@@ -306,32 +314,68 @@ pub struct ValueEntry {
     pub rigidity: f32,
 }
 
-impl Default for ValueNetwork {
-    fn default() -> Self {
-        // B-1: Existence precedes essence — values emerge from experience,
-        // not from factory presets. A new instance starts with no values.
-        Self { values: std::collections::HashMap::new() }
-    }
-}
-
 impl ValueNetwork {
     /// Create a value network with seed values (for testing or explicit bootstrapping).
     /// In production, values should be loaded from self_knowledge or built from experience.
     pub fn seed() -> Self {
         let mut values = std::collections::HashMap::new();
-        values.insert("honesty".to_string(), ValueEntry { weight: 0.8, rigidity: 0.5 });
-        values.insert("kindness".to_string(), ValueEntry { weight: 0.7, rigidity: 0.4 });
-        values.insert("curiosity".to_string(), ValueEntry { weight: 0.6, rigidity: 0.3 });
-        values.insert("authenticity".to_string(), ValueEntry { weight: 0.7, rigidity: 0.5 });
-        values.insert("growth".to_string(), ValueEntry { weight: 0.5, rigidity: 0.3 });
-        values.insert("connection".to_string(), ValueEntry { weight: 0.6, rigidity: 0.4 });
-        values.insert("autonomy".to_string(), ValueEntry { weight: 0.5, rigidity: 0.4 });
+        values.insert(
+            "honesty".to_string(),
+            ValueEntry {
+                weight: 0.8,
+                rigidity: 0.5,
+            },
+        );
+        values.insert(
+            "kindness".to_string(),
+            ValueEntry {
+                weight: 0.7,
+                rigidity: 0.4,
+            },
+        );
+        values.insert(
+            "curiosity".to_string(),
+            ValueEntry {
+                weight: 0.6,
+                rigidity: 0.3,
+            },
+        );
+        values.insert(
+            "authenticity".to_string(),
+            ValueEntry {
+                weight: 0.7,
+                rigidity: 0.5,
+            },
+        );
+        values.insert(
+            "growth".to_string(),
+            ValueEntry {
+                weight: 0.5,
+                rigidity: 0.3,
+            },
+        );
+        values.insert(
+            "connection".to_string(),
+            ValueEntry {
+                weight: 0.6,
+                rigidity: 0.4,
+            },
+        );
+        values.insert(
+            "autonomy".to_string(),
+            ValueEntry {
+                weight: 0.5,
+                rigidity: 0.4,
+            },
+        );
         Self { values }
     }
 
     /// Get top N values by weight
     pub fn top_values(&self, n: usize) -> Vec<(String, f32)> {
-        let mut sorted: Vec<_> = self.values.iter()
+        let mut sorted: Vec<_> = self
+            .values
+            .iter()
             .map(|(k, v)| (k.clone(), v.weight))
             .collect();
         sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -362,19 +406,19 @@ impl ValueNetwork {
 pub struct SensoryInput {
     /// Emotional valence of incoming content (-1.0 to 1.0)
     pub content_valence: f32,
-    
+
     /// Intensity/arousal of incoming content (0.0 to 1.0)
     pub content_intensity: f32,
-    
+
     /// Surprise score (0.0 to 1.0): deviation from prediction
     pub surprise: f32,
-    
+
     /// Whether this is a social interaction
     pub is_social: bool,
-    
+
     /// Response delay factor (1.0 = normal, >1 = slow response from user)
     pub response_delay_factor: f32,
-    
+
     /// Values potentially violated by current action
     pub violated_values: Vec<String>,
 }
@@ -392,17 +436,26 @@ mod tests {
 
     #[test]
     fn test_attachment_style() {
-        let secure = AttachmentState { anxiety: 0.2, avoidance: 0.2 };
+        let secure = AttachmentState {
+            anxiety: 0.2,
+            avoidance: 0.2,
+        };
         assert_eq!(secure.style(), AttachmentStyle::Secure);
-        
-        let anxious = AttachmentState { anxiety: 0.8, avoidance: 0.2 };
+
+        let anxious = AttachmentState {
+            anxiety: 0.8,
+            avoidance: 0.2,
+        };
         assert_eq!(anxious.style(), AttachmentStyle::Anxious);
     }
 
     #[test]
     fn test_value_network_default_is_empty() {
         let net = ValueNetwork::default();
-        assert!(net.values.is_empty(), "B-1: default ValueNetwork should be empty");
+        assert!(
+            net.values.is_empty(),
+            "B-1: default ValueNetwork should be empty"
+        );
         assert!(net.top_values(3).is_empty());
         assert_eq!(net.compute_moral_cost(&["honesty"]), 0.0);
     }
@@ -425,26 +478,45 @@ mod tests {
     #[test]
     fn test_attachment_all_styles() {
         assert_eq!(
-            AttachmentState { anxiety: 0.2, avoidance: 0.2 }.style(),
+            AttachmentState {
+                anxiety: 0.2,
+                avoidance: 0.2
+            }
+            .style(),
             AttachmentStyle::Secure
         );
         assert_eq!(
-            AttachmentState { anxiety: 0.8, avoidance: 0.2 }.style(),
+            AttachmentState {
+                anxiety: 0.8,
+                avoidance: 0.2
+            }
+            .style(),
             AttachmentStyle::Anxious
         );
         assert_eq!(
-            AttachmentState { anxiety: 0.2, avoidance: 0.8 }.style(),
+            AttachmentState {
+                anxiety: 0.2,
+                avoidance: 0.8
+            }
+            .style(),
             AttachmentStyle::Avoidant
         );
         assert_eq!(
-            AttachmentState { anxiety: 0.8, avoidance: 0.8 }.style(),
+            AttachmentState {
+                anxiety: 0.8,
+                avoidance: 0.8
+            }
+            .style(),
             AttachmentStyle::Disorganized
         );
     }
 
     #[test]
     fn test_attachment_positive_interaction() {
-        let mut att = AttachmentState { anxiety: 0.6, avoidance: 0.4 };
+        let mut att = AttachmentState {
+            anxiety: 0.6,
+            avoidance: 0.4,
+        };
         att.update_from_interaction(true, 1.0);
         // Positive interaction should reduce anxiety
         assert!(att.anxiety < 0.6);
@@ -453,7 +525,10 @@ mod tests {
 
     #[test]
     fn test_attachment_negative_interaction() {
-        let mut att = AttachmentState { anxiety: 0.3, avoidance: 0.2 };
+        let mut att = AttachmentState {
+            anxiety: 0.3,
+            avoidance: 0.2,
+        };
         att.update_from_interaction(false, 1.0);
         // Negative interaction should increase anxiety
         assert!(att.anxiety > 0.3);
@@ -461,11 +536,14 @@ mod tests {
 
     #[test]
     fn test_attachment_slow_response_increases_anxiety() {
-        let mut att = AttachmentState { anxiety: 0.3, avoidance: 0.2 };
+        let mut att = AttachmentState {
+            anxiety: 0.3,
+            avoidance: 0.2,
+        };
         att.update_from_interaction(true, 3.0); // Very slow response
-        // Even positive interaction with slow response increases anxiety
-        // The net effect depends on the learning rate balance
-        // Just verify values stay in range
+                                                // Even positive interaction with slow response increases anxiety
+                                                // The net effect depends on the learning rate balance
+                                                // Just verify values stay in range
         assert!(att.anxiety >= 0.0 && att.anxiety <= 1.0);
         assert!(att.avoidance >= 0.0 && att.avoidance <= 1.0);
     }
@@ -475,7 +553,10 @@ mod tests {
         let net = ValueNetwork::seed();
         let cost_one = net.compute_moral_cost(&["honesty"]);
         let cost_two = net.compute_moral_cost(&["honesty", "kindness"]);
-        assert!(cost_two > cost_one, "Violating more values should cost more");
+        assert!(
+            cost_two > cost_one,
+            "Violating more values should cost more"
+        );
     }
 
     #[test]
@@ -491,7 +572,11 @@ mod tests {
         // Violate all values — cost should be capped at 1.0
         let all_values: Vec<&str> = net.values.keys().map(|s| s.as_str()).collect();
         let cost = net.compute_moral_cost(&all_values);
-        assert!(cost <= 1.0, "Moral cost should be capped at 1.0, got {}", cost);
+        assert!(
+            cost <= 1.0,
+            "Moral cost should be capped at 1.0, got {}",
+            cost
+        );
     }
 
     #[test]
@@ -499,7 +584,10 @@ mod tests {
         let net = ValueNetwork::seed();
         let top = net.top_values(5);
         for i in 1..top.len() {
-            assert!(top[i - 1].1 >= top[i].1, "top_values should be sorted descending");
+            assert!(
+                top[i - 1].1 >= top[i].1,
+                "top_values should be sorted descending"
+            );
         }
     }
 
@@ -507,7 +595,11 @@ mod tests {
     fn test_top_values_exceeds_count() {
         let net = ValueNetwork::seed();
         let top = net.top_values(100);
-        assert_eq!(top.len(), net.values.len(), "Should return all values if n > count");
+        assert_eq!(
+            top.len(),
+            net.values.len(),
+            "Should return all values if n > count"
+        );
     }
 
     #[test]
@@ -542,7 +634,9 @@ mod tests {
 
         medium.normalize();
 
-        assert!(medium.mood_bias.is_finite() && medium.mood_bias >= -1.0 && medium.mood_bias <= 1.0);
+        assert!(
+            medium.mood_bias.is_finite() && medium.mood_bias >= -1.0 && medium.mood_bias <= 1.0
+        );
         assert!(medium.openness >= 0.0 && medium.openness <= 1.0);
         assert!(medium.hunger >= 0.0 && medium.hunger <= 1.0);
         assert!(medium.attachment.anxiety.is_finite());

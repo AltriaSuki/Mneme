@@ -1,5 +1,5 @@
 //! State Dynamics: The differential equations governing state evolution
-//! 
+//!
 //! ds/dt = F(s, i, t) where:
 //! - s = (s_fast, s_medium, s_slow) is the organism state
 //! - i = sensory input
@@ -7,8 +7,8 @@
 //!
 //! The dynamics are separated by time-scale to ensure stability.
 
+use crate::state::{FastState, MediumState, OrganismState, SensoryInput, SlowState};
 use std::time::Duration;
-use crate::state::{OrganismState, FastState, MediumState, SlowState, SensoryInput};
 
 /// Trait for implementing state dynamics
 pub trait Dynamics: Send + Sync {
@@ -17,7 +17,7 @@ pub trait Dynamics: Send + Sync {
 }
 
 /// Default ODE-based dynamics implementation
-/// 
+///
 /// Uses simple exponential decay/growth models. Can be replaced with
 /// neural network (Burn/Candle) for learned dynamics.
 #[derive(Debug, Clone)]
@@ -26,16 +26,16 @@ pub struct DefaultDynamics {
     pub energy_target: f32,
     pub stress_target: f32,
     pub social_need_target: f32,
-    
+
     /// Decay/recovery rates (per second)
     pub energy_recovery_rate: f32,
     pub stress_decay_rate: f32,
     pub social_need_growth_rate: f32,
-    
+
     /// Stimulus sensitivity
     pub stress_sensitivity: f32,
     pub affect_sensitivity: f32,
-    
+
     /// Medium dynamics time constant (hours)
     pub mood_time_constant: f32,
 }
@@ -46,14 +46,14 @@ impl Default for DefaultDynamics {
             energy_target: 0.7,
             stress_target: 0.2,
             social_need_target: 0.5,
-            
-            energy_recovery_rate: 0.003,   // ~0.18/min — recovers from 0→0.7 in ~5 min
-            stress_decay_rate: 0.005,      // ~0.30/min — decays from 1.0→0.2 in ~3 min
+
+            energy_recovery_rate: 0.003, // ~0.18/min — recovers from 0→0.7 in ~5 min
+            stress_decay_rate: 0.005,    // ~0.30/min — decays from 1.0→0.2 in ~3 min
             social_need_growth_rate: 0.0001, // Slow growth when alone
-            
+
             stress_sensitivity: 0.5,
             affect_sensitivity: 0.3,
-            
+
             mood_time_constant: 2.0, // 2 hours
         }
     }
@@ -62,56 +62,73 @@ impl Default for DefaultDynamics {
 impl Dynamics for DefaultDynamics {
     fn step(&self, state: &mut OrganismState, input: &SensoryInput, dt: Duration) {
         let dt_secs = dt.as_secs_f32();
-        
+
         // Fast dynamics (always computed)
         self.step_fast(&mut state.fast, &state.medium, input, dt_secs);
-        
+
         // Medium dynamics (computed less frequently, here we just integrate)
         self.step_medium(&mut state.medium, &state.fast, &state.slow, input, dt_secs);
-        
+
         // Slow dynamics (only on crisis events, handled separately)
         // self.step_slow() is called explicitly when needed
-        
+
         state.last_updated = chrono::Utc::now().timestamp();
     }
 }
 
 impl DefaultDynamics {
     /// Fast dynamics: ds_fast/dt = F_fast(s_fast, s_medium, i, t)
-    pub fn step_fast(&self, fast: &mut FastState, medium: &MediumState, input: &SensoryInput, dt: f32) {
+    pub fn step_fast(
+        &self,
+        fast: &mut FastState,
+        medium: &MediumState,
+        input: &SensoryInput,
+        dt: f32,
+    ) {
         // === Energy dynamics ===
         // dE/dt = recovery_rate * (target - E) - activity_cost
         // Only apply activity cost when there's actual stimulus (social interaction
         // or meaningful input). Idle heartbeat ticks should not drain energy —
         // otherwise energy drains to 0 and can never recover (death spiral).
         let has_stimulus = input.is_social || input.content_intensity > 0.01;
-        let activity_cost = if input.is_social { 0.01 } else if has_stimulus { 0.002 } else { 0.0 };
-        let d_energy = self.energy_recovery_rate * (self.energy_target - fast.energy) - activity_cost;
+        let activity_cost = if input.is_social {
+            0.01
+        } else if has_stimulus {
+            0.002
+        } else {
+            0.0
+        };
+        let d_energy =
+            self.energy_recovery_rate * (self.energy_target - fast.energy) - activity_cost;
         fast.energy += d_energy * dt;
-        
+
         // === Stress dynamics ===
         // dS/dt = -decay_rate * (S - target) + sensitivity * negative_stimulus
         let negative_stimulus = (-input.content_valence).max(0.0) * input.content_intensity;
         let surprise_stress = input.surprise * 0.3;
-        
+
         // Moral cost from value violations creates direct stress
         let moral_stress = if !input.violated_values.is_empty() {
             0.5 // Base moral cost, refined in state.rs
         } else {
             0.0
         };
-        
+
         let d_stress = -self.stress_decay_rate * (fast.stress - self.stress_target)
             + self.stress_sensitivity * (negative_stimulus + surprise_stress + moral_stress);
         fast.stress += d_stress * dt;
-        
+
         // === Affect dynamics ===
         // Affect moves toward stimulus-induced target.
         // During idle (no stimulus), affect decays toward neutral — mood_bias
         // should NOT pull valence negative when nothing is happening, otherwise
         // a negative mood creates a feedback loop: negative affect → stress ↑ →
         // more negative affect → stress ↑↑ (death spiral).
-        let mood_influence = if has_stimulus { medium.mood_bias * 0.3 } else { 0.0 };
+        let mood_influence = if has_stimulus {
+            medium.mood_bias * 0.3
+        } else {
+            0.0
+        };
         let target_valence = input.content_valence * self.affect_sensitivity + mood_influence;
         let target_arousal = input.content_intensity * 0.5 + input.surprise * 0.3 + 0.2;
 
@@ -125,7 +142,7 @@ impl DefaultDynamics {
         if has_stimulus {
             fast.affect.valence -= fast.stress * 0.1 * dt;
         }
-        
+
         // === Curiosity dynamics ===
         // Curiosity increases with positive surprise, decreases with stress
         // Boredom also drives curiosity up (seeking novelty)
@@ -150,19 +167,26 @@ impl DefaultDynamics {
         let novelty = input.surprise * 0.5 + input.content_intensity * 0.3;
         let d_boredom = 0.01 * (1.0 - novelty)  // Monotony accumulation
             - novelty * 0.15                      // Novelty suppression
-            - fast.stress * 0.01;                 // Stress also suppresses boredom
+            - fast.stress * 0.01; // Stress also suppresses boredom
         fast.boredom += d_boredom * dt;
-        
+
         // Normalize
         fast.normalize();
     }
 
     /// Medium dynamics: ds_medium/dt = F_medium(s_medium, s_slow, avg(s_fast))
-    pub fn step_medium(&self, medium: &mut MediumState, fast: &FastState, _slow: &SlowState, input: &SensoryInput, dt: f32) {
+    pub fn step_medium(
+        &self,
+        medium: &mut MediumState,
+        fast: &FastState,
+        _slow: &SlowState,
+        input: &SensoryInput,
+        dt: f32,
+    ) {
         // Medium dynamics are much slower
         let dt_hours = dt / 3600.0;
         let tau = self.mood_time_constant;
-        
+
         // === Mood bias ===
         // Integrates affect valence over time.
         // During idle (no stimulus), mood decays faster toward neutral — the
@@ -172,55 +196,62 @@ impl DefaultDynamics {
         let d_mood = (fast.affect.valence - medium.mood_bias) / effective_tau;
         medium.mood_bias += d_mood * dt_hours;
         medium.mood_bias = medium.mood_bias.clamp(-1.0, 1.0);
-        
+
         // === Openness ===
         // Influenced by curiosity and recent exploration outcomes
         let d_openness = (fast.curiosity * 0.5 - medium.openness) * 0.1;
         medium.openness += d_openness * dt_hours;
         medium.openness = medium.openness.clamp(0.0, 1.0);
-        
+
         // === Hunger/Deprivation ===
         // Accumulates from unmet social needs
         let d_hunger = (fast.social_need - 0.5).max(0.0) * 0.1;
         medium.hunger += d_hunger * dt_hours;
         medium.hunger = medium.hunger.clamp(0.0, 1.0);
-        
+
         // === Attachment ===
         // Updated based on interaction outcomes
         if input.is_social {
             let was_positive = input.content_valence > 0.0;
-            medium.attachment.update_from_interaction(was_positive, input.response_delay_factor);
+            medium
+                .attachment
+                .update_from_interaction(was_positive, input.response_delay_factor);
         }
-        
+
         // Sanitize all medium state values (NaN/Inf guard)
         medium.normalize();
     }
 
     /// Slow dynamics: only called on crisis events
-    /// 
+    ///
     /// Returns true if narrative collapse occurred
-    pub fn step_slow_crisis(&self, slow: &mut SlowState, medium: &MediumState, crisis_intensity: f32) -> bool {
+    pub fn step_slow_crisis(
+        &self,
+        slow: &mut SlowState,
+        medium: &MediumState,
+        crisis_intensity: f32,
+    ) -> bool {
         // Narrative collapse threshold depends on rigidity
         let collapse_threshold = 0.5 + slow.rigidity * 0.4;
-        
+
         if crisis_intensity > collapse_threshold {
             // Narrative collapse! Major personality shift possible
-            
+
             // Reduce rigidity temporarily (plasticity window)
             slow.rigidity *= 0.7;
-            
+
             // Narrative bias shifts based on crisis nature
             // (In real implementation, this would be determined by the crisis content)
             slow.narrative_bias = medium.mood_bias * 0.5;
-            
+
             return true;
         }
-        
+
         // Normal slow update: rigidity increases over time (belief solidification)
         slow.rigidity += 0.001 * (1.0 - slow.rigidity);
         slow.rigidity = slow.rigidity.clamp(0.0, 1.0);
         slow.narrative_bias = slow.narrative_bias.clamp(-1.0, 1.0);
-        
+
         false
     }
 
@@ -229,10 +260,10 @@ impl DefaultDynamics {
         // Moral violations create immediate stress and energy depletion
         fast.stress += cost * 0.5;
         fast.energy -= cost * 0.3;
-        
+
         // Also affects valence (guilt)
         fast.affect.valence -= cost * 0.2;
-        
+
         fast.normalize();
     }
 }
@@ -242,7 +273,7 @@ pub fn homeostatic_error(state: &OrganismState, dynamics: &DefaultDynamics) -> f
     let e_err = (state.fast.energy - dynamics.energy_target).abs();
     let s_err = (state.fast.stress - dynamics.stress_target).abs();
     let sn_err = (state.fast.social_need - dynamics.social_need_target).abs();
-    
+
     (e_err + s_err + sn_err) / 3.0
 }
 
@@ -255,14 +286,14 @@ mod tests {
         let dynamics = DefaultDynamics::default();
         let mut state = OrganismState::default();
         state.fast.stress = 0.8; // High initial stress
-        
+
         let input = SensoryInput::default();
-        
+
         // Let stress decay
         for _ in 0..100 {
             dynamics.step(&mut state, &input, Duration::from_secs(60));
         }
-        
+
         // Stress should have decayed toward target
         assert!(state.fast.stress < 0.5);
     }
@@ -272,15 +303,15 @@ mod tests {
         let dynamics = DefaultDynamics::default();
         let mut state = OrganismState::default();
         state.fast.social_need = 0.8;
-        
+
         let input = SensoryInput {
             is_social: true,
             content_valence: 0.5,
             ..Default::default()
         };
-        
+
         dynamics.step(&mut state, &input, Duration::from_secs(1));
-        
+
         assert!(state.fast.social_need < 0.8);
     }
 
@@ -289,15 +320,15 @@ mod tests {
         let dynamics = DefaultDynamics::default();
         let mut state = OrganismState::default();
         let initial_stress = state.fast.stress;
-        
+
         let input = SensoryInput {
             content_valence: -0.8,
             content_intensity: 0.9,
             ..Default::default()
         };
-        
+
         dynamics.step(&mut state, &input, Duration::from_secs(1));
-        
+
         assert!(state.fast.stress > initial_stress);
     }
 
@@ -305,7 +336,7 @@ mod tests {
     fn test_nan_resistance() {
         let dynamics = DefaultDynamics::default();
         let mut state = OrganismState::default();
-        
+
         // Inject NaN into various state fields
         state.fast.energy = f32::NAN;
         state.fast.stress = f32::INFINITY;
@@ -313,20 +344,48 @@ mod tests {
         state.fast.affect.valence = f32::NAN;
         state.medium.mood_bias = f32::NAN;
         state.medium.openness = f32::INFINITY;
-        
+
         let input = SensoryInput::default();
-        
+
         // Step should not panic, and should recover all values to finite
         dynamics.step(&mut state, &input, Duration::from_secs(1));
-        
-        assert!(state.fast.energy.is_finite(), "energy should be finite, got {}", state.fast.energy);
-        assert!(state.fast.stress.is_finite(), "stress should be finite, got {}", state.fast.stress);
-        assert!(state.fast.curiosity.is_finite(), "curiosity should be finite, got {}", state.fast.curiosity);
-        assert!(state.fast.affect.valence.is_finite(), "valence should be finite, got {}", state.fast.affect.valence);
-        assert!(state.fast.affect.arousal.is_finite(), "arousal should be finite, got {}", state.fast.affect.arousal);
-        assert!(state.medium.mood_bias.is_finite(), "mood_bias should be finite, got {}", state.medium.mood_bias);
-        assert!(state.medium.openness.is_finite(), "openness should be finite, got {}", state.medium.openness);
-        
+
+        assert!(
+            state.fast.energy.is_finite(),
+            "energy should be finite, got {}",
+            state.fast.energy
+        );
+        assert!(
+            state.fast.stress.is_finite(),
+            "stress should be finite, got {}",
+            state.fast.stress
+        );
+        assert!(
+            state.fast.curiosity.is_finite(),
+            "curiosity should be finite, got {}",
+            state.fast.curiosity
+        );
+        assert!(
+            state.fast.affect.valence.is_finite(),
+            "valence should be finite, got {}",
+            state.fast.affect.valence
+        );
+        assert!(
+            state.fast.affect.arousal.is_finite(),
+            "arousal should be finite, got {}",
+            state.fast.affect.arousal
+        );
+        assert!(
+            state.medium.mood_bias.is_finite(),
+            "mood_bias should be finite, got {}",
+            state.medium.mood_bias
+        );
+        assert!(
+            state.medium.openness.is_finite(),
+            "openness should be finite, got {}",
+            state.medium.openness
+        );
+
         // All should be in valid ranges
         assert!(state.fast.energy >= 0.0 && state.fast.energy <= 1.0);
         assert!(state.fast.stress >= 0.0 && state.fast.stress <= 1.0);
@@ -337,7 +396,7 @@ mod tests {
     fn test_extreme_dt_stability() {
         let dynamics = DefaultDynamics::default();
         let mut state = OrganismState::default();
-        
+
         // Very large dt (simulating long pause)
         let input = SensoryInput {
             content_valence: -1.0,
@@ -345,13 +404,21 @@ mod tests {
             surprise: 1.0,
             ..Default::default()
         };
-        
+
         // 24 hours in one step — shouldn't produce NaN or out-of-range
         dynamics.step(&mut state, &input, Duration::from_secs(86400));
-        
-        assert!(state.fast.energy.is_finite() && state.fast.energy >= 0.0 && state.fast.energy <= 1.0);
-        assert!(state.fast.stress.is_finite() && state.fast.stress >= 0.0 && state.fast.stress <= 1.0);
-        assert!(state.medium.mood_bias.is_finite() && state.medium.mood_bias >= -1.0 && state.medium.mood_bias <= 1.0);
+
+        assert!(
+            state.fast.energy.is_finite() && state.fast.energy >= 0.0 && state.fast.energy <= 1.0
+        );
+        assert!(
+            state.fast.stress.is_finite() && state.fast.stress >= 0.0 && state.fast.stress <= 1.0
+        );
+        assert!(
+            state.medium.mood_bias.is_finite()
+                && state.medium.mood_bias >= -1.0
+                && state.medium.mood_bias <= 1.0
+        );
     }
 
     #[test]
@@ -372,8 +439,12 @@ mod tests {
             dynamics.step(&mut state, &input, Duration::from_secs(1));
         }
 
-        assert!(state.fast.boredom > initial_boredom,
-            "Boredom should increase with monotony: {} > {}", state.fast.boredom, initial_boredom);
+        assert!(
+            state.fast.boredom > initial_boredom,
+            "Boredom should increase with monotony: {} > {}",
+            state.fast.boredom,
+            initial_boredom
+        );
     }
 
     #[test]
@@ -394,8 +465,11 @@ mod tests {
             dynamics.step(&mut state, &input, Duration::from_secs(1));
         }
 
-        assert!(state.fast.boredom < 0.5,
-            "Boredom should decrease with novelty: {}", state.fast.boredom);
+        assert!(
+            state.fast.boredom < 0.5,
+            "Boredom should decrease with novelty: {}",
+            state.fast.boredom
+        );
     }
 
     #[test]
@@ -443,7 +517,10 @@ mod tests {
         let collapsed_flexible = dynamics.step_slow_crisis(&mut slow_flexible, &medium, 0.8);
 
         // Same crisis intensity: flexible personality collapses, rigid one doesn't
-        assert!(!collapsed_rigid, "High rigidity should resist collapse at 0.8");
+        assert!(
+            !collapsed_rigid,
+            "High rigidity should resist collapse at 0.8"
+        );
         assert!(collapsed_flexible, "Low rigidity should collapse at 0.8");
     }
 
@@ -457,9 +534,18 @@ mod tests {
 
         dynamics.apply_moral_cost(&mut fast, 0.6);
 
-        assert!(fast.stress > initial_stress, "Moral cost should increase stress");
-        assert!(fast.energy < initial_energy, "Moral cost should decrease energy");
-        assert!(fast.affect.valence < initial_valence, "Moral cost should decrease valence (guilt)");
+        assert!(
+            fast.stress > initial_stress,
+            "Moral cost should increase stress"
+        );
+        assert!(
+            fast.energy < initial_energy,
+            "Moral cost should decrease energy"
+        );
+        assert!(
+            fast.affect.valence < initial_valence,
+            "Moral cost should decrease valence (guilt)"
+        );
         // Values should remain in valid range
         assert!(fast.stress >= 0.0 && fast.stress <= 1.0);
         assert!(fast.energy >= 0.0 && fast.energy <= 1.0);
@@ -475,14 +561,22 @@ mod tests {
         state.fast.stress = dynamics.stress_target;
         state.fast.social_need = dynamics.social_need_target;
         let err = homeostatic_error(&state, &dynamics);
-        assert!(err < 0.01, "Error at equilibrium should be near zero, got {}", err);
+        assert!(
+            err < 0.01,
+            "Error at equilibrium should be near zero, got {}",
+            err
+        );
 
         // Far from equilibrium, error should be high
         state.fast.energy = 0.0;
         state.fast.stress = 1.0;
         state.fast.social_need = 1.0;
         let err = homeostatic_error(&state, &dynamics);
-        assert!(err > 0.3, "Error far from equilibrium should be high, got {}", err);
+        assert!(
+            err > 0.3,
+            "Error far from equilibrium should be high, got {}",
+            err
+        );
     }
 
     /// Regression test: organism with negative mood should converge toward
@@ -507,15 +601,24 @@ mod tests {
         }
 
         // After 10 minutes idle, stress should have DECREASED toward target (0.2)
-        assert!(state.fast.stress < 0.5,
-            "Stress should decrease during idle, got {:.3}", state.fast.stress);
+        assert!(
+            state.fast.stress < 0.5,
+            "Stress should decrease during idle, got {:.3}",
+            state.fast.stress
+        );
 
         // Energy should have INCREASED toward target (0.7)
-        assert!(state.fast.energy > 0.6,
-            "Energy should recover during idle, got {:.3}", state.fast.energy);
+        assert!(
+            state.fast.energy > 0.6,
+            "Energy should recover during idle, got {:.3}",
+            state.fast.energy
+        );
 
         // Mood bias should have moved toward neutral
-        assert!(state.medium.mood_bias > -0.3,
-            "Mood bias should recover toward neutral during idle, got {:.3}", state.medium.mood_bias);
+        assert!(
+            state.medium.mood_bias > -0.3,
+            "Mood bias should recover toward neutral during idle, got {:.3}",
+            state.medium.mood_bias
+        );
     }
 }

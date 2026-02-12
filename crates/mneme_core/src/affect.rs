@@ -1,13 +1,13 @@
 //! Affect Model based on Russell's Circumplex Model of Emotion
-//! 
+//!
 //! Instead of discrete emotion labels (Happy/Sad/Angry), we use a continuous
 //! 2D coordinate system: Valence × Arousal. This allows for nuanced, mixed emotions.
 
-use serde::{Deserialize, Serialize};
 use crate::state::deserialize_safe_f32;
+use serde::{Deserialize, Serialize};
 
 /// Russell's Circumplex Model: 2D emotional state
-/// 
+///
 /// This replaces the discrete `Emotion` enum with a continuous representation.
 /// Any emotion can be expressed as a point in this 2D space.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -28,8 +28,8 @@ pub struct Affect {
 impl Default for Affect {
     fn default() -> Self {
         Self {
-            valence: 0.0,  // Neutral
-            arousal: 0.3,  // Slightly calm baseline
+            valence: 0.0, // Neutral
+            arousal: 0.3, // Slightly calm baseline
         }
     }
 }
@@ -66,38 +66,72 @@ impl Affect {
     }
 
     /// Common affect presets for convenience
-    pub fn joy() -> Self { Self::new(0.8, 0.6) }
-    pub fn excitement() -> Self { Self::new(0.7, 0.9) }
-    pub fn contentment() -> Self { Self::new(0.6, 0.2) }
-    pub fn serenity() -> Self { Self::new(0.4, 0.1) }
-    
-    pub fn sadness() -> Self { Self::new(-0.7, 0.2) }
-    pub fn depression() -> Self { Self::new(-0.8, 0.1) }
-    pub fn anxiety() -> Self { Self::new(-0.5, 0.8) }
-    pub fn fear() -> Self { Self::new(-0.7, 0.9) }
-    pub fn anger() -> Self { Self::new(-0.8, 0.9) }
-    pub fn frustration() -> Self { Self::new(-0.5, 0.6) }
-    
-    pub fn surprise() -> Self { Self::new(0.1, 0.9) }
-    pub fn boredom() -> Self { Self::new(-0.3, 0.1) }
-    pub fn neutral() -> Self { Self::default() }
+    pub fn joy() -> Self {
+        Self::new(0.8, 0.6)
+    }
+    pub fn excitement() -> Self {
+        Self::new(0.7, 0.9)
+    }
+    pub fn contentment() -> Self {
+        Self::new(0.6, 0.2)
+    }
+    pub fn serenity() -> Self {
+        Self::new(0.4, 0.1)
+    }
+
+    pub fn sadness() -> Self {
+        Self::new(-0.7, 0.2)
+    }
+    pub fn depression() -> Self {
+        Self::new(-0.8, 0.1)
+    }
+    pub fn anxiety() -> Self {
+        Self::new(-0.5, 0.8)
+    }
+    pub fn fear() -> Self {
+        Self::new(-0.7, 0.9)
+    }
+    pub fn anger() -> Self {
+        Self::new(-0.8, 0.9)
+    }
+    pub fn frustration() -> Self {
+        Self::new(-0.5, 0.6)
+    }
+
+    pub fn surprise() -> Self {
+        Self::new(0.1, 0.9)
+    }
+    pub fn boredom() -> Self {
+        Self::new(-0.3, 0.1)
+    }
+    pub fn neutral() -> Self {
+        Self::default()
+    }
 
     /// Get the closest discrete emotion label (for backward compatibility and TTS)
     pub fn to_discrete_label(&self) -> &'static str {
         // Quadrant-based classification with intensity threshold
         let intensity = self.intensity();
-        
+
         if intensity < 0.2 {
             return "neutral";
         }
 
         match (self.valence >= 0.0, self.arousal >= 0.5) {
             (true, true) => {
-                if self.arousal > 0.7 { "excited" } else { "happy" }
+                if self.arousal > 0.7 {
+                    "excited"
+                } else {
+                    "happy"
+                }
             }
             (true, false) => "calm",
             (false, true) => {
-                if self.valence < -0.5 { "angry" } else { "anxious" }
+                if self.valence < -0.5 {
+                    "angry"
+                } else {
+                    "anxious"
+                }
             }
             (false, false) => "sad",
         }
@@ -106,7 +140,7 @@ impl Affect {
     /// Describe the affect in natural language (for LLM context injection)
     pub fn describe(&self) -> String {
         let intensity = self.intensity();
-        
+
         let intensity_word = if intensity < 0.2 {
             "平静"
         } else if intensity < 0.4 {
@@ -121,22 +155,36 @@ impl Affect {
 
         let emotion_word = match (self.valence >= 0.0, self.arousal >= 0.5) {
             (true, true) => {
-                if self.valence > 0.5 && self.arousal > 0.7 { "兴奋愉悦" }
-                else if self.valence > 0.5 { "开心" }
-                else { "有些期待" }
+                if self.valence > 0.5 && self.arousal > 0.7 {
+                    "兴奋愉悦"
+                } else if self.valence > 0.5 {
+                    "开心"
+                } else {
+                    "有些期待"
+                }
             }
             (true, false) => {
-                if self.valence > 0.5 { "满足平和" }
-                else { "放松" }
+                if self.valence > 0.5 {
+                    "满足平和"
+                } else {
+                    "放松"
+                }
             }
             (false, true) => {
-                if self.valence < -0.5 && self.arousal > 0.7 { "烦躁不安" }
-                else if self.valence < -0.3 { "焦虑" }
-                else { "有些紧张" }
+                if self.valence < -0.5 && self.arousal > 0.7 {
+                    "烦躁不安"
+                } else if self.valence < -0.3 {
+                    "焦虑"
+                } else {
+                    "有些紧张"
+                }
             }
             (false, false) => {
-                if self.valence < -0.5 { "低落沮丧" }
-                else { "有点闷闷不乐" }
+                if self.valence < -0.5 {
+                    "低落沮丧"
+                } else {
+                    "有点闷闷不乐"
+                }
             }
         };
 
@@ -157,7 +205,7 @@ mod tests {
         let joy = Affect::joy();
         assert!(joy.valence > 0.5);
         assert!(joy.arousal > 0.4);
-        
+
         let anger = Affect::anger();
         assert!(anger.valence < -0.5);
         assert!(anger.arousal > 0.7);
@@ -167,7 +215,7 @@ mod tests {
     fn test_intensity() {
         let neutral = Affect::neutral();
         assert!(neutral.intensity() < 0.5);
-        
+
         let extreme = Affect::new(1.0, 1.0);
         assert!(extreme.intensity() > 0.9);
     }
@@ -272,15 +320,22 @@ mod tests {
     fn test_describe_neutral() {
         let neutral = Affect::new(0.0, 0.5);
         let desc = neutral.describe();
-        assert!(desc.contains("平稳"), "Neutral should describe as 平稳, got: {}", desc);
+        assert!(
+            desc.contains("平稳"),
+            "Neutral should describe as 平稳, got: {}",
+            desc
+        );
     }
 
     #[test]
     fn test_describe_negative() {
         let sad = Affect::sadness();
         let desc = sad.describe();
-        assert!(desc.contains("低落") || desc.contains("闷闷不乐"),
-            "Sadness should describe as 低落/闷闷不乐, got: {}", desc);
+        assert!(
+            desc.contains("低落") || desc.contains("闷闷不乐"),
+            "Sadness should describe as 低落/闷闷不乐, got: {}",
+            desc
+        );
     }
 
     #[test]

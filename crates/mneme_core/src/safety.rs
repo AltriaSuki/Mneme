@@ -1,6 +1,6 @@
 use crate::config::{CapabilityTier, SafetyConfig};
-use std::path::{Path, PathBuf};
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // Error type
@@ -55,7 +55,10 @@ impl CapabilityGuard {
                 // Restricted: allow most commands, block destructive ones
                 if is_destructive_command(command) {
                     Err(SafetyDenied {
-                        reason: format!("Destructive command not allowed in Restricted tier: '{}'", command),
+                        reason: format!(
+                            "Destructive command not allowed in Restricted tier: '{}'",
+                            command
+                        ),
                         tier: self.config.tier.clone(),
                     })
                 } else {
@@ -68,7 +71,10 @@ impl CapabilityGuard {
                     Ok(())
                 } else {
                     Err(SafetyDenied {
-                        reason: format!("Only read-only commands allowed in ReadOnly tier: '{}'", command),
+                        reason: format!(
+                            "Only read-only commands allowed in ReadOnly tier: '{}'",
+                            command
+                        ),
                         tier: self.config.tier.clone(),
                     })
                 }
@@ -80,12 +86,10 @@ impl CapabilityGuard {
     pub fn check_path(&self, path: &Path) -> Result<(), SafetyDenied> {
         match self.config.tier {
             CapabilityTier::Full => Ok(()),
-            CapabilityTier::ReadOnly => {
-                Err(SafetyDenied {
-                    reason: "Write access denied in ReadOnly tier".to_string(),
-                    tier: self.config.tier.clone(),
-                })
-            }
+            CapabilityTier::ReadOnly => Err(SafetyDenied {
+                reason: "Write access denied in ReadOnly tier".to_string(),
+                tier: self.config.tier.clone(),
+            }),
             CapabilityTier::Restricted => {
                 if self.config.allowed_paths.is_empty() {
                     // No whitelist configured — allow current directory
@@ -157,12 +161,40 @@ fn extract_host(url: &str) -> String {
 fn is_read_only_command(command: &str) -> bool {
     let first_token = command.split_whitespace().next().unwrap_or("");
     let read_only_commands = [
-        "ls", "cat", "head", "tail", "less", "more", "find", "grep",
-        "wc", "file", "stat", "du", "df", "pwd", "echo", "date",
-        "whoami", "hostname", "uname", "env", "printenv", "which",
-        "git status", "git log", "git diff", "git show", "git branch",
-        "curl", "wget",  // GET by default
-        "ps", "top", "htop", "free", "uptime",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "less",
+        "more",
+        "find",
+        "grep",
+        "wc",
+        "file",
+        "stat",
+        "du",
+        "df",
+        "pwd",
+        "echo",
+        "date",
+        "whoami",
+        "hostname",
+        "uname",
+        "env",
+        "printenv",
+        "which",
+        "git status",
+        "git log",
+        "git diff",
+        "git show",
+        "git branch",
+        "curl",
+        "wget", // GET by default
+        "ps",
+        "top",
+        "htop",
+        "free",
+        "uptime",
     ];
 
     // Check multi-word commands first (e.g. "git status")
@@ -179,8 +211,7 @@ fn is_read_only_command(command: &str) -> bool {
 fn is_destructive_command(command: &str) -> bool {
     let first_token = command.split_whitespace().next().unwrap_or("");
     let destructive_prefixes = [
-        "rm", "rmdir", "mkfs", "dd", "fdisk", "parted",
-        "shutdown", "reboot", "halt", "poweroff",
+        "rm", "rmdir", "mkfs", "dd", "fdisk", "parted", "shutdown", "reboot", "halt", "poweroff",
         "kill", "killall", "pkill",
     ];
 
@@ -328,7 +359,10 @@ mod tests {
 
     #[test]
     fn test_extract_host() {
-        assert_eq!(extract_host("https://api.example.com/v1"), "api.example.com");
+        assert_eq!(
+            extract_host("https://api.example.com/v1"),
+            "api.example.com"
+        );
         assert_eq!(extract_host("http://localhost:8080/path"), "localhost");
     }
 }

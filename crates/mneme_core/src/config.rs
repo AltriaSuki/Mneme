@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use anyhow::{Context, Result};
 
 // ============================================================================
 // Top-level config
@@ -22,8 +22,8 @@ impl MnemeConfig {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .with_context(|| format!("Failed to read config file: {}", path.as_ref().display()))?;
-        let mut config: MnemeConfig = toml::from_str(&content)
-            .with_context(|| "Failed to parse TOML config")?;
+        let mut config: MnemeConfig =
+            toml::from_str(&content).with_context(|| "Failed to parse TOML config")?;
         config.apply_env_overrides();
         Ok(config)
     }
@@ -85,7 +85,6 @@ pub struct LlmConfig {
     pub base_url: Option<String>,
     pub max_tokens: u32,
     pub temperature: f32,
-
 }
 
 impl Default for LlmConfig {
@@ -171,7 +170,9 @@ impl Default for TokenBudgetConfig {
 pub enum DegradationStrategy {
     #[default]
     HardStop,
-    Degrade { max_tokens_cap: u32 },
+    Degrade {
+        max_tokens_cap: u32,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]

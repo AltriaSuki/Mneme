@@ -3,14 +3,11 @@
 //! Uses proptest to verify invariants that must hold for ALL possible inputs,
 //! not just hand-picked examples. This catches edge cases that unit tests miss.
 
+use mneme_core::dynamics::{homeostatic_error, DefaultDynamics, Dynamics};
+use mneme_core::state::{AttachmentState, AttachmentStyle, ValueNetwork};
+use mneme_core::{Affect, Emotion, FastState, MediumState, OrganismState, SensoryInput, SlowState};
 use proptest::prelude::*;
 use std::time::Duration;
-use mneme_core::{
-    OrganismState, FastState, MediumState, SlowState, Affect,
-    Emotion, SensoryInput,
-};
-use mneme_core::dynamics::{DefaultDynamics, Dynamics, homeostatic_error};
-use mneme_core::state::{AttachmentState, AttachmentStyle, ValueNetwork};
 
 // ============================================================================
 // Strategies: generate arbitrary but valid state values
@@ -23,50 +20,74 @@ fn arb_affect() -> impl Strategy<Value = Affect> {
 
 /// Generate an arbitrary FastState with values in [0, 1] range.
 fn arb_fast_state() -> impl Strategy<Value = FastState> {
-    (arb_affect(), 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
-        .prop_map(|(affect, energy, stress, curiosity, social_need, boredom)| FastState {
-            affect,
-            energy,
-            stress,
-            curiosity,
-            social_need,
-            boredom,
-        })
+    (
+        arb_affect(),
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+    )
+        .prop_map(
+            |(affect, energy, stress, curiosity, social_need, boredom)| FastState {
+                affect,
+                energy,
+                stress,
+                curiosity,
+                social_need,
+                boredom,
+            },
+        )
 }
 
 /// Generate an arbitrary MediumState.
 fn arb_medium_state() -> impl Strategy<Value = MediumState> {
-    (-1.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
-        .prop_map(|(mood_bias, anxiety, avoidance, openness, hunger)| MediumState {
-            mood_bias,
-            attachment: AttachmentState { anxiety, avoidance },
-            openness,
-            hunger,
-        })
+    (
+        -1.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+    )
+        .prop_map(
+            |(mood_bias, anxiety, avoidance, openness, hunger)| MediumState {
+                mood_bias,
+                attachment: AttachmentState { anxiety, avoidance },
+                openness,
+                hunger,
+            },
+        )
 }
 
 /// Generate an arbitrary OrganismState.
 fn arb_organism_state() -> impl Strategy<Value = OrganismState> {
-    (arb_fast_state(), arb_medium_state())
-        .prop_map(|(fast, medium)| OrganismState {
-            fast,
-            medium,
-            slow: SlowState::default(),
-            last_updated: 0,
-        })
+    (arb_fast_state(), arb_medium_state()).prop_map(|(fast, medium)| OrganismState {
+        fast,
+        medium,
+        slow: SlowState::default(),
+        last_updated: 0,
+    })
 }
 
 /// Generate an arbitrary SensoryInput.
 fn arb_sensory_input() -> impl Strategy<Value = SensoryInput> {
-    (-1.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, any::<bool>(), 0.0f32..=5.0)
-        .prop_map(|(valence, intensity, surprise, is_social, delay)| SensoryInput {
-            content_valence: valence,
-            content_intensity: intensity,
-            surprise,
-            is_social,
-            response_delay_factor: delay,
-            violated_values: vec![],
-        })
+    (
+        -1.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        any::<bool>(),
+        0.0f32..=5.0,
+    )
+        .prop_map(
+            |(valence, intensity, surprise, is_social, delay)| SensoryInput {
+                content_valence: valence,
+                content_intensity: intensity,
+                surprise,
+                is_social,
+                response_delay_factor: delay,
+                violated_values: vec![],
+            },
+        )
 }
 
 // ============================================================================

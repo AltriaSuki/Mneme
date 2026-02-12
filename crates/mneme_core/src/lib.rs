@@ -1,19 +1,23 @@
+pub mod affect;
+pub mod config;
+pub mod dynamics;
 pub mod persona;
 pub mod prelude;
-pub mod affect;
-pub mod state;
-pub mod dynamics;
-pub mod values;
-pub mod config;
 pub mod safety;
 pub mod sentiment;
+pub mod state;
+pub mod values;
 
-pub use persona::{Psyche, SeedPersona};
 pub use affect::Affect;
-pub use state::{OrganismState, FastState, MediumState, SlowState, SensoryInput, AttachmentStyle, ValueNetwork};
-pub use dynamics::{Dynamics, DefaultDynamics};
-pub use values::{ValueJudge, RuleBasedJudge, Situation, JudgmentResult, ValueConflict, HierarchicalValueNetwork, ValueTier};
-
+pub use dynamics::{DefaultDynamics, Dynamics};
+pub use persona::{Psyche, SeedPersona};
+pub use state::{
+    AttachmentStyle, FastState, MediumState, OrganismState, SensoryInput, SlowState, ValueNetwork,
+};
+pub use values::{
+    HierarchicalValueNetwork, JudgmentResult, RuleBasedJudge, Situation, ValueConflict, ValueJudge,
+    ValueTier,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -50,6 +54,22 @@ pub enum Event {
     ProactiveTrigger(Trigger),
 }
 
+/// Resolution level for inner monologue (ADR-013).
+///
+/// Maps to the three-layer consciousness model:
+/// - Zero: pure ODE, no language, no cost, no episode produced
+/// - Low: small/local model, fragment-style thoughts, low strength episodes
+/// - High: full LLM call, coherent thinking, high strength episodes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MonologueResolution {
+    /// Pure ODE state evolution, no LLM call.
+    Zero,
+    /// Fragment-style inner speech via small/cheap model.
+    Low,
+    /// Full coherent thought via primary LLM.
+    High,
+}
+
 /// Trigger types that can initiate proactive reasoning
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Trigger {
@@ -75,16 +95,26 @@ pub enum Trigger {
         last_mentioned: i64,
     },
     /// Trending content on monitored platform
-    Trending {
-        platform: String,
-        topic: String,
-    },
+    Trending { platform: String, topic: String },
     /// Internal state-driven rumination (mind-wandering, social longing, curiosity)
     Rumination {
         /// Kind: "mind_wandering", "social_longing", "curiosity_spike"
         kind: String,
         /// Human-readable context for the LLM
         context: String,
+    },
+    /// Self-triggered inner monologue (ADR-012 + ADR-013).
+    ///
+    /// Fired when ODE state crosses consciousness thresholds.
+    /// Resolution determines which model tier handles it.
+    InnerMonologue {
+        /// What triggered consciousness: "boredom_overflow", "stress_spike",
+        /// "memory_surfaced", "body_feeling", "existential"
+        cause: String,
+        /// Seed content for the monologue (recalled memory fragment, body feeling, etc.)
+        seed: String,
+        /// Resolution level — determines model cost and episode strength
+        resolution: MonologueResolution,
     },
 }
 
@@ -116,12 +146,21 @@ pub trait Memory: Send + Sync {
         Ok(String::new())
     }
     /// Store a semantic fact triple. Default: no-op.
-    async fn store_fact(&self, _subject: &str, _predicate: &str, _object: &str, _confidence: f32) -> anyhow::Result<()> {
+    async fn store_fact(
+        &self,
+        _subject: &str,
+        _predicate: &str,
+        _object: &str,
+        _confidence: f32,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
     /// Recall self-knowledge entries by domain. Returns (content, confidence) pairs.
     /// Default: empty (no self-knowledge store available).
-    async fn recall_self_knowledge_by_domain(&self, _domain: &str) -> anyhow::Result<Vec<(String, f32)>> {
+    async fn recall_self_knowledge_by_domain(
+        &self,
+        _domain: &str,
+    ) -> anyhow::Result<Vec<(String, f32)>> {
         Ok(Vec::new())
     }
     /// Recall blended context: episodes + facts in one call.
@@ -168,13 +207,22 @@ pub struct PersonContext {
 #[async_trait]
 pub trait SocialGraph: Send + Sync {
     /// Find a person by one of their platform aliases (e.g., "qq", "12345")
-    async fn find_person(&self, platform: &str, platform_id: &str) -> anyhow::Result<Option<Person>>;
+    async fn find_person(
+        &self,
+        platform: &str,
+        platform_id: &str,
+    ) -> anyhow::Result<Option<Person>>;
 
     /// Create or update a person
     async fn upsert_person(&self, person: &Person) -> anyhow::Result<()>;
 
     /// Record a relationship or interaction between two people
-    async fn record_interaction(&self, from_person_id: Uuid, to_person_id: Uuid, context: &str) -> anyhow::Result<()>;
+    async fn record_interaction(
+        &self,
+        from_person_id: Uuid,
+        to_person_id: Uuid,
+        context: &str,
+    ) -> anyhow::Result<()>;
 
     /// Get rich context about a person (for prompt injection)
     async fn get_person_context(&self, person_id: Uuid) -> anyhow::Result<Option<PersonContext>>;
@@ -190,13 +238,13 @@ pub trait Expression: Send + Sync {
 pub trait TriggerEvaluator: Send + Sync {
     /// Evaluate if any triggers should fire now
     async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>>;
-    
+
     /// Get the name of this evaluator for logging
     fn name(&self) -> &'static str;
 }
 
 /// Emotional tone for voice synthesis (cross-cutting concern)
-/// 
+///
 /// DEPRECATED: Use `Affect` for the new continuous emotion model.
 /// This enum is kept for backward compatibility with TTS and existing code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -224,7 +272,7 @@ impl Emotion {
             Self::Surprised => "surprised",
         }
     }
-    
+
     /// Parse from string (case-insensitive)
     pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
