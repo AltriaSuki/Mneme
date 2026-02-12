@@ -978,7 +978,12 @@ impl ReasoningEngine {
         // Store each insight as self-knowledge
         for insight in &insights {
             self.coordinator
-                .store_metacognition_insight(&insight.domain, &insight.content, insight.confidence)
+                .store_metacognition_insight(
+                    &insight.domain,
+                    &insight.content,
+                    insight.confidence,
+                    insight.is_private,
+                )
                 .await;
         }
 

@@ -1575,11 +1575,15 @@ impl SqliteMemory {
     }
 
     /// Recall self-knowledge entries by domain, ordered by confidence desc.
+    ///
+    /// B-9: Excludes private entries by default. Use `recall_self_knowledge_all`
+    /// for internal use where private entries are needed.
     pub async fn recall_self_knowledge(&self, domain: &str) -> Result<Vec<SelfKnowledge>> {
         let rows = sqlx::query(
             "SELECT id, domain, content, confidence, source, source_episode_id, \
              is_private, created_at, updated_at \
              FROM self_knowledge WHERE domain = ? AND confidence > 0.1 \
+             AND is_private = 0 \
              ORDER BY confidence DESC",
         )
         .bind(domain)
@@ -1591,6 +1595,37 @@ impl SqliteMemory {
             .iter()
             .map(|row| self.row_to_self_knowledge(row))
             .collect())
+    }
+
+    /// Recall ALL self-knowledge entries by domain (including private).
+    /// For internal use only (consolidation, pattern detection).
+    pub async fn recall_self_knowledge_all(&self, domain: &str) -> Result<Vec<SelfKnowledge>> {
+        let rows = sqlx::query(
+            "SELECT id, domain, content, confidence, source, source_episode_id, \
+             is_private, created_at, updated_at \
+             FROM self_knowledge WHERE domain = ? AND confidence > 0.1 \
+             ORDER BY confidence DESC",
+        )
+        .bind(domain)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to recall all self_knowledge by domain")?;
+
+        Ok(rows
+            .iter()
+            .map(|row| self.row_to_self_knowledge(row))
+            .collect())
+    }
+
+    /// B-9: Mark an existing self-knowledge entry as private.
+    pub async fn mark_self_knowledge_private(&self, id: i64) -> Result<()> {
+        sqlx::query("UPDATE self_knowledge SET is_private = 1, updated_at = ? WHERE id = ?")
+            .bind(Utc::now().timestamp())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to mark self_knowledge as private")?;
+        Ok(())
     }
 
     /// Get all self-knowledge entries above a confidence threshold.

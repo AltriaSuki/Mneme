@@ -259,7 +259,20 @@ impl OrganismCoordinator {
     }
 
     /// Store a metacognition insight as self-knowledge.
-    pub async fn store_metacognition_insight(&self, domain: &str, content: &str, confidence: f32) {
+    ///
+    /// B-9: `is_private` controls whether the insight is excluded from prompts.
+    /// Emotion and body_feeling domains are auto-private by default.
+    pub async fn store_metacognition_insight(
+        &self,
+        domain: &str,
+        content: &str,
+        confidence: f32,
+        is_private: bool,
+    ) {
+        // B-9: Auto-privacy heuristic — emotion and body_feeling insights
+        // are private by default (they represent inner states not for display).
+        let effective_private = is_private || matches!(domain, "emotion" | "body_feeling");
+
         if let Some(ref db) = self.db {
             if let Err(e) = db
                 .store_self_knowledge(
@@ -268,11 +281,24 @@ impl OrganismCoordinator {
                     confidence,
                     "self:metacognition",
                     None,
-                    false,
+                    effective_private,
                 )
                 .await
             {
                 tracing::warn!("Failed to store metacognition insight: {}", e);
+            }
+        }
+    }
+
+    /// B-9: Mark an existing self-knowledge entry as private.
+    pub async fn mark_private(&self, entry_id: i64) {
+        if let Some(ref db) = self.db {
+            if let Err(e) = db.mark_self_knowledge_private(entry_id).await {
+                tracing::warn!(
+                    "Failed to mark self_knowledge #{} as private: {}",
+                    entry_id,
+                    e
+                );
             }
         }
     }
@@ -346,6 +372,7 @@ impl OrganismCoordinator {
                     if let Some(ref db) = self.db {
                         for (text, intensity) in &feelings {
                             tracing::debug!("Body feeling: {} (intensity={:.2})", text, intensity);
+                            // B-9: Body feelings are private by default (inner state)
                             if let Err(e) = db
                                 .store_self_knowledge(
                                     "body_feeling",
@@ -353,7 +380,7 @@ impl OrganismCoordinator {
                                     *intensity,
                                     "somatic",
                                     None,
-                                    false,
+                                    true,
                                 )
                                 .await
                             {

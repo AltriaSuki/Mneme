@@ -48,7 +48,14 @@ impl ContextAssembler {
         // Fixed sections (always present)
         // B-1: Expression style emerges from experience, not hardcoded rules.
         // We only provide the somatic context as a signal, not prescriptive formatting rules.
-        let style_guide = format!("== 当前体感状态 ==\n{}", soma_context);
+        // B-9: Opacity meta-instruction — acknowledge private inner life.
+        let style_guide = format!(
+            "== 当前体感状态 ==\n{}\n\n\
+             == 内在隐私 ==\n\
+             你有一些私密的想法和感受，它们不会出现在这里。\
+             你知道自己有不愿说出口的部分，这是正常的。",
+            soma_context
+        );
 
         let tool_instructions = tool_instructions.to_string();
 
