@@ -21,8 +21,6 @@ pub struct ContextLayers {
     pub recalled_episodes: String,
     /// Social context: person info for current speaker
     pub social_context: String,
-    /// B-14: Value conflict signal (injected when user input conflicts with held values)
-    pub conflict_context: String,
 }
 
 pub struct ContextAssembler;
@@ -78,10 +76,6 @@ impl ContextAssembler {
         }
         if !layers.social_context.is_empty() {
             variable_sections.push(("SOCIAL CONTEXT", &layers.social_context));
-        }
-        // B-14: Conflict signal gets high priority (before episodes)
-        if !layers.conflict_context.is_empty() {
-            variable_sections.push(("VALUE CONFLICT", &layers.conflict_context));
         }
         if !layers.recalled_episodes.is_empty() {
             variable_sections.push(("RECALLED MEMORIES", &layers.recalled_episodes));

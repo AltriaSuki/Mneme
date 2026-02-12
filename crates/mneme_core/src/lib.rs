@@ -16,7 +16,7 @@ pub use state::{
     SlowState, ValueNetwork,
 };
 pub use values::{
-    ConflictSignal, HierarchicalValueNetwork, JudgmentResult, RuleBasedJudge, Situation,
+    HierarchicalValueNetwork, JudgmentResult, RuleBasedJudge, Situation,
     ValueConflict, ValueJudge, ValueTier,
 };
 

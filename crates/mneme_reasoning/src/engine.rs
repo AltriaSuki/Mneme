@@ -322,35 +322,9 @@ impl ReasoningEngine {
         // Apply modulation to LLM parameters
         let base_max_tokens: u32 = 4096;
         let base_temperature: f32 = 0.7;
-        let mut completion_params = CompletionParams {
+        let completion_params = CompletionParams {
             max_tokens: ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32).max(256),
             temperature: (base_temperature + modulation.temperature_delta).clamp(0.0, 2.0),
-        };
-
-        // B-14: Detect value conflicts in user input
-        let conflict_context = if is_user_message {
-            let state_arc = self.coordinator.state();
-            let state = state_arc.read().await;
-            let signal = mneme_core::values::detect_input_conflict(input_text, &state.slow.values);
-            drop(state);
-            if let Some(ref sig) = signal {
-                // Bump temperature to encourage honest/varied responses under conflict
-                completion_params.temperature =
-                    (completion_params.temperature + 0.15).clamp(0.0, 2.0);
-                tracing::info!(
-                    "B-14 conflict detected: {} (strength={:.2})",
-                    sig.value_name,
-                    sig.strength
-                );
-                format!(
-                    "{}\n你可以诚实地表达不同意见或不适。不必迎合。",
-                    sig.description
-                )
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
         };
 
         // 1. Blended recall: episodes + facts in one call
@@ -398,7 +372,6 @@ impl ReasoningEngine {
             recalled_episodes,
             feed_digest: self.feed_cache.read().await.clone(),
             social_context,
-            conflict_context,
         };
 
         let system_prompt = ContextAssembler::build_full_system_prompt(
