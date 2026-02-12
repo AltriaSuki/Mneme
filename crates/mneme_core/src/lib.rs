@@ -12,7 +12,8 @@ pub use affect::Affect;
 pub use dynamics::{DefaultDynamics, Dynamics};
 pub use persona::{Psyche, SeedPersona};
 pub use state::{
-    AttachmentStyle, FastState, MediumState, OrganismState, SensoryInput, SlowState, ValueNetwork,
+    AttachmentStyle, CuriosityVector, FastState, MediumState, OrganismState, SensoryInput,
+    SlowState, ValueNetwork,
 };
 pub use values::{
     HierarchicalValueNetwork, JudgmentResult, RuleBasedJudge, Situation, ValueConflict, ValueJudge,
@@ -115,6 +116,16 @@ pub enum Trigger {
         seed: String,
         /// Resolution level — determines model cost and episode strength
         resolution: MonologueResolution,
+    },
+    /// Metacognitive self-reflection (#24).
+    ///
+    /// Periodically reviews behavior patterns and generates self-improvement insights.
+    /// Closes the loop: behavior → reflection → self-knowledge → adjusted behavior.
+    Metacognition {
+        /// Why reflection was triggered: "periodic", "mood_shift", "high_prediction_error"
+        trigger_reason: String,
+        /// Brief state snapshot for logging
+        context_summary: String,
     },
 }
 

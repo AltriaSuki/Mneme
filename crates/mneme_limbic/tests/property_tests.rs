@@ -34,6 +34,7 @@ fn arb_fast_state() -> impl Strategy<Value = FastState> {
                 curiosity,
                 social_need,
                 boredom,
+                curiosity_vector: Default::default(),
             },
         )
 }

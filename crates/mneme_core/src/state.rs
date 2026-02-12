@@ -125,6 +125,65 @@ pub struct FastState {
     /// Feeds back into curiosity drive and energy restlessness.
     #[serde(default = "default_boredom", deserialize_with = "deserialize_safe_f32")]
     pub boredom: f32,
+
+    /// Directional curiosity: what she's curious about, not just how much.
+    /// ADR-007: Curiosity vectorization — scalar curiosity + topic interests.
+    #[serde(default)]
+    pub curiosity_vector: CuriosityVector,
+}
+
+/// Directional curiosity: tracks *what* she's curious about.
+///
+/// Each interest is a (topic, intensity) pair. Interests decay over time
+/// and are tagged from SensoryInput topic hints.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CuriosityVector {
+    /// Active interests: (topic, intensity 0.0-1.0)
+    pub interests: Vec<(String, f32)>,
+}
+
+impl CuriosityVector {
+    /// Maximum number of tracked interests.
+    const MAX_INTERESTS: usize = 10;
+
+    /// Add or boost an interest topic.
+    pub fn tag_interest(&mut self, topic: &str, boost: f32) {
+        if topic.is_empty() {
+            return;
+        }
+        if let Some(entry) = self.interests.iter_mut().find(|(t, _)| t == topic) {
+            entry.1 = (entry.1 + boost).min(1.0);
+        } else {
+            self.interests.push((topic.to_string(), boost.min(1.0)));
+        }
+        // Keep bounded
+        if self.interests.len() > Self::MAX_INTERESTS {
+            // Remove weakest
+            self.interests
+                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            self.interests.truncate(Self::MAX_INTERESTS);
+        }
+    }
+
+    /// Decay all interests by a factor. Removes entries below threshold.
+    pub fn decay(&mut self, factor: f32) {
+        for entry in &mut self.interests {
+            entry.1 *= factor;
+        }
+        self.interests.retain(|(_, intensity)| *intensity > 0.05);
+    }
+
+    /// Get top-N interests sorted by intensity descending.
+    pub fn top_interests(&self, n: usize) -> Vec<(&str, f32)> {
+        let mut sorted: Vec<(&str, f32)> = self
+            .interests
+            .iter()
+            .map(|(t, i)| (t.as_str(), *i))
+            .collect();
+        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.truncate(n);
+        sorted
+    }
 }
 
 impl Default for FastState {
@@ -136,6 +195,7 @@ impl Default for FastState {
             curiosity: 0.5,   // Moderate curiosity
             social_need: 0.4, // Moderate social need
             boredom: 0.2,     // Low baseline boredom
+            curiosity_vector: CuriosityVector::default(),
         }
     }
 }
@@ -421,6 +481,10 @@ pub struct SensoryInput {
 
     /// Values potentially violated by current action
     pub violated_values: Vec<String>,
+
+    /// Topic hint for curiosity vectorization (ADR-007).
+    /// When present, tags the curiosity vector with this topic.
+    pub topic_hint: Option<String>,
 }
 
 #[cfg(test)]

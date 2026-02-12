@@ -196,6 +196,7 @@ impl LimbicSystem {
                             is_social: stimulus.is_social,
                             response_delay_factor: 1.0,
                             violated_values: stimulus.violated_values,
+                            topic_hint: None,
                         };
 
                         // Update state

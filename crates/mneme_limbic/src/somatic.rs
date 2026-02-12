@@ -187,11 +187,22 @@ pub struct SomaticMarker {
 
     /// Openness to experience (0.0 - 1.0)
     pub openness: f32,
+
+    /// Top curiosity interests (ADR-007: curiosity vectorization)
+    #[serde(default)]
+    pub curiosity_interests: Vec<(String, f32)>,
 }
 
 impl SomaticMarker {
     /// Create a somatic marker from the full organism state
     pub fn from_state(state: &OrganismState) -> Self {
+        let interests: Vec<(String, f32)> = state
+            .fast
+            .curiosity_vector
+            .top_interests(3)
+            .into_iter()
+            .map(|(t, i)| (t.to_string(), i))
+            .collect();
         Self {
             affect: state.fast.affect,
             energy: state.fast.energy,
@@ -201,6 +212,7 @@ impl SomaticMarker {
             mood_bias: state.medium.mood_bias,
             attachment_style: state.medium.attachment.style(),
             openness: state.medium.openness,
+            curiosity_interests: interests,
         }
     }
 
@@ -208,10 +220,20 @@ impl SomaticMarker {
     /// Now uses minimal numeric state as an auxiliary signal — the primary
     /// mechanism is the ModulationVector which structurally constrains the LLM.
     pub fn format_for_prompt(&self) -> String {
-        format!(
+        let mut s = format!(
             "[内部状态: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]",
             self.energy, self.stress, self.mood_bias, self.affect.valence, self.affect.arousal,
-        )
+        );
+        // ADR-007: Inject curiosity direction
+        if !self.curiosity_interests.is_empty() {
+            let interests: Vec<String> = self
+                .curiosity_interests
+                .iter()
+                .map(|(t, i)| format!("{}({:.0}%)", t, i * 100.0))
+                .collect();
+            s.push_str(&format!("\n[当前好奇方向: {}]", interests.join(", ")));
+        }
+        s
     }
 
     /// Convert somatic marker to a structural modulation vector.

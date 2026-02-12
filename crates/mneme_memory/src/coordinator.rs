@@ -253,6 +253,30 @@ impl OrganismCoordinator {
         *self.interaction_count.read().await
     }
 
+    /// Expose interaction count for MetacognitionEvaluator.
+    pub fn interaction_count_ref(&self) -> Arc<RwLock<u32>> {
+        self.interaction_count.clone()
+    }
+
+    /// Store a metacognition insight as self-knowledge.
+    pub async fn store_metacognition_insight(&self, domain: &str, content: &str, confidence: f32) {
+        if let Some(ref db) = self.db {
+            if let Err(e) = db
+                .store_self_knowledge(
+                    domain,
+                    content,
+                    confidence,
+                    "self:metacognition",
+                    None,
+                    false,
+                )
+                .await
+            {
+                tracing::warn!("Failed to store metacognition insight: {}", e);
+            }
+        }
+    }
+
     /// Process an incoming interaction
     ///
     /// This is the main entry point for handling user messages.
@@ -800,10 +824,12 @@ impl OrganismCoordinator {
 
     fn create_sensory_input(
         &self,
-        _content: &str,
+        content: &str,
         soma: &SomaticMarker,
         response_delay: f32,
     ) -> SensoryInput {
+        // ADR-007: Extract topic hint for curiosity vectorization
+        let topic_hint = extract_topic_hint(content);
         SensoryInput {
             content_valence: soma.affect.valence,
             content_intensity: soma.affect.arousal,
@@ -811,6 +837,7 @@ impl OrganismCoordinator {
             is_social: true,
             response_delay_factor: response_delay,
             violated_values: vec![],
+            topic_hint,
         }
     }
 
@@ -843,6 +870,29 @@ impl OrganismCoordinator {
             let _ = self.lifecycle_tx.send(new_state);
         }
     }
+}
+
+/// Extract a topic hint from user message content for curiosity vectorization (ADR-007).
+///
+/// Uses simple heuristics: picks the longest non-stopword segment as the topic.
+/// Returns None for very short or empty messages.
+fn extract_topic_hint(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.len() < 4 {
+        return None;
+    }
+    // For Chinese text: take the first meaningful clause (up to punctuation)
+    let clause = trimmed
+        .split(|c: char| "，。！？、；：…—,.!?;:".contains(c))
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
+    if clause.len() < 2 {
+        return None;
+    }
+    // Cap at 30 chars to keep interests concise
+    let topic: String = clause.chars().take(30).collect();
+    Some(topic)
 }
 
 /// Result of processing an interaction

@@ -36,6 +36,7 @@ fn arb_fast_state() -> impl Strategy<Value = FastState> {
                 curiosity,
                 social_need,
                 boredom,
+                curiosity_vector: Default::default(),
             },
         )
 }
@@ -86,6 +87,7 @@ fn arb_sensory_input() -> impl Strategy<Value = SensoryInput> {
                 is_social,
                 response_delay_factor: delay,
                 violated_values: vec![],
+                topic_hint: None,
             },
         )
 }
@@ -236,6 +238,7 @@ proptest! {
         let mut fast = FastState {
             energy, stress, curiosity, social_need, boredom,
             affect: Affect { valence, arousal },
+            curiosity_vector: Default::default(),
         };
         fast.normalize();
 

@@ -152,6 +152,16 @@ impl DefaultDynamics {
             + fast.boredom * 0.03;
         fast.curiosity += d_curiosity * dt;
 
+        // ADR-007: Curiosity vectorization — tag with topic when curiosity rises
+        if d_curiosity > 0.0 {
+            if let Some(ref topic) = input.topic_hint {
+                let boost = (d_curiosity * dt).min(0.3);
+                fast.curiosity_vector.tag_interest(topic, boost);
+            }
+        }
+        // Decay existing interests slowly
+        fast.curiosity_vector.decay(1.0 - 0.001 * dt);
+
         // === Social need dynamics ===
         // Increases when alone, decreases after social interaction
         let d_social = if input.is_social {
@@ -620,5 +630,71 @@ mod tests {
             "Mood bias should recover toward neutral during idle, got {:.3}",
             state.medium.mood_bias
         );
+    }
+
+    #[test]
+    fn test_curiosity_vector_topic_tagging() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+
+        // Use step_fast directly to isolate curiosity vectorization logic
+        let input = SensoryInput {
+            content_valence: 0.8,
+            content_intensity: 0.5,
+            surprise: 0.9,
+            topic_hint: Some("量子计算".to_string()),
+            ..Default::default()
+        };
+
+        let medium = state.medium.clone();
+        for _ in 0..10 {
+            dynamics.step_fast(&mut state.fast, &medium, &input, 1.0);
+        }
+
+        let top = state.fast.curiosity_vector.top_interests(3);
+        assert!(
+            !top.is_empty(),
+            "Should have tagged curiosity interest from topic_hint"
+        );
+        assert_eq!(top[0].0, "量子计算");
+    }
+
+    #[test]
+    fn test_curiosity_vector_decay() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+
+        // Pre-seed an interest
+        state.fast.curiosity_vector.tag_interest("音乐", 0.8);
+
+        // Run idle ticks — interests should decay
+        let input = SensoryInput::default();
+        for _ in 0..500 {
+            dynamics.step(&mut state, &input, Duration::from_secs(1));
+        }
+
+        let top = state.fast.curiosity_vector.top_interests(3);
+        if !top.is_empty() {
+            assert!(
+                top[0].1 < 0.8,
+                "Interest should have decayed, got {}",
+                top[0].1
+            );
+        }
+    }
+
+    #[test]
+    fn test_curiosity_vector_interest_ranking() {
+        use crate::state::CuriosityVector;
+
+        let mut cv = CuriosityVector::default();
+        cv.tag_interest("哲学", 0.3);
+        cv.tag_interest("编程", 0.9);
+        cv.tag_interest("音乐", 0.6);
+
+        let top = cv.top_interests(2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, "编程");
+        assert_eq!(top[1].0, "音乐");
     }
 }
