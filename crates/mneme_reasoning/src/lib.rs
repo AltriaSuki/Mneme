@@ -4,6 +4,7 @@ pub mod decision;
 pub mod engine;
 pub mod extraction;
 pub mod llm;
+pub mod metacognition;
 pub mod prompts;
 pub mod providers;
 pub mod retry;

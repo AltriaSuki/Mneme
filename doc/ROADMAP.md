@@ -1096,7 +1096,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
   ```
 - [x] `LimbicSystem` 持有 curves，`to_modulation_vector_with_curves()` 使用 ✅
 - [x] 不同实例的曲线不同（敏感型 vs 坚韧型 vs 戏剧化型） ✅ — 通过 `set_curves()` 配置
-- [ ] 存储到 `OrganismState.slow` 或独立的 `PersonalityParams`（序列化已支持）
+- [x] 存储到 SQLite `learned_curves` 表 + 启动时加载 ✅
 - [x] 从反馈中调整曲线参数 ✅ — `CurveLearner` reward-weighted nudge, sleep 时自动学习
 
 **长期：完全数据驱动**:
@@ -1128,7 +1128,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | 目标驱动 | ✅ | GoalManager + GoalTriggerEvaluator + 状态驱动目标建议 |
 | 自主决策 | ✅ | 声明式行为规则引擎（ADR-004）数据库驱动决策 |
 | 工具自主使用 | ✅ | AutonomousToolUse + CapabilityGuard 安全检查 + 价值判断 |
-| 元认知反思 | ❌ | 不会审视自己的行为模式 |
+| 元认知反思 | ✅ | MetacognitionEvaluator + 洞察解析 + self_knowledge 存储 (#24) |
 
 ### 21. ✅ Agent Loop - 主动行为循环
 **优先级**: 🔴 高
@@ -1179,16 +1179,16 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [ ] 主动整理和总结知识
 - [ ] 工具使用的资源预算
 
-### 24. 🧬 Metacognition - 元认知反思
-**优先级**: 🟢 低  
-**问题**: 不会思考自己的思考，不会审视行为模式。  
+### 24. ✅ Metacognition - 元认知反思
+**优先级**: 🟢 低
+**问题**: 不会思考自己的思考，不会审视行为模式。
 **说明**: 反思频率和深度是个性特征。
 
-**需要实现**:
-- [ ] 定期自我反思触发
-- [ ] 行为模式识别
-- [ ] 自我改进建议生成
-- [ ] 反思日志
+**已完成**:
+- [x] 定期自我反思触发 ✅ — `MetacognitionEvaluator` (energy gate + cooldown + interaction gate)
+- [x] 行为模式识别 ✅ — `assemble_metacognition_context()` 收集 self_knowledge + 近期 episodes + 躯体状态，LLM 识别模式
+- [x] 自我改进建议生成 ✅ — `parse_metacognition_response()` 解析 `MetacognitionInsight` (domain, content, confidence)
+- [x] 反思日志 ✅ — 洞察存入 `self_knowledge` (source="self:metacognition") + 反思摘要存为 episode
 
 ---
 
@@ -1462,11 +1462,11 @@ CREATE TABLE self_knowledge (
   - mneme_reasoning (6): Default impl, empty doc line, explicit auto-deref, single_match → if-let
 
 ### v1.0.0 - 成熟版本
-- 元认知反思 (#24)
+- ~~元认知反思 (#24)~~ ✅
 - ODE 之上叠加可塑神经网络 (MANIFESTO ADR-001 演进)
 - 多用户/多会话支持 (#16)
 - 语音管道 TTS/STT
 
 ---
 
-*最后更新: 2026-02-11*
+*最后更新: 2026-02-12*
