@@ -31,6 +31,10 @@ pub enum ContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
+    /// Catch-all for unknown block types (e.g. `thinking`, future API additions).
+    /// Prevents deserialization failure when the API returns new content types.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

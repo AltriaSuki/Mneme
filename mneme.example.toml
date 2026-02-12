@@ -3,7 +3,7 @@
 
 [llm]
 provider = "anthropic"           # "anthropic" | "openai" | "deepseek"
-model = "claude-4-5-sonnet-20250929"
+model = "claude-sonnet-4-5-20250929"
 # base_url = "https://custom-endpoint.example.com/v1"
 max_tokens = 4096
 temperature = 0.7

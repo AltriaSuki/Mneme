@@ -131,8 +131,13 @@ impl LlmClient for AnthropicClient {
             "Anthropic raw response (first 2000 chars): {}",
             &resp_text[..resp_text.len().min(2000)]
         );
-        let api_response: MessagesResponse =
-            serde_json::from_str(&resp_text).context("Failed to parse Anthropic response")?;
+        let api_response: MessagesResponse = serde_json::from_str(&resp_text)
+            .with_context(|| {
+                format!(
+                    "Failed to parse Anthropic response (first 500 chars): {}",
+                    &resp_text[..resp_text.len().min(500)]
+                )
+            })?;
         Ok(api_response)
     }
 

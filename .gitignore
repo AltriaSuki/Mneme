@@ -14,6 +14,7 @@ target/
 *.pdb
 
 # Mneme Specific
+mneme.toml
 mneme.db
 mneme.db-shm
 mneme.db-wal
