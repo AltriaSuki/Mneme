@@ -9,6 +9,7 @@
 use async_trait::async_trait;
 use mneme_core::{Trigger, TriggerEvaluator};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Priority tier for trigger competition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -46,13 +47,41 @@ impl Default for AttentionConfig {
     }
 }
 
+/// Shared handle for updating engagement level from outside the AttentionGate.
+///
+/// Obtain via `AttentionGate::engagement_handle()` before moving the gate
+/// into an evaluator collection. The handle and gate share the same atomic,
+/// so updates are lock-free and immediate.
+#[derive(Clone)]
+pub struct EngagementHandle {
+    inner: Arc<AtomicU64>,
+}
+
+impl EngagementHandle {
+    /// Set engagement level (clamped to [0.0, 1.0]).
+    pub fn set(&self, level: f32) {
+        let clamped = level.clamp(0.0, 1.0) as f64;
+        self.inner.store(clamped.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Get current engagement level.
+    pub fn get(&self) -> f32 {
+        f64::from_bits(self.inner.load(Ordering::Relaxed)) as f32
+    }
+
+    /// Multiplicative decay (e.g. 0.85 per tick). Useful for gradual cooldown.
+    pub fn decay(&self, factor: f32) {
+        let current = self.get();
+        self.set(current * factor);
+    }
+}
+
 /// Wraps multiple evaluators and enforces single-focus attention.
 pub struct AttentionGate {
     evaluators: Vec<Box<dyn TriggerEvaluator>>,
     config: AttentionConfig,
-    /// Engagement level encoded as f32 bits in AtomicU64 for lock-free access.
-    /// 0.0 = idle, 1.0 = deeply engaged in conversation.
-    engagement: AtomicU64,
+    /// Shared engagement level (lock-free via AtomicU64).
+    engagement: Arc<AtomicU64>,
 }
 
 impl AttentionGate {
@@ -60,7 +89,7 @@ impl AttentionGate {
         Self {
             evaluators,
             config: AttentionConfig::default(),
-            engagement: AtomicU64::new(0.0f64.to_bits()),
+            engagement: Arc::new(AtomicU64::new(0.0f64.to_bits())),
         }
     }
 
@@ -71,7 +100,15 @@ impl AttentionGate {
         Self {
             evaluators,
             config,
-            engagement: AtomicU64::new(0.0f64.to_bits()),
+            engagement: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+        }
+    }
+
+    /// Get a shared handle for updating engagement from outside.
+    /// Call this before moving the gate into an evaluator collection.
+    pub fn engagement_handle(&self) -> EngagementHandle {
+        EngagementHandle {
+            inner: self.engagement.clone(),
         }
     }
 

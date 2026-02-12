@@ -9,7 +9,7 @@ mod metacognition;
 mod presence;
 mod rumination;
 mod scheduled;
-pub use attention::{AttentionConfig, AttentionGate};
+pub use attention::{AttentionConfig, AttentionGate, EngagementHandle};
 pub use consciousness::{ConsciousnessConfig, ConsciousnessGate};
 pub use habits::{HabitConfig, HabitDetector};
 pub use metacognition::{MetacognitionConfig, MetacognitionEvaluator};

@@ -287,6 +287,7 @@ async fn main() -> anyhow::Result<()> {
 
     // B-17: Wrap all evaluators in AttentionGate for single-focus competition
     let attention_gate = AttentionGate::new(inner_evaluators);
+    let engagement = attention_gate.engagement_handle();
     let evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![Box::new(attention_gate)];
 
     // Initialize Presence Scheduler (filters triggers by active hours)
@@ -458,6 +459,8 @@ async fn main() -> anyhow::Result<()> {
                     AgentAction::StateUpdate => {
                         // Organism tick completed — ping browser session to prevent idle timeout
                         mneme_reasoning::tools::browser_keepalive(&browser_session_keepalive).await;
+                        // B-17: Decay engagement toward idle between interactions
+                        engagement.decay(0.85);
                         continue;
                     }
                     AgentAction::ProactiveTrigger(trigger) => {
@@ -608,6 +611,11 @@ async fn main() -> anyhow::Result<()> {
                     content.body
                 );
             }
+        }
+
+        // B-17: Bump engagement on user interaction
+        if matches!(&event, Event::UserMessage(_)) {
+            engagement.set(1.0);
         }
 
         match engine.think(event.clone()).await {
