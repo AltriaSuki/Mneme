@@ -21,12 +21,12 @@
 //! - Medium (hours): Mood, Attachment, Openness  
 //! - Slow (days/weeks): Values, Narrative bias (handled separately)
 
-mod system;
 mod heartbeat;
 mod somatic;
 mod surprise;
+mod system;
 
-pub use system::{LimbicSystem, Stimulus};
 pub use heartbeat::HeartbeatConfig;
-pub use somatic::{SomaticMarker, ModulationVector, ModulationCurves, BehaviorThresholds};
-pub use surprise::{SurpriseDetector, SpecialPattern};
+pub use somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticMarker};
+pub use surprise::{SpecialPattern, SurpriseDetector};
+pub use system::{LimbicSystem, Stimulus};

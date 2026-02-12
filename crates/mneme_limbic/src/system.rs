@@ -6,16 +6,13 @@
 //! - Processes incoming stimuli
 //! - Provides state snapshots for System 2
 
+use crate::heartbeat::HeartbeatConfig;
+use crate::somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticMarker};
+use crate::surprise::SurpriseDetector;
+use mneme_core::{Affect, DefaultDynamics, Dynamics, FastState, OrganismState, SensoryInput};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, mpsc, watch};
-use mneme_core::{
-    OrganismState, SensoryInput, DefaultDynamics, Dynamics,
-    Affect, FastState,
-};
-use crate::somatic::{SomaticMarker, ModulationVector, ModulationCurves, BehaviorThresholds};
-use crate::surprise::SurpriseDetector;
-use crate::heartbeat::HeartbeatConfig;
+use tokio::sync::{mpsc, watch, RwLock};
 
 /// Stimulus received by the limbic system
 #[derive(Debug, Clone)]
@@ -48,22 +45,22 @@ impl Default for Stimulus {
 pub struct LimbicSystem {
     /// Current organism state (protected by RwLock for concurrent access)
     state: Arc<RwLock<OrganismState>>,
-    
+
     /// Dynamics engine for state evolution
     dynamics: Arc<DefaultDynamics>,
-    
+
     /// Surprise detector for predictive coding
     surprise_detector: Arc<RwLock<SurpriseDetector>>,
-    
+
     /// Channel to send stimuli
     stimulus_tx: mpsc::Sender<Stimulus>,
-    
+
     /// Watch channel for state updates (System 2 subscribes to this)
     state_watch_tx: watch::Sender<SomaticMarker>,
-    
+
     /// Receiver for state updates (cloneable)
     state_watch_rx: watch::Receiver<SomaticMarker>,
-    
+
     /// Heartbeat configuration
     heartbeat_config: HeartbeatConfig,
 
@@ -103,7 +100,7 @@ impl LimbicSystem {
         let (stimulus_tx, stimulus_rx) = mpsc::channel(64);
         let initial_marker = SomaticMarker::from_state(&OrganismState::default());
         let (state_watch_tx, state_watch_rx) = watch::channel(initial_marker);
-        
+
         let system = Self {
             state: Arc::new(RwLock::new(OrganismState::default())),
             dynamics: Arc::new(dynamics),
@@ -114,15 +111,15 @@ impl LimbicSystem {
             heartbeat_config,
             last_interaction: Arc::new(RwLock::new(Instant::now())),
             prev_modulation: Arc::new(RwLock::new(ModulationVector::default())),
-            modulation_smoothing: 0.3,       // moderate inertia by default
-            surprise_bypass_threshold: 0.5,  // large jumps bypass smoothing
+            modulation_smoothing: 0.3,      // moderate inertia by default
+            surprise_bypass_threshold: 0.5, // large jumps bypass smoothing
             curves: RwLock::new(ModulationCurves::default()),
             thresholds: RwLock::new(BehaviorThresholds::default()),
         };
 
         // Spawn the heartbeat task
         system.spawn_heartbeat(stimulus_rx);
-        
+
         system
     }
 
@@ -155,7 +152,7 @@ impl LimbicSystem {
 
                         // Create baseline input (no external stimulus)
                         let mut input = SensoryInput::default();
-                        
+
                         // Social need grows when alone
                         if time_alone > Duration::from_secs(300) {
                             // After 5 minutes alone, social need starts growing
@@ -166,7 +163,7 @@ impl LimbicSystem {
                         {
                             let mut state_guard = state.write().await;
                             dynamics.step(&mut state_guard, &input, dt);
-                            
+
                             // Broadcast new somatic marker
                             let marker = SomaticMarker::from_state(&state_guard);
                             let _ = state_watch_tx.send(marker);
@@ -214,7 +211,7 @@ impl LimbicSystem {
                                 dynamics.apply_moral_cost(&mut state_guard.fast, cost);
                                 tracing::debug!("Applied moral cost: {:.2}", cost);
                             }
-                            
+
                             // Broadcast new somatic marker
                             let marker = SomaticMarker::from_state(&state_guard);
                             let _ = state_watch_tx.send(marker);
@@ -232,7 +229,9 @@ impl LimbicSystem {
 
     /// Send a stimulus to the limbic system
     pub async fn receive_stimulus(&self, stimulus: Stimulus) -> anyhow::Result<()> {
-        self.stimulus_tx.send(stimulus).await
+        self.stimulus_tx
+            .send(stimulus)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to send stimulus: {}", e))
     }
 
@@ -369,10 +368,10 @@ mod tests {
     #[tokio::test]
     async fn test_stimulus_processing() {
         let limbic = LimbicSystem::new();
-        
+
         // Initial state
         let initial_stress = limbic.get_fast_state().await.stress;
-        
+
         // Send negative stimulus
         let stimulus = Stimulus {
             valence: -0.8,
@@ -381,12 +380,12 @@ mod tests {
             content: "I'm very angry at you!".to_string(),
             violated_values: vec![],
         };
-        
+
         limbic.receive_stimulus(stimulus).await.unwrap();
-        
+
         // Wait for processing
         sleep(Duration::from_millis(100)).await;
-        
+
         // Stress should have increased
         let new_stress = limbic.get_fast_state().await.stress;
         assert!(new_stress > initial_stress);

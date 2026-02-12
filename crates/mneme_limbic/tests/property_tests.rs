@@ -4,10 +4,10 @@
 //! bounds regardless of input OrganismState, and that SomaticMarker methods
 //! never panic on arbitrary state.
 
-use proptest::prelude::*;
-use mneme_core::{OrganismState, FastState, MediumState, SlowState, Affect};
 use mneme_core::state::AttachmentState;
-use mneme_limbic::{SomaticMarker, ModulationVector};
+use mneme_core::{Affect, FastState, MediumState, OrganismState, SlowState};
+use mneme_limbic::{ModulationVector, SomaticMarker};
+use proptest::prelude::*;
 
 // ============================================================================
 // Strategies
@@ -18,29 +18,51 @@ fn arb_affect() -> impl Strategy<Value = Affect> {
 }
 
 fn arb_fast_state() -> impl Strategy<Value = FastState> {
-    (arb_affect(), 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
-        .prop_map(|(affect, energy, stress, curiosity, social_need, boredom)| FastState {
-            affect, energy, stress, curiosity, social_need, boredom,
-        })
+    (
+        arb_affect(),
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+    )
+        .prop_map(
+            |(affect, energy, stress, curiosity, social_need, boredom)| FastState {
+                affect,
+                energy,
+                stress,
+                curiosity,
+                social_need,
+                boredom,
+            },
+        )
 }
 
 fn arb_medium_state() -> impl Strategy<Value = MediumState> {
-    (-1.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
-        .prop_map(|(mood_bias, anxiety, avoidance, openness, hunger)| MediumState {
-            mood_bias,
-            attachment: AttachmentState { anxiety, avoidance },
-            openness,
-            hunger,
-        })
+    (
+        -1.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+        0.0f32..=1.0,
+    )
+        .prop_map(
+            |(mood_bias, anxiety, avoidance, openness, hunger)| MediumState {
+                mood_bias,
+                attachment: AttachmentState { anxiety, avoidance },
+                openness,
+                hunger,
+            },
+        )
 }
 
 fn arb_organism_state() -> impl Strategy<Value = OrganismState> {
-    (arb_fast_state(), arb_medium_state())
-        .prop_map(|(fast, medium)| OrganismState {
-            fast, medium,
-            slow: SlowState::default(),
-            last_updated: 0,
-        })
+    (arb_fast_state(), arb_medium_state()).prop_map(|(fast, medium)| OrganismState {
+        fast,
+        medium,
+        slow: SlowState::default(),
+        last_updated: 0,
+    })
 }
 
 // ============================================================================

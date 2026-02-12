@@ -11,16 +11,16 @@ use std::collections::VecDeque;
 pub struct SurpriseDetector {
     /// Last N messages for context
     history: VecDeque<String>,
-    
+
     /// Maximum history size
     max_history: usize,
-    
+
     /// Current prediction (what we expect the user to say)
     current_prediction: Option<String>,
-    
+
     /// Running average of surprise scores (for baseline)
     surprise_baseline: f32,
-    
+
     /// Exponential smoothing factor
     smoothing_factor: f32,
 }
@@ -78,21 +78,21 @@ impl SurpriseDetector {
     fn semantic_distance(&self, a: &str, b: &str) -> f32 {
         // Simple approach: character-level Jaccard distance
         // In a real implementation, use embeddings
-        
+
         let a_chars: std::collections::HashSet<char> = a.chars().collect();
         let b_chars: std::collections::HashSet<char> = b.chars().collect();
-        
+
         if a_chars.is_empty() && b_chars.is_empty() {
             return 0.0;
         }
-        
+
         let intersection = a_chars.intersection(&b_chars).count() as f32;
         let union = a_chars.union(&b_chars).count() as f32;
-        
+
         if union == 0.0 {
             return 1.0;
         }
-        
+
         1.0 - (intersection / union)
     }
 
@@ -105,7 +105,7 @@ impl SurpriseDetector {
         // Compare with recent history
         let mut total_distance = 0.0;
         let mut count = 0;
-        
+
         for past in self.history.iter().rev().take(3) {
             total_distance += self.semantic_distance(content, past);
             count += 1;
@@ -121,22 +121,25 @@ impl SurpriseDetector {
     /// Check for specific surprise patterns
     pub fn detect_special_patterns(&self, content: &str) -> SpecialPattern {
         let lower = content.to_lowercase();
-        
+
         // Sudden topic change markers
         if lower.contains("其实") || lower.contains("说真的") || lower.contains("坦白说") {
             return SpecialPattern::ConfessionSignal;
         }
-        
+
         // Emotional shift markers
-        if lower.contains("我很") && (lower.contains("难过") || lower.contains("生气") || lower.contains("害怕")) {
+        if lower.contains("我很")
+            && (lower.contains("难过") || lower.contains("生气") || lower.contains("害怕"))
+        {
             return SpecialPattern::EmotionalDisclosure;
         }
-        
+
         // Question about the agent
-        if lower.contains("你觉得") || lower.contains("你认为") || lower.contains("你怎么看") {
+        if lower.contains("你觉得") || lower.contains("你认为") || lower.contains("你怎么看")
+        {
             return SpecialPattern::OpinionRequest;
         }
-        
+
         SpecialPattern::None
     }
 }
@@ -163,11 +166,11 @@ mod tests {
     #[test]
     fn test_surprise_detection() {
         let mut detector = SurpriseDetector::new();
-        
+
         // First message has baseline surprise
         let s1 = detector.compute_surprise("你好");
         assert!(s1 > 0.0 && s1 < 1.0);
-        
+
         // Similar message also produces a valid surprise value
         let s2 = detector.compute_surprise("你好啊");
         assert!(s2 >= 0.0 && s2 <= 1.0);
@@ -176,31 +179,31 @@ mod tests {
     #[test]
     fn test_prediction_surprise() {
         let mut detector = SurpriseDetector::new();
-        
+
         // Set prediction
         detector.set_prediction("我很开心");
-        
+
         // Matching content = low surprise
         let s1 = detector.compute_surprise("我很开心今天");
-        
+
         // Reset and set new prediction
         detector.set_prediction("我很开心");
-        
+
         // Opposite content = high surprise
         let s2 = detector.compute_surprise("我非常难过");
-        
+
         assert!(s2 > s1);
     }
 
     #[test]
     fn test_special_patterns() {
         let detector = SurpriseDetector::new();
-        
+
         assert_eq!(
             detector.detect_special_patterns("其实我想告诉你一件事"),
             SpecialPattern::ConfessionSignal
         );
-        
+
         assert_eq!(
             detector.detect_special_patterns("我很难过"),
             SpecialPattern::EmotionalDisclosure
