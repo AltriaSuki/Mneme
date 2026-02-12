@@ -3,10 +3,14 @@ use rand::Rng;
 use std::time::Duration;
 
 mod consciousness;
+mod habits;
+mod metacognition;
 mod presence;
 mod rumination;
 mod scheduled;
 pub use consciousness::{ConsciousnessConfig, ConsciousnessGate};
+pub use habits::{HabitConfig, HabitDetector};
+pub use metacognition::{MetacognitionConfig, MetacognitionEvaluator};
 pub use presence::PresenceScheduler;
 pub use rumination::{RuminationConfig, RuminationEvaluator};
 pub use scheduled::{ScheduleEntry, ScheduledTriggerEvaluator};

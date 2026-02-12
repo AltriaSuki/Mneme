@@ -706,6 +706,36 @@ impl Memory for SqliteMemory {
             .map(|sk| (sk.content, sk.confidence))
             .collect())
     }
+
+    /// B-21: Detect repeated patterns across self_knowledge entries.
+    ///
+    /// Groups entries by domain and looks for content that appears multiple times
+    /// (from different sources or timestamps). Returns (pattern_summary, count) pairs.
+    async fn detect_repeated_patterns(&self, min_count: usize) -> Result<Vec<(String, usize)>> {
+        let rows = sqlx::query(
+            "SELECT domain, content, COUNT(*) as cnt \
+             FROM self_knowledge \
+             WHERE confidence > 0.3 \
+             GROUP BY domain, content \
+             HAVING cnt >= ? \
+             ORDER BY cnt DESC \
+             LIMIT 20",
+        )
+        .bind(min_count as i64)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to detect repeated patterns")?;
+
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let domain: String = row.get("domain");
+                let content: String = row.get("content");
+                let count: i64 = row.get("cnt");
+                (format!("[{}] {}", domain, content), count as usize)
+            })
+            .collect())
+    }
 }
 #[async_trait]
 impl SocialGraph for SqliteMemory {

@@ -200,6 +200,15 @@ pub trait Memory: Send + Sync {
         let _ = stress;
         self.recall_with_bias(query, mood_bias).await
     }
+    /// Detect repeated patterns in self-knowledge entries.
+    /// Returns groups of (pattern_summary, count) where count >= min_count.
+    /// Used by habit formation (B-21) to detect behavioral patterns.
+    async fn detect_repeated_patterns(
+        &self,
+        _min_count: usize,
+    ) -> anyhow::Result<Vec<(String, usize)>> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]
