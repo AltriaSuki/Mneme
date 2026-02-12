@@ -16,8 +16,8 @@ pub use state::{
     SlowState, ValueNetwork,
 };
 pub use values::{
-    HierarchicalValueNetwork, JudgmentResult, RuleBasedJudge, Situation, ValueConflict, ValueJudge,
-    ValueTier,
+    ConflictSignal, HierarchicalValueNetwork, JudgmentResult, RuleBasedJudge, Situation,
+    ValueConflict, ValueJudge, ValueTier,
 };
 
 use async_trait::async_trait;
