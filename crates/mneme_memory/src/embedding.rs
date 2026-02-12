@@ -1,5 +1,5 @@
 use anyhow::Result;
-use fastembed::{TextEmbedding, InitOptions, EmbeddingModel as FastEmbedModel};
+use fastembed::{EmbeddingModel as FastEmbedModel, InitOptions, TextEmbedding};
 use std::sync::Arc;
 
 pub type Embedding = Vec<f32>;
@@ -12,11 +12,11 @@ pub struct EmbeddingModel {
 impl EmbeddingModel {
     pub fn new() -> Result<Self> {
         // Initialize with default model (usually BAAI/bge-small-en-v1.5 or similar)
-        // We can specify a model that supports Chinese well if needed, 
+        // We can specify a model that supports Chinese well if needed,
         // but multilingual-e5-small is a good general choice for mixed usage.
-        // For now let's use the default which is often BGE-Small-EN, 
+        // For now let's use the default which is often BGE-Small-EN,
         // but fastembed supports "BAAI/bge-m3" or "intfloat/multilingual-e5-small".
-        
+
         let mut options = InitOptions::default();
         options.model_name = FastEmbedModel::MultilingualE5Small;
         options.show_download_progress = true;
@@ -31,11 +31,12 @@ impl EmbeddingModel {
     pub fn embed(&self, text: &str) -> Result<Embedding> {
         let embeddings = self.model.embed(vec![text], None)?;
         // embed returns Vec<Embedding>, we just want the first one
-        embeddings.into_iter()
+        embeddings
+            .into_iter()
             .next()
             .ok_or_else(|| anyhow::anyhow!("Failed to generate embedding"))
     }
-    
+
     pub fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Embedding>> {
         let embeddings = self.model.embed(texts, None)?;
         Ok(embeddings)

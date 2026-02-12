@@ -9,14 +9,16 @@
 //! This ensures System 1 learns gradually and stably, not from momentary noise.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc, Timelike};
-use std::sync::Arc;
+use chrono::{DateTime, Timelike, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::feedback_buffer::{
+    ConsolidatedPattern, ConsolidationProcessor, FeedbackBuffer, SignalType, StateUpdates,
+};
+use crate::narrative::{CrisisEvent, EpisodeDigest, NarrativeChapter, NarrativeWeaver};
 use mneme_core::OrganismState;
-use crate::feedback_buffer::{FeedbackBuffer, ConsolidatedPattern, ConsolidationProcessor, SignalType, StateUpdates};
-use crate::narrative::{NarrativeWeaver, NarrativeChapter, EpisodeDigest, CrisisEvent};
 
 /// Configuration for sleep consolidation
 #[derive(Debug, Clone)]
@@ -24,10 +26,10 @@ pub struct SleepConfig {
     /// Hours when sleep consolidation can occur (e.g., 2-6 AM)
     pub sleep_start_hour: u32,
     pub sleep_end_hour: u32,
-    
+
     /// Minimum interval between consolidation runs (in hours)
     pub min_consolidation_interval_hours: u32,
-    
+
     /// Whether to allow manual consolidation trigger
     pub allow_manual_trigger: bool,
 }
@@ -86,7 +88,7 @@ impl SleepConsolidator {
     /// Check if consolidation is due
     pub async fn is_consolidation_due(&self) -> bool {
         let last = self.last_consolidation.read().await;
-        
+
         if let Some(last_time) = *last {
             let hours_since = (Utc::now() - last_time).num_hours();
             hours_since >= self.config.min_consolidation_interval_hours as i64
@@ -96,7 +98,7 @@ impl SleepConsolidator {
     }
 
     /// Perform sleep consolidation
-    /// 
+    ///
     /// This should be called during system idle time. It:
     /// 1. Consolidates feedback buffer patterns
     /// 2. Weaves narrative chapters
@@ -108,7 +110,11 @@ impl SleepConsolidator {
         current_state: &OrganismState,
     ) -> Result<ConsolidationResult> {
         // TOCTOU guard: only one consolidation at a time
-        if self.consolidating.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        if self
+            .consolidating
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
             return Ok(ConsolidationResult::skipped("already in progress"));
         }
 
@@ -129,7 +135,9 @@ impl SleepConsolidator {
         }
 
         if !self.is_consolidation_due().await {
-            return Ok(ConsolidationResult::skipped("Too soon since last consolidation"));
+            return Ok(ConsolidationResult::skipped(
+                "Too soon since last consolidation",
+            ));
         }
 
         tracing::info!("Starting sleep consolidation...");
@@ -139,9 +147,12 @@ impl SleepConsolidator {
             let mut buffer = self.feedback_buffer.write().await;
             buffer.consolidate()
         };
-        
+
         let state_updates = ConsolidationProcessor::compute_state_updates(&patterns);
-        tracing::debug!("Feedback consolidation produced {} patterns", patterns.len());
+        tracing::debug!(
+            "Feedback consolidation produced {} patterns",
+            patterns.len()
+        );
 
         // 2. Weave narrative chapter if enough episodes
         let chapter = if episodes.len() >= 10 {
@@ -156,14 +167,16 @@ impl SleepConsolidator {
         };
 
         // 3. Detect narrative crisis
-        let crisis = self.narrative_weaver.detect_crisis(
-            episodes,
-            current_state.slow.narrative_bias,
-        );
+        let crisis = self
+            .narrative_weaver
+            .detect_crisis(episodes, current_state.slow.narrative_bias);
 
         // 4. Self-reflection: extract self-knowledge from patterns + episodes
         let self_reflections = SelfReflector::reflect(&patterns, episodes);
-        tracing::debug!("Self-reflection produced {} candidates", self_reflections.len());
+        tracing::debug!(
+            "Self-reflection produced {} candidates",
+            self_reflections.len()
+        );
 
         // 5. Update last consolidation time
         {
@@ -173,7 +186,11 @@ impl SleepConsolidator {
 
         tracing::info!(
             "Sleep consolidation complete: {} state updates, chapter={}, crisis={}, reflections={}",
-            if state_updates.is_empty() { "no" } else { "has" },
+            if state_updates.is_empty() {
+                "no"
+            } else {
+                "has"
+            },
             chapter.is_some(),
             crisis.is_some(),
             self_reflections.len(),
@@ -193,19 +210,21 @@ impl SleepConsolidator {
     /// Apply state updates to the organism state
     pub fn apply_updates(state: &mut OrganismState, updates: &StateUpdates) {
         // Apply medium state updates
-        state.medium.attachment.anxiety = 
+        state.medium.attachment.anxiety =
             (state.medium.attachment.anxiety + updates.attachment_anxiety_delta).clamp(0.0, 1.0);
-        state.medium.openness = 
-            (state.medium.openness + updates.openness_delta).clamp(0.0, 1.0);
-        
+        state.medium.openness = (state.medium.openness + updates.openness_delta).clamp(0.0, 1.0);
+
         // Curiosity is in fast state but we can adjust its baseline recovery target
         // (This would require dynamics modification - for now, just log)
         if updates.curiosity_delta.abs() > 0.01 {
-            tracing::debug!("Curiosity delta: {:.3} (not directly applied)", updates.curiosity_delta);
+            tracing::debug!(
+                "Curiosity delta: {:.3} (not directly applied)",
+                updates.curiosity_delta
+            );
         }
 
         // Apply slow state updates
-        state.slow.narrative_bias = 
+        state.slow.narrative_bias =
             (state.slow.narrative_bias + updates.narrative_bias_delta).clamp(-1.0, 1.0);
 
         // Apply value reinforcements
@@ -214,16 +233,24 @@ impl SleepConsolidator {
                 // Reinforce both weight and rigidity
                 entry.weight = (entry.weight + delta).clamp(0.0, 1.0);
                 entry.rigidity = (entry.rigidity + delta * 0.5).clamp(0.0, 1.0);
-                tracing::debug!("Value '{}' reinforced: weight={:.3}, rigidity={:.3}", 
-                    value_name, entry.weight, entry.rigidity);
+                tracing::debug!(
+                    "Value '{}' reinforced: weight={:.3}, rigidity={:.3}",
+                    value_name,
+                    entry.weight,
+                    entry.rigidity
+                );
             }
         }
     }
 
     /// Handle a narrative crisis - may trigger slow state restructuring
-    pub fn handle_crisis(state: &mut OrganismState, crisis: &CrisisEvent, dynamics: &mneme_core::DefaultDynamics) -> bool {
+    pub fn handle_crisis(
+        state: &mut OrganismState,
+        crisis: &CrisisEvent,
+        dynamics: &mneme_core::DefaultDynamics,
+    ) -> bool {
         tracing::warn!("Handling narrative crisis: {}", crisis.description);
-        
+
         // Use dynamics to potentially trigger narrative collapse
         dynamics.step_slow_crisis(&mut state.slow, &state.medium, crisis.intensity)
     }
@@ -317,7 +344,8 @@ impl SelfReflector {
                 continue;
             }
 
-            let confidence = (pattern.avg_confidence * 0.6 + (pattern.count as f32 / 10.0).min(1.0) * 0.4)
+            let confidence = (pattern.avg_confidence * 0.6
+                + (pattern.count as f32 / 10.0).min(1.0) * 0.4)
                 .clamp(0.2, 0.9);
 
             match pattern.signal_type {
@@ -347,7 +375,8 @@ impl SelfReflector {
                     if pattern.count >= 3 {
                         candidates.push(SelfKnowledgeCandidate {
                             domain: "cognition".to_string(),
-                            content: "我经常对对话的走向感到意外，说明我还在学习理解他人".to_string(),
+                            content: "我经常对对话的走向感到意外，说明我还在学习理解他人"
+                                .to_string(),
                             confidence: confidence.min(0.6),
                         });
                     }
@@ -377,8 +406,16 @@ impl SelfReflector {
         // Compute overall emotional statistics
         let total = episodes.len() as f32;
         let avg_valence: f32 = episodes.iter().map(|e| e.emotional_valence).sum::<f32>() / total;
-        let positive_ratio = episodes.iter().filter(|e| e.emotional_valence > 0.2).count() as f32 / total;
-        let negative_ratio = episodes.iter().filter(|e| e.emotional_valence < -0.2).count() as f32 / total;
+        let positive_ratio = episodes
+            .iter()
+            .filter(|e| e.emotional_valence > 0.2)
+            .count() as f32
+            / total;
+        let negative_ratio = episodes
+            .iter()
+            .filter(|e| e.emotional_valence < -0.2)
+            .count() as f32
+            / total;
 
         // Overall emotional tendency
         if avg_valence > 0.2 && total >= 5.0 {
@@ -423,7 +460,9 @@ impl SelfReflector {
         for c in candidates {
             summary.push_str(&format!(
                 "- [{}] {} (确信度: {:.0}%)\n",
-                c.domain, c.content, c.confidence * 100.0
+                c.domain,
+                c.content,
+                c.confidence * 100.0
             ));
         }
         summary
@@ -439,9 +478,9 @@ mod tests {
         let buffer = Arc::new(RwLock::new(FeedbackBuffer::new()));
         let mut config = SleepConfig::default();
         config.allow_manual_trigger = true; // Allow testing
-        
+
         let consolidator = SleepConsolidator::with_config(buffer, config);
-        
+
         // Should be due since never consolidated
         assert!(consolidator.is_consolidation_due().await);
     }
@@ -469,7 +508,12 @@ mod tests {
 
     // --- SelfReflector tests ---
 
-    fn make_pattern(signal_type: SignalType, count: u32, avg_confidence: f32, avg_valence: f32) -> ConsolidatedPattern {
+    fn make_pattern(
+        signal_type: SignalType,
+        count: u32,
+        avg_confidence: f32,
+        avg_valence: f32,
+    ) -> ConsolidatedPattern {
         ConsolidatedPattern {
             signal_type,
             count,
@@ -498,9 +542,7 @@ mod tests {
 
     #[test]
     fn test_self_reflector_positive_feedback_pattern() {
-        let patterns = vec![
-            make_pattern(SignalType::UserEmotionalFeedback, 5, 0.7, 0.6),
-        ];
+        let patterns = vec![make_pattern(SignalType::UserEmotionalFeedback, 5, 0.7, 0.6)];
         let result = SelfReflector::reflect(&patterns, &[]);
         assert!(!result.is_empty());
         assert!(result.iter().any(|c| c.domain == "relationship"));
@@ -509,18 +551,19 @@ mod tests {
 
     #[test]
     fn test_self_reflector_negative_feedback_pattern() {
-        let patterns = vec![
-            make_pattern(SignalType::UserEmotionalFeedback, 3, 0.6, -0.5),
-        ];
+        let patterns = vec![make_pattern(
+            SignalType::UserEmotionalFeedback,
+            3,
+            0.6,
+            -0.5,
+        )];
         let result = SelfReflector::reflect(&patterns, &[]);
         assert!(result.iter().any(|c| c.content.contains("不太满意")));
     }
 
     #[test]
     fn test_self_reflector_skips_low_count() {
-        let patterns = vec![
-            make_pattern(SignalType::UserEmotionalFeedback, 1, 0.9, 0.8),
-        ];
+        let patterns = vec![make_pattern(SignalType::UserEmotionalFeedback, 1, 0.9, 0.8)];
         let result = SelfReflector::reflect(&patterns, &[]);
         assert!(result.is_empty());
     }
@@ -543,13 +586,11 @@ mod tests {
 
     #[test]
     fn test_self_reflector_format_summary() {
-        let candidates = vec![
-            SelfKnowledgeCandidate {
-                domain: "personality".to_string(),
-                content: "我很好奇".to_string(),
-                confidence: 0.7,
-            },
-        ];
+        let candidates = vec![SelfKnowledgeCandidate {
+            domain: "personality".to_string(),
+            content: "我很好奇".to_string(),
+            confidence: 0.7,
+        }];
         let summary = SelfReflector::format_reflection_summary(&candidates);
         assert!(summary.contains("1 条"));
         assert!(summary.contains("personality"));
@@ -588,7 +629,8 @@ mod tests {
         let r2 = r2.unwrap();
 
         // Exactly one should be skipped with "already in progress"
-        let skipped_count = [&r1, &r2].iter()
+        let skipped_count = [&r1, &r2]
+            .iter()
             .filter(|r| r.skip_reason.as_deref() == Some("already in progress"))
             .count();
         // At least one performed, at most one skipped due to guard

@@ -9,31 +9,31 @@
 //! during "sleep" (system idle) to prevent System 1 from being corrupted
 //! by System 2's occasional hallucinations.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 /// A feedback signal from System 2 to be buffered
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedbackSignal {
     /// Unique ID
     pub id: i64,
-    
+
     /// Timestamp when the signal was generated
     pub timestamp: DateTime<Utc>,
-    
+
     /// Type of feedback
     pub signal_type: SignalType,
-    
+
     /// The interpretation or conclusion
     pub content: String,
-    
+
     /// System 2's confidence in this interpretation (0.0 - 1.0)
     pub confidence: f32,
-    
+
     /// Emotional valence of the context (-1.0 to 1.0)
     pub emotional_context: f32,
-    
+
     /// Has this been processed during sleep consolidation?
     pub consolidated: bool,
 }
@@ -58,22 +58,22 @@ pub enum SignalType {
 pub struct ConsolidatedPattern {
     /// Signal type being aggregated
     pub signal_type: SignalType,
-    
+
     /// Number of similar signals seen
     pub count: u32,
-    
+
     /// Average confidence across signals
     pub avg_confidence: f32,
-    
+
     /// Average emotional valence
     pub avg_valence: f32,
-    
+
     /// Representative content (most frequent or most confident)
     pub representative_content: String,
-    
+
     /// First seen
     pub first_seen: DateTime<Utc>,
-    
+
     /// Last seen
     pub last_seen: DateTime<Utc>,
 }
@@ -83,13 +83,13 @@ pub struct ConsolidatedPattern {
 pub struct FeedbackBuffer {
     /// Pending signals waiting for consolidation
     signals: Vec<FeedbackSignal>,
-    
+
     /// Minimum confidence threshold for a signal to be considered
     confidence_threshold: f32,
-    
+
     /// Minimum occurrences needed for a pattern to affect state
     pattern_threshold: u32,
-    
+
     /// Next signal ID
     next_id: i64,
 }
@@ -105,12 +105,19 @@ impl FeedbackBuffer {
     }
 
     /// Add a feedback signal to the buffer
-    pub fn add_signal(&mut self, signal_type: SignalType, content: String, confidence: f32, emotional_context: f32) {
+    pub fn add_signal(
+        &mut self,
+        signal_type: SignalType,
+        content: String,
+        confidence: f32,
+        emotional_context: f32,
+    ) {
         // Apply uncertainty discounting immediately
         if confidence < self.confidence_threshold {
             tracing::debug!(
                 "Signal discounted due to low confidence: {:.2} < {:.2}",
-                confidence, self.confidence_threshold
+                confidence,
+                self.confidence_threshold
             );
             return;
         }
@@ -135,14 +142,15 @@ impl FeedbackBuffer {
     }
 
     /// Perform sleep consolidation - aggregate patterns and return actionable updates
-    /// 
+    ///
     /// This should be called during system idle time (e.g., night hours)
     pub fn consolidate(&mut self) -> Vec<ConsolidatedPattern> {
         let mut patterns: HashMap<SignalType, Vec<&FeedbackSignal>> = HashMap::new();
 
         // Group signals by type
         for signal in self.signals.iter().filter(|s| !s.consolidated) {
-            patterns.entry(signal.signal_type.clone())
+            patterns
+                .entry(signal.signal_type.clone())
                 .or_default()
                 .push(signal);
         }
@@ -152,32 +160,30 @@ impl FeedbackBuffer {
         // Aggregate each group
         for (signal_type, signals) in patterns {
             let count = signals.len() as u32;
-            
+
             // Only patterns that appear multiple times can affect state
             if count < self.pattern_threshold {
                 tracing::debug!(
                     "Pattern {:?} has {} occurrences, below threshold {}",
-                    signal_type, count, self.pattern_threshold
+                    signal_type,
+                    count,
+                    self.pattern_threshold
                 );
                 continue;
             }
 
             let avg_confidence = signals.iter().map(|s| s.confidence).sum::<f32>() / count as f32;
-            let avg_valence = signals.iter().map(|s| s.emotional_context).sum::<f32>() / count as f32;
+            let avg_valence =
+                signals.iter().map(|s| s.emotional_context).sum::<f32>() / count as f32;
 
             // Find most confident signal as representative
-            let representative = signals.iter()
+            let representative = signals
+                .iter()
                 .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
                 .unwrap();
 
-            let first_seen = signals.iter()
-                .map(|s| s.timestamp)
-                .min()
-                .unwrap();
-            let last_seen = signals.iter()
-                .map(|s| s.timestamp)
-                .max()
-                .unwrap();
+            let first_seen = signals.iter().map(|s| s.timestamp).min().unwrap();
+            let last_seen = signals.iter().map(|s| s.timestamp).max().unwrap();
 
             consolidated.push(ConsolidatedPattern {
                 signal_type,
@@ -211,10 +217,7 @@ impl FeedbackBuffer {
 
     /// Get recent signals for debugging/inspection
     pub fn recent_signals(&self, count: usize) -> Vec<&FeedbackSignal> {
-        self.signals.iter()
-            .rev()
-            .take(count)
-            .collect()
+        self.signals.iter().rev().take(count).collect()
     }
 }
 
@@ -255,7 +258,8 @@ impl ConsolidationProcessor {
                 }
                 SignalType::SituationInterpretation => {
                     // Affects narrative bias
-                    updates.narrative_bias_delta += pattern.avg_valence * 0.01 * pattern.avg_confidence;
+                    updates.narrative_bias_delta +=
+                        pattern.avg_valence * 0.01 * pattern.avg_confidence;
                 }
             }
         }
@@ -269,16 +273,16 @@ impl ConsolidationProcessor {
 pub struct StateUpdates {
     /// Delta for attachment anxiety
     pub attachment_anxiety_delta: f32,
-    
+
     /// Delta for openness
     pub openness_delta: f32,
-    
+
     /// Delta for curiosity baseline
     pub curiosity_delta: f32,
-    
+
     /// Delta for narrative bias
     pub narrative_bias_delta: f32,
-    
+
     /// Value reinforcements: (value_name, delta)
     pub value_reinforcements: Vec<(String, f32)>,
 }
@@ -300,7 +304,7 @@ mod tests {
     #[test]
     fn test_uncertainty_discounting() {
         let mut buffer = FeedbackBuffer::new();
-        
+
         // Low confidence signal should be discounted
         buffer.add_signal(
             SignalType::SelfReflection,
@@ -308,9 +312,9 @@ mod tests {
             0.3, // Below threshold
             0.0,
         );
-        
+
         assert_eq!(buffer.pending_count(), 0);
-        
+
         // High confidence signal should be kept
         buffer.add_signal(
             SignalType::SelfReflection,
@@ -318,14 +322,14 @@ mod tests {
             0.8,
             0.0,
         );
-        
+
         assert_eq!(buffer.pending_count(), 1);
     }
 
     #[test]
     fn test_temporal_smoothing() {
         let mut buffer = FeedbackBuffer::new();
-        
+
         // Add only 2 signals (below threshold of 3)
         for _ in 0..2 {
             buffer.add_signal(
@@ -335,10 +339,10 @@ mod tests {
                 0.5,
             );
         }
-        
+
         let patterns = buffer.consolidate();
         assert!(patterns.is_empty()); // Not enough occurrences
-        
+
         // Now add 3 more signals (fresh batch)
         for _ in 0..3 {
             buffer.add_signal(
@@ -348,7 +352,7 @@ mod tests {
                 0.6,
             );
         }
-        
+
         let patterns = buffer.consolidate();
         assert_eq!(patterns.len(), 1);
         assert_eq!(patterns[0].count, 3);
@@ -356,20 +360,18 @@ mod tests {
 
     #[test]
     fn test_state_updates_computation() {
-        let patterns = vec![
-            ConsolidatedPattern {
-                signal_type: SignalType::UserEmotionalFeedback,
-                count: 5,
-                avg_confidence: 0.8,
-                avg_valence: 0.6,
-                representative_content: "User seemed happy".to_string(),
-                first_seen: Utc::now(),
-                last_seen: Utc::now(),
-            },
-        ];
+        let patterns = vec![ConsolidatedPattern {
+            signal_type: SignalType::UserEmotionalFeedback,
+            count: 5,
+            avg_confidence: 0.8,
+            avg_valence: 0.6,
+            representative_content: "User seemed happy".to_string(),
+            first_seen: Utc::now(),
+            last_seen: Utc::now(),
+        }];
 
         let updates = ConsolidationProcessor::compute_state_updates(&patterns);
-        
+
         // Positive feedback should reduce attachment anxiety
         assert!(updates.attachment_anxiety_delta < 0.0);
     }

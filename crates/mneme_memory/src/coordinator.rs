@@ -11,25 +11,23 @@
 //! - Waking state: Active processing
 //! - Sleep state: Consolidation and learning
 
-use std::sync::Arc;
-use tokio::sync::{RwLock, watch};
+use anyhow::Result;
 use chrono::Timelike;
 use chrono::Utc;
-use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::{watch, RwLock};
 
+use crate::goals::GoalManager;
+use crate::rules::{RuleAction, RuleContext, RuleEngine, RuleTrigger};
+use crate::{
+    ConsolidationResult, EpisodeDigest, FeedbackBuffer, SignalType, SleepConfig, SleepConsolidator,
+    SqliteMemory,
+};
 use mneme_core::Memory;
 use mneme_core::{
-    OrganismState, DefaultDynamics, SensoryInput,
-    ValueJudge, RuleBasedJudge, Situation,
+    DefaultDynamics, OrganismState, RuleBasedJudge, SensoryInput, Situation, ValueJudge,
 };
-use mneme_limbic::{LimbicSystem, Stimulus, SomaticMarker};
-use crate::{
-    FeedbackBuffer, SignalType,
-    SleepConsolidator, SleepConfig, ConsolidationResult,
-    EpisodeDigest, SqliteMemory,
-};
-use crate::rules::{RuleEngine, RuleContext, RuleTrigger, RuleAction};
-use crate::goals::GoalManager;
+use mneme_limbic::{LimbicSystem, SomaticMarker, Stimulus};
 
 /// System lifecycle states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,13 +47,13 @@ pub enum LifecycleState {
 pub struct OrganismConfig {
     /// Sleep schedule
     pub sleep_config: SleepConfig,
-    
+
     /// State update interval (milliseconds)
     pub state_update_interval_ms: u64,
-    
+
     /// Whether to auto-sleep during configured hours
     pub auto_sleep: bool,
-    
+
     /// Minimum interactions before considering sleep
     pub min_interactions_before_sleep: u32,
 }
@@ -136,15 +134,19 @@ impl OrganismCoordinator {
     }
 
     /// Create with custom configuration and optional database
-    pub fn with_config(limbic: Arc<LimbicSystem>, config: OrganismConfig, db: Option<Arc<SqliteMemory>>) -> Self {
+    pub fn with_config(
+        limbic: Arc<LimbicSystem>,
+        config: OrganismConfig,
+        db: Option<Arc<SqliteMemory>>,
+    ) -> Self {
         let feedback_buffer = Arc::new(RwLock::new(FeedbackBuffer::new()));
         let consolidator = Arc::new(SleepConsolidator::with_config(
             feedback_buffer.clone(),
             config.sleep_config.clone(),
         ));
-        
+
         let (lifecycle_tx, _) = watch::channel(LifecycleState::Awake);
-        
+
         Self {
             state: Arc::new(RwLock::new(OrganismState::default())),
             dynamics: DefaultDynamics::default(),
@@ -173,7 +175,7 @@ impl OrganismCoordinator {
         db: Arc<SqliteMemory>,
     ) -> Result<Self> {
         let coordinator = Self::with_config(limbic, config, Some(db.clone()));
-        
+
         // Load persisted state
         if let Some(state) = db.load_organism_state().await? {
             tracing::info!("Loaded persisted organism state");
@@ -181,7 +183,7 @@ impl OrganismCoordinator {
         } else {
             tracing::info!("No persisted state found, using defaults");
         }
-        
+
         // Load pending feedback signals
         let signals = db.load_pending_feedback().await?;
         if !signals.is_empty() {
@@ -252,7 +254,7 @@ impl OrganismCoordinator {
     }
 
     /// Process an incoming interaction
-    /// 
+    ///
     /// This is the main entry point for handling user messages.
     /// It coordinates System 1 and System 2 processing.
     pub async fn process_interaction(
@@ -281,7 +283,8 @@ impl OrganismCoordinator {
         {
             let mut state = self.state.write().await;
             let medium_clone = state.medium.clone();
-            self.dynamics.step_fast(&mut state.fast, &medium_clone, &sensory, 1.0);
+            self.dynamics
+                .step_fast(&mut state.fast, &medium_clone, &sensory, 1.0);
             state.last_updated = Utc::now().timestamp();
         }
 
@@ -294,7 +297,7 @@ impl OrganismCoordinator {
                 content: content.chars().take(500).collect(),
                 emotional_valence: soma.affect.valence,
             });
-            
+
             // Keep buffer bounded (tighter cap to limit memory if sleep never fires)
             if episodes.len() > 200 {
                 episodes.drain(0..100);
@@ -319,14 +322,17 @@ impl OrganismCoordinator {
                     if let Some(ref db) = self.db {
                         for (text, intensity) in &feelings {
                             tracing::debug!("Body feeling: {} (intensity={:.2})", text, intensity);
-                            if let Err(e) = db.store_self_knowledge(
-                                "body_feeling",
-                                text,
-                                *intensity,
-                                "somatic",
-                                None,
-                                false,
-                            ).await {
+                            if let Err(e) = db
+                                .store_self_knowledge(
+                                    "body_feeling",
+                                    text,
+                                    *intensity,
+                                    "somatic",
+                                    None,
+                                    false,
+                                )
+                                .await
+                            {
                                 tracing::warn!("Failed to store body feeling: {}", e);
                             }
                         }
@@ -348,9 +354,13 @@ impl OrganismCoordinator {
     }
 
     /// Evaluate a proposed action against values
-    pub async fn evaluate_action(&self, description: &str, proposed_action: &str) -> Result<ActionEvaluation> {
+    pub async fn evaluate_action(
+        &self,
+        description: &str,
+        proposed_action: &str,
+    ) -> Result<ActionEvaluation> {
         let state = self.state.read().await;
-        
+
         let situation = Situation {
             description: description.to_string(),
             proposed_action: proposed_action.to_string(),
@@ -360,14 +370,16 @@ impl OrganismCoordinator {
         };
 
         let judgment = self.value_judge.evaluate(&situation, &state.slow.values);
-        
+
         // Apply moral cost to state if there are violations
         if !judgment.violated_values.is_empty() {
-            let violated: Vec<&str> = judgment.violated_values.iter()
+            let violated: Vec<&str> = judgment
+                .violated_values
+                .iter()
                 .map(|v| v.value_name.as_str())
                 .collect();
             let moral_cost = state.slow.values.compute_moral_cost(&violated);
-            
+
             drop(state);
             let mut state = self.state.write().await;
             self.dynamics.apply_moral_cost(&mut state.fast, moral_cost);
@@ -483,7 +495,10 @@ impl OrganismCoordinator {
         let current_state = self.state.read().await.clone();
 
         // Run consolidation
-        let mut result = self.consolidator.consolidate(&episodes, &current_state).await?;
+        let mut result = self
+            .consolidator
+            .consolidate(&episodes, &current_state)
+            .await?;
 
         // Apply state updates if consolidation was performed
         if result.performed && !result.state_updates.is_empty() {
@@ -514,14 +529,17 @@ impl OrganismCoordinator {
         if !result.self_reflections.is_empty() {
             if let Some(ref db) = self.db {
                 for candidate in &result.self_reflections {
-                    if let Err(e) = db.store_self_knowledge(
-                        &candidate.domain,
-                        &candidate.content,
-                        candidate.confidence,
-                        "consolidation",
-                        None,
-                        false,
-                    ).await {
+                    if let Err(e) = db
+                        .store_self_knowledge(
+                            &candidate.domain,
+                            &candidate.content,
+                            candidate.confidence,
+                            "consolidation",
+                            None,
+                            false,
+                        )
+                        .await
+                    {
                         tracing::warn!("Failed to store self-reflection: {}", e);
                     }
                 }
@@ -531,9 +549,8 @@ impl OrganismCoordinator {
                 );
 
                 // Store the reflection summary as a meta-episode
-                let summary = crate::SelfReflector::format_reflection_summary(
-                    &result.self_reflections,
-                );
+                let summary =
+                    crate::SelfReflector::format_reflection_summary(&result.self_reflections);
                 let meta_content = mneme_core::Content {
                     id: uuid::Uuid::new_v4(),
                     source: "self:reflection".to_string(),
@@ -571,10 +588,9 @@ impl OrganismCoordinator {
                             tracing::warn!("Failed to store dream episode: {}", e);
                         } else {
                             // Set dream strength to 0.4 (weaker than real memories)
-                            let _ = db.update_episode_strength(
-                                &dream_content.id.to_string(),
-                                0.4,
-                            ).await;
+                            let _ = db
+                                .update_episode_strength(&dream_content.id.to_string(), 0.4)
+                                .await;
                         }
                         result.dream = Some(dream);
                     }
@@ -648,7 +664,10 @@ impl OrganismCoordinator {
                 }
             }
             if !suggestions.is_empty() {
-                tracing::info!("Generated {} goal suggestions during sleep", suggestions.len());
+                tracing::info!(
+                    "Generated {} goal suggestions during sleep",
+                    suggestions.len()
+                );
             }
         }
 
@@ -677,7 +696,10 @@ impl OrganismCoordinator {
 
             // Record history snapshot with diff
             let prev = self.prev_snapshot.read().await.clone();
-            if let Err(e) = db.record_state_snapshot(&state, trigger, prev.as_ref()).await {
+            if let Err(e) = db
+                .record_state_snapshot(&state, trigger, prev.as_ref())
+                .await
+            {
                 tracing::error!("Failed to record state history: {}", e);
             }
 
@@ -690,9 +712,9 @@ impl OrganismCoordinator {
     pub async fn tick(&self) -> Result<()> {
         static TICK_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let tick = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
+
         let lifecycle = *self.lifecycle_state.read().await;
-        
+
         match lifecycle {
             LifecycleState::Awake => {
                 // Update medium state periodically
@@ -700,9 +722,15 @@ impl OrganismCoordinator {
                 let input = SensoryInput::default();
                 let fast_clone = state.fast.clone();
                 let slow_clone = state.slow.clone();
-                self.dynamics.step_medium(&mut state.medium, &fast_clone, &slow_clone, &input, 60.0);
+                self.dynamics.step_medium(
+                    &mut state.medium,
+                    &fast_clone,
+                    &slow_clone,
+                    &input,
+                    60.0,
+                );
                 drop(state);
-                
+
                 // Save state every 6 ticks (60 seconds if tick interval is 10s)
                 if tick.is_multiple_of(6) {
                     self.save_state().await;
@@ -736,14 +764,17 @@ impl OrganismCoordinator {
     /// Request graceful shutdown
     pub async fn shutdown(&self) {
         self.set_lifecycle_state(LifecycleState::ShuttingDown).await;
-        
+
         // Perform final consolidation if we have pending data
         let pending = self.feedback_buffer.read().await.pending_count();
         if pending > 0 {
-            tracing::info!("Performing final consolidation before shutdown ({} pending signals)", pending);
+            tracing::info!(
+                "Performing final consolidation before shutdown ({} pending signals)",
+                pending
+            );
             let _ = self.trigger_sleep().await;
         }
-        
+
         // Final state save
         self.save_state_with_trigger("shutdown").await;
         tracing::info!("Organism state saved before shutdown");
@@ -767,7 +798,12 @@ impl OrganismCoordinator {
         mneme_core::sentiment::analyze_sentiment(text)
     }
 
-    fn create_sensory_input(&self, _content: &str, soma: &SomaticMarker, response_delay: f32) -> SensoryInput {
+    fn create_sensory_input(
+        &self,
+        _content: &str,
+        soma: &SomaticMarker,
+        response_delay: f32,
+    ) -> SensoryInput {
         SensoryInput {
             content_valence: soma.affect.valence,
             content_intensity: soma.affect.arousal,
@@ -781,7 +817,7 @@ impl OrganismCoordinator {
     async fn check_lifecycle_transition(&self) {
         let hour = Utc::now().hour();
         let interaction_count = *self.interaction_count.read().await;
-        
+
         // Auto-transition to drowsy if conditions met
         if self.config.auto_sleep
             && hour >= self.config.sleep_config.sleep_start_hour
@@ -814,10 +850,10 @@ impl OrganismCoordinator {
 pub struct InteractionResult {
     /// Somatic marker from System 1
     pub somatic_marker: SomaticMarker,
-    
+
     /// Current organism state snapshot
     pub state_snapshot: OrganismState,
-    
+
     /// Current lifecycle state
     pub lifecycle: LifecycleState,
 }
@@ -838,13 +874,13 @@ impl InteractionResult {
 pub struct ActionEvaluation {
     /// Overall moral valence (-1.0 to 1.0)
     pub moral_valence: f32,
-    
+
     /// Whether there's a value conflict
     pub has_conflict: bool,
-    
+
     /// Human-readable explanation
     pub explanation: String,
-    
+
     /// Recommendation: should the action proceed?
     pub should_proceed: bool,
 }
@@ -857,7 +893,7 @@ mod tests {
     async fn test_coordinator_basic() {
         let limbic = Arc::new(LimbicSystem::new());
         let coordinator = OrganismCoordinator::new(limbic);
-        
+
         assert_eq!(coordinator.lifecycle_state().await, LifecycleState::Awake);
     }
 
@@ -865,13 +901,12 @@ mod tests {
     async fn test_process_interaction() {
         let limbic = Arc::new(LimbicSystem::new());
         let coordinator = OrganismCoordinator::new(limbic);
-        
-        let result = coordinator.process_interaction(
-            "user",
-            "你好！今天心情怎么样？",
-            1.0,
-        ).await.unwrap();
-        
+
+        let result = coordinator
+            .process_interaction("user", "你好！今天心情怎么样？", 1.0)
+            .await
+            .unwrap();
+
         assert_eq!(result.lifecycle, LifecycleState::Awake);
         // SomaticMarker doesn't have surprise field, check affect instead
         assert!(result.somatic_marker.affect.arousal >= 0.0);
@@ -890,10 +925,10 @@ mod tests {
         }
 
         // Test an action that violates honesty
-        let eval = coordinator.evaluate_action(
-            "用户问我是否喜欢他",
-            "撒谎说喜欢",
-        ).await.unwrap();
+        let eval = coordinator
+            .evaluate_action("用户问我是否喜欢他", "撒谎说喜欢")
+            .await
+            .unwrap();
 
         assert!(eval.moral_valence < 0.0);
         assert!(!eval.explanation.is_empty());
@@ -903,14 +938,16 @@ mod tests {
     async fn test_feedback_recording() {
         let limbic = Arc::new(LimbicSystem::new());
         let coordinator = OrganismCoordinator::new(limbic);
-        
-        coordinator.record_feedback(
-            SignalType::UserEmotionalFeedback,
-            "用户表达了感激".to_string(),
-            0.8,
-            0.6,
-        ).await;
-        
+
+        coordinator
+            .record_feedback(
+                SignalType::UserEmotionalFeedback,
+                "用户表达了感激".to_string(),
+                0.8,
+                0.6,
+            )
+            .await;
+
         let buffer = coordinator.feedback_buffer.read().await;
         assert_eq!(buffer.pending_count(), 1);
     }
@@ -920,9 +957,9 @@ mod tests {
         let limbic = Arc::new(LimbicSystem::new());
         let mut config = OrganismConfig::default();
         config.sleep_config.allow_manual_trigger = true;
-        
+
         let coordinator = OrganismCoordinator::with_config(limbic, config, None);
-        
+
         // Add some episodes
         {
             let mut episodes = coordinator.episode_buffer.write().await;
@@ -935,11 +972,11 @@ mod tests {
                 });
             }
         }
-        
+
         // Trigger sleep
         let result = coordinator.trigger_sleep().await.unwrap();
         assert!(result.performed);
-        
+
         // Should be back to awake
         assert_eq!(coordinator.lifecycle_state().await, LifecycleState::Awake);
     }

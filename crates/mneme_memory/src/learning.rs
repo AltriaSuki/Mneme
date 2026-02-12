@@ -3,7 +3,7 @@
 //! Records (state, modulation, feedback) triples during interaction,
 //! then adjusts ModulationCurves during sleep using reward-weighted nudging.
 
-use mneme_limbic::{ModulationVector, ModulationCurves};
+use mneme_limbic::{ModulationCurves, ModulationVector};
 use serde::{Deserialize, Serialize};
 
 /// A recorded triple of (organism_state, modulation_output, user_feedback).
@@ -53,10 +53,14 @@ impl CurveLearner {
             return None;
         }
 
-        let positive: Vec<&ModulationSample> =
-            samples.iter().filter(|s| s.feedback_valence > 0.2).collect();
-        let negative: Vec<&ModulationSample> =
-            samples.iter().filter(|s| s.feedback_valence < -0.2).collect();
+        let positive: Vec<&ModulationSample> = samples
+            .iter()
+            .filter(|s| s.feedback_valence > 0.2)
+            .collect();
+        let negative: Vec<&ModulationSample> = samples
+            .iter()
+            .filter(|s| s.feedback_valence < -0.2)
+            .collect();
 
         // Need at least one side to learn from
         if positive.is_empty() && negative.is_empty() {
@@ -119,7 +123,8 @@ impl CurveLearner {
 
         // stress_to_temperature: nudge high-end
         let delta_temp = (avg_pos.temperature_delta - avg_neg.temperature_delta) * lr;
-        curves.stress_to_temperature.1 = (curves.stress_to_temperature.1 + delta_temp).clamp(0.0, 0.5);
+        curves.stress_to_temperature.1 =
+            (curves.stress_to_temperature.1 + delta_temp).clamp(0.0, 0.5);
 
         // energy_to_context: nudge high-end
         let delta_ctx = (avg_pos.context_budget_factor - avg_neg.context_budget_factor) * lr;
@@ -185,9 +190,8 @@ mod tests {
             max_tokens_factor: 1.4,
             ..Default::default()
         };
-        let samples: Vec<ModulationSample> = (0..6)
-            .map(|_| make_sample(0.8, high_mv.clone()))
-            .collect();
+        let samples: Vec<ModulationSample> =
+            (0..6).map(|_| make_sample(0.8, high_mv.clone())).collect();
 
         let new_curves = learner.learn(&curves, &samples).unwrap();
         // high_output should have increased (positive nudge, no negative to counteract)
@@ -210,9 +214,8 @@ mod tests {
             max_tokens_factor: 1.4,
             ..Default::default()
         };
-        let samples: Vec<ModulationSample> = (0..6)
-            .map(|_| make_sample(-0.8, high_mv.clone()))
-            .collect();
+        let samples: Vec<ModulationSample> =
+            (0..6).map(|_| make_sample(-0.8, high_mv.clone())).collect();
 
         let new_curves = learner.learn(&curves, &samples).unwrap();
         // high_output should have decreased (negative nudge pushes away)

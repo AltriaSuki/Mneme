@@ -1,47 +1,62 @@
 use crate::sqlite::SqliteMemory;
-use mneme_core::{SocialGraph, Person, Memory, Content, Modality};
-use uuid::Uuid;
+use mneme_core::{Content, Memory, Modality, Person, SocialGraph};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_social_graph_ops() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
-    
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
+
     // 1. Create Person
     let person_id = Uuid::new_v4();
     let mut aliases = HashMap::new();
     aliases.insert("qq".to_string(), "123456789".to_string());
-    
+
     let person = Person {
         id: person_id,
         name: "Test User".to_string(),
         aliases: aliases.clone(),
     };
-    
+
     memory.upsert_person(&person).await.expect("Upsert failed");
-    
+
     // 2. Find by alias
-    let found = memory.find_person("qq", "123456789").await.expect("Find failed");
+    let found = memory
+        .find_person("qq", "123456789")
+        .await
+        .expect("Find failed");
     assert!(found.is_some());
     let found_person = found.unwrap();
     assert_eq!(found_person.id, person_id);
     assert_eq!(found_person.name, "Test User");
-    
+
     // 3. Find unknown
-    let unknown = memory.find_person("qq", "999999").await.expect("Find unknown failed");
+    let unknown = memory
+        .find_person("qq", "999999")
+        .await
+        .expect("Find unknown failed");
     assert!(unknown.is_none());
-    
+
     // 4. Update Person (Name change)
     let updated_person = Person {
         id: person_id,
         name: "Updated Name".to_string(),
         aliases,
     };
-    memory.upsert_person(&updated_person).await.expect("Update failed");
-    
-    let found_updated = memory.find_person("qq", "123456789").await.expect("Find failed").unwrap();
+    memory
+        .upsert_person(&updated_person)
+        .await
+        .expect("Update failed");
+
+    let found_updated = memory
+        .find_person("qq", "123456789")
+        .await
+        .expect("Find failed")
+        .unwrap();
     assert_eq!(found_updated.name, "Updated Name");
-    
+
     // 5. Record Interaction
     let other_id = Uuid::new_v4();
     let other_person = Person {
@@ -49,12 +64,21 @@ async fn test_social_graph_ops() {
         name: "Other User".to_string(),
         aliases: HashMap::new(),
     };
-    memory.upsert_person(&other_person).await.expect("Upsert other failed");
-    
-    memory.record_interaction(person_id, other_id, "test interaction").await.expect("Record interaction failed");
+    memory
+        .upsert_person(&other_person)
+        .await
+        .expect("Upsert other failed");
+
+    memory
+        .record_interaction(person_id, other_id, "test interaction")
+        .await
+        .expect("Record interaction failed");
 
     // 6. Get person context (verifies interaction was recorded)
-    let ctx = memory.get_person_context(person_id).await.expect("get_person_context failed");
+    let ctx = memory
+        .get_person_context(person_id)
+        .await
+        .expect("get_person_context failed");
     assert!(ctx.is_some(), "Expected person context for known person");
     let ctx = ctx.unwrap();
     assert_eq!(ctx.person.id, person_id);
@@ -64,14 +88,22 @@ async fn test_social_graph_ops() {
     assert!(ctx.relationship_notes.contains("test interaction"));
 
     // 7. Unknown person returns None
-    let unknown_ctx = memory.get_person_context(Uuid::new_v4()).await.expect("get_person_context failed");
+    let unknown_ctx = memory
+        .get_person_context(Uuid::new_v4())
+        .await
+        .expect("get_person_context failed");
     assert!(unknown_ctx.is_none());
 }
 
 #[tokio::test]
 async fn test_recall_blended_empty_db() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
-    let blended = memory.recall_blended("hello", 0.0).await.expect("recall_blended failed");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
+    let blended = memory
+        .recall_blended("hello", 0.0)
+        .await
+        .expect("recall_blended failed");
     // Empty DB → both fields empty or minimal
     assert!(blended.facts.is_empty());
     // episodes may contain "No relevant memories" or similar
@@ -79,10 +111,15 @@ async fn test_recall_blended_empty_db() {
 
 #[tokio::test]
 async fn test_recall_blended_with_data() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Store a fact
-    memory.store_fact("User", "likes", "Rust", 0.9).await.expect("store_fact failed");
+    memory
+        .store_fact("User", "likes", "Rust", 0.9)
+        .await
+        .expect("store_fact failed");
 
     // Memorize an episode
     let content = Content {
@@ -95,7 +132,10 @@ async fn test_recall_blended_with_data() {
     };
     memory.memorize(&content).await.expect("memorize failed");
 
-    let blended = memory.recall_blended("Rust programming", 0.0).await.expect("recall_blended failed");
+    let blended = memory
+        .recall_blended("Rust programming", 0.0)
+        .await
+        .expect("recall_blended failed");
     // Facts should contain the stored fact
     assert!(blended.facts.contains("Rust"), "facts: {}", blended.facts);
     // Episodes should contain the memorized content
@@ -105,7 +145,9 @@ async fn test_recall_blended_with_data() {
 #[tokio::test]
 async fn test_semantic_recall() {
     // This test involves downloading the model (25MB) once, so it might be slow on first run.
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // 1. Memorize generic facts
     let apple_content = Content {
@@ -116,7 +158,10 @@ async fn test_semantic_recall() {
         timestamp: 100,
         modality: Modality::Text,
     };
-    memory.memorize(&apple_content).await.expect("Memorize apple failed");
+    memory
+        .memorize(&apple_content)
+        .await
+        .expect("Memorize apple failed");
 
     let tech_content = Content {
         id: Uuid::new_v4(),
@@ -126,124 +171,176 @@ async fn test_semantic_recall() {
         timestamp: 101,
         modality: Modality::Text,
     };
-    memory.memorize(&tech_content).await.expect("Memorize tech failed");
+    memory
+        .memorize(&tech_content)
+        .await
+        .expect("Memorize tech failed");
 
     // 2. Query with semantic overlap but no keyword overlap
     // "fruit" does not appear in "I really love eating red apples" (unless 'apples' is stemmed, but we assume exact keyword match vs vector)
-    // Actually "apple" is fruit. 
+    // Actually "apple" is fruit.
     let recall_result = memory.recall("fruit").await.expect("Recall failed");
-    
+
     println!("Recall result for 'fruit': {}", recall_result);
-    
+
     // Expect apple content to be present
     assert!(recall_result.contains("red apples"));
-    
+
     // 3. Query for tech
-    let recall_tech = memory.recall("processor").await.expect("Recall tech failed");
+    let recall_tech = memory
+        .recall("processor")
+        .await
+        .expect("Recall tech failed");
     println!("Recall result for 'processor': {}", recall_tech);
     assert!(recall_tech.contains("computer"));
 }
 
 #[tokio::test]
 async fn test_store_and_recall_facts() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
-    
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
+
     // Store some facts
-    let id1 = memory.store_fact("用户", "喜欢", "红色苹果", 0.9)
-        .await.expect("Failed to store fact 1");
-    let id2 = memory.store_fact("用户", "住在", "上海", 0.8)
-        .await.expect("Failed to store fact 2");
-    let id3 = memory.store_fact("用户", "讨厌", "蟑螂", 1.0)
-        .await.expect("Failed to store fact 3");
-    let id4 = memory.store_fact("猫咪", "名字是", "小花", 0.95)
-        .await.expect("Failed to store fact 4");
-    
+    let id1 = memory
+        .store_fact("用户", "喜欢", "红色苹果", 0.9)
+        .await
+        .expect("Failed to store fact 1");
+    let id2 = memory
+        .store_fact("用户", "住在", "上海", 0.8)
+        .await
+        .expect("Failed to store fact 2");
+    let id3 = memory
+        .store_fact("用户", "讨厌", "蟑螂", 1.0)
+        .await
+        .expect("Failed to store fact 3");
+    let id4 = memory
+        .store_fact("猫咪", "名字是", "小花", 0.95)
+        .await
+        .expect("Failed to store fact 4");
+
     assert!(id1 > 0);
     assert!(id2 > 0);
     assert!(id3 > 0);
     assert!(id4 > 0);
-    
+
     // Recall facts about "用户"
-    let user_facts = memory.get_facts_about("用户").await.expect("Failed to get facts about user");
+    let user_facts = memory
+        .get_facts_about("用户")
+        .await
+        .expect("Failed to get facts about user");
     assert_eq!(user_facts.len(), 3);
     // Sorted by confidence desc
     assert_eq!(user_facts[0].predicate, "讨厌"); // confidence 1.0
-    
+
     // Recall facts by keyword "苹果"
-    let apple_facts = memory.recall_facts("苹果").await.expect("Failed to recall apple facts");
+    let apple_facts = memory
+        .recall_facts("苹果")
+        .await
+        .expect("Failed to recall apple facts");
     assert_eq!(apple_facts.len(), 1);
     assert_eq!(apple_facts[0].object, "红色苹果");
-    
+
     // Recall facts by keyword "猫咪"
-    let cat_facts = memory.recall_facts("猫咪 小花").await.expect("Failed to recall cat facts");
+    let cat_facts = memory
+        .recall_facts("猫咪 小花")
+        .await
+        .expect("Failed to recall cat facts");
     assert!(!cat_facts.is_empty());
     assert!(cat_facts.iter().any(|f| f.subject == "猫咪"));
-    
+
     // Get top facts
-    let top = memory.get_top_facts(10).await.expect("Failed to get top facts");
+    let top = memory
+        .get_top_facts(10)
+        .await
+        .expect("Failed to get top facts");
     assert_eq!(top.len(), 4);
 }
 
 #[tokio::test]
 async fn test_fact_confidence_update() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
-    
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
+
     // Store a fact
-    memory.store_fact("用户", "喜欢", "编程", 0.5)
-        .await.expect("Failed to store");
-    
+    memory
+        .store_fact("用户", "喜欢", "编程", 0.5)
+        .await
+        .expect("Failed to store");
+
     // Store the same fact again with higher confidence — should merge, not duplicate
-    memory.store_fact("用户", "喜欢", "编程", 0.9)
-        .await.expect("Failed to update");
-    
+    memory
+        .store_fact("用户", "喜欢", "编程", 0.9)
+        .await
+        .expect("Failed to update");
+
     let facts = memory.get_facts_about("用户").await.expect("Failed to get");
-    assert_eq!(facts.len(), 1, "Should have merged duplicate, not created two rows");
-    
+    assert_eq!(
+        facts.len(),
+        1,
+        "Should have merged duplicate, not created two rows"
+    );
+
     // Confidence should have been updated (0.5 * 0.3 + 0.9 * 0.7 = 0.78)
     let fact = &facts[0];
-    assert!(fact.confidence > 0.7, "confidence={} should be > 0.7 after update", fact.confidence);
-    assert!(fact.confidence < 0.85, "confidence={} should be < 0.85", fact.confidence);
+    assert!(
+        fact.confidence > 0.7,
+        "confidence={} should be > 0.7 after update",
+        fact.confidence
+    );
+    assert!(
+        fact.confidence < 0.85,
+        "confidence={} should be < 0.85",
+        fact.confidence
+    );
 }
 
 #[tokio::test]
 async fn test_fact_decay() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
-    
-    memory.store_fact("用户", "住在", "北京", 0.9)
-        .await.expect("Failed to store");
-    
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
+
+    memory
+        .store_fact("用户", "住在", "北京", 0.9)
+        .await
+        .expect("Failed to store");
+
     let facts = memory.get_facts_about("用户").await.expect("get failed");
     let fact_id = facts[0].id;
     let original_confidence = facts[0].confidence;
-    
+
     // Decay the fact (e.g., contradicting info came in)
     memory.decay_fact(fact_id, 0.5).await.expect("decay failed");
-    
+
     let facts_after = memory.get_facts_about("用户").await.expect("get failed");
-    assert!(facts_after[0].confidence < original_confidence, 
-        "confidence should decrease after decay: {} < {}", facts_after[0].confidence, original_confidence);
+    assert!(
+        facts_after[0].confidence < original_confidence,
+        "confidence should decrease after decay: {} < {}",
+        facts_after[0].confidence,
+        original_confidence
+    );
     assert!((facts_after[0].confidence - original_confidence * 0.5).abs() < 0.01);
 }
 
 #[tokio::test]
 async fn test_format_facts_for_prompt() {
-    let facts = vec![
-        crate::sqlite::SemanticFact {
-            id: 1,
-            subject: "用户".to_string(),
-            predicate: "喜欢".to_string(),
-            object: "音乐".to_string(),
-            confidence: 0.9,
-            created_at: 0,
-            updated_at: 0,
-        },
-    ];
-    
+    let facts = vec![crate::sqlite::SemanticFact {
+        id: 1,
+        subject: "用户".to_string(),
+        predicate: "喜欢".to_string(),
+        object: "音乐".to_string(),
+        confidence: 0.9,
+        created_at: 0,
+        updated_at: 0,
+    }];
+
     let formatted = SqliteMemory::format_facts_for_prompt(&facts);
     assert!(formatted.contains("KNOWN FACTS"));
     assert!(formatted.contains("用户 喜欢 音乐"));
     assert!(formatted.contains("90%"));
-    
+
     // Empty facts should produce empty string
     let empty = SqliteMemory::format_facts_for_prompt(&[]);
     assert!(empty.is_empty());
@@ -255,18 +352,29 @@ async fn test_format_facts_for_prompt() {
 
 #[tokio::test]
 async fn test_state_history_record_and_query() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
     let state = mneme_core::OrganismState::default();
 
     // Record several snapshots
-    memory.record_state_snapshot(&state, "tick", None).await.unwrap();
+    memory
+        .record_state_snapshot(&state, "tick", None)
+        .await
+        .unwrap();
 
     let mut modified = state.clone();
     modified.fast.energy = 0.3;
-    memory.record_state_snapshot(&modified, "interaction", Some(&state)).await.unwrap();
+    memory
+        .record_state_snapshot(&modified, "interaction", Some(&state))
+        .await
+        .unwrap();
 
     modified.fast.stress = 0.9;
-    memory.record_state_snapshot(&modified, "consolidation", Some(&state)).await.unwrap();
+    memory
+        .record_state_snapshot(&modified, "consolidation", Some(&state))
+        .await
+        .unwrap();
 
     // Query all history
     let history = memory.query_state_history(0, i64::MAX, 100).await.unwrap();
@@ -282,7 +390,11 @@ async fn test_state_history_record_and_query() {
 
     // Second snapshot should have a diff mentioning energy
     let diff = history[1].diff_summary.as_ref().unwrap();
-    assert!(diff.contains('E'), "diff should mention energy change: {}", diff);
+    assert!(
+        diff.contains('E'),
+        "diff should mention energy change: {}",
+        diff
+    );
 
     // Verify state was deserialized correctly
     assert!((history[1].state.fast.energy - 0.3).abs() < 0.01);
@@ -290,14 +402,19 @@ async fn test_state_history_record_and_query() {
 
 #[tokio::test]
 async fn test_state_history_recent() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
     let state = mneme_core::OrganismState::default();
 
     // Record 5 snapshots
     for i in 0..5 {
         let mut s = state.clone();
         s.fast.energy = i as f32 * 0.1 + 0.3;
-        memory.record_state_snapshot(&s, "tick", None).await.unwrap();
+        memory
+            .record_state_snapshot(&s, "tick", None)
+            .await
+            .unwrap();
     }
 
     // Get recent 3
@@ -310,12 +427,17 @@ async fn test_state_history_recent() {
 
 #[tokio::test]
 async fn test_state_history_prune() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
     let state = mneme_core::OrganismState::default();
 
     // Record 20 snapshots
     for _ in 0..20 {
-        memory.record_state_snapshot(&state, "tick", None).await.unwrap();
+        memory
+            .record_state_snapshot(&state, "tick", None)
+            .await
+            .unwrap();
     }
 
     // Verify all 20 exist
@@ -336,24 +458,58 @@ async fn test_state_history_prune() {
 
 #[tokio::test]
 async fn test_store_and_recall_self_knowledge() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Store several entries across domains
-    let id1 = memory.store_self_knowledge(
-        "personality", "我倾向于在深夜变得更感性", 0.7, "consolidation", None, false,
-    ).await.expect("Failed to store sk 1");
+    let id1 = memory
+        .store_self_knowledge(
+            "personality",
+            "我倾向于在深夜变得更感性",
+            0.7,
+            "consolidation",
+            None,
+            false,
+        )
+        .await
+        .expect("Failed to store sk 1");
 
-    let id2 = memory.store_self_knowledge(
-        "personality", "我不喜欢被打断思路", 0.6, "interaction", None, false,
-    ).await.expect("Failed to store sk 2");
+    let id2 = memory
+        .store_self_knowledge(
+            "personality",
+            "我不喜欢被打断思路",
+            0.6,
+            "interaction",
+            None,
+            false,
+        )
+        .await
+        .expect("Failed to store sk 2");
 
-    let id3 = memory.store_self_knowledge(
-        "interest", "物理让我感到兴奋", 0.8, "interaction", None, false,
-    ).await.expect("Failed to store sk 3");
+    let id3 = memory
+        .store_self_knowledge(
+            "interest",
+            "物理让我感到兴奋",
+            0.8,
+            "interaction",
+            None,
+            false,
+        )
+        .await
+        .expect("Failed to store sk 3");
 
-    let id4 = memory.store_self_knowledge(
-        "relationship", "和创建者聊天让我放松", 0.9, "consolidation", None, true,
-    ).await.expect("Failed to store sk 4");
+    let id4 = memory
+        .store_self_knowledge(
+            "relationship",
+            "和创建者聊天让我放松",
+            0.9,
+            "consolidation",
+            None,
+            true,
+        )
+        .await
+        .expect("Failed to store sk 4");
 
     assert!(id1 > 0);
     assert!(id2 > 0);
@@ -377,20 +533,35 @@ async fn test_store_and_recall_self_knowledge() {
 
 #[tokio::test]
 async fn test_self_knowledge_confidence_merge() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Store a self-knowledge entry
-    memory.store_self_knowledge(
-        "personality", "我喜欢安静", 0.5, "interaction", None, false,
-    ).await.unwrap();
+    memory
+        .store_self_knowledge("personality", "我喜欢安静", 0.5, "interaction", None, false)
+        .await
+        .unwrap();
 
     // Store the same entry again with higher confidence — should merge
-    memory.store_self_knowledge(
-        "personality", "我喜欢安静", 0.9, "consolidation", None, false,
-    ).await.unwrap();
+    memory
+        .store_self_knowledge(
+            "personality",
+            "我喜欢安静",
+            0.9,
+            "consolidation",
+            None,
+            false,
+        )
+        .await
+        .unwrap();
 
     let entries = memory.recall_self_knowledge("personality").await.unwrap();
-    assert_eq!(entries.len(), 1, "Should merge duplicate, not create two rows");
+    assert_eq!(
+        entries.len(),
+        1,
+        "Should merge duplicate, not create two rows"
+    );
 
     // Confidence: 0.5 * 0.3 + 0.9 * 0.7 = 0.78
     let conf = entries[0].confidence;
@@ -402,11 +573,14 @@ async fn test_self_knowledge_confidence_merge() {
 
 #[tokio::test]
 async fn test_self_knowledge_decay() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
-    memory.store_self_knowledge(
-        "belief", "说谎是不好的", 0.8, "seed", None, false,
-    ).await.unwrap();
+    memory
+        .store_self_knowledge("belief", "说谎是不好的", 0.8, "seed", None, false)
+        .await
+        .unwrap();
 
     let entries = memory.recall_self_knowledge("belief").await.unwrap();
     let id = entries[0].id;
@@ -422,11 +596,22 @@ async fn test_self_knowledge_decay() {
 
 #[tokio::test]
 async fn test_self_knowledge_get_all_and_delete() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
-    memory.store_self_knowledge("personality", "内向", 0.7, "seed", None, false).await.unwrap();
-    memory.store_self_knowledge("interest", "音乐", 0.6, "seed", None, false).await.unwrap();
-    memory.store_self_knowledge("belief", "诚实很重要", 0.9, "seed", None, false).await.unwrap();
+    memory
+        .store_self_knowledge("personality", "内向", 0.7, "seed", None, false)
+        .await
+        .unwrap();
+    memory
+        .store_self_knowledge("interest", "音乐", 0.6, "seed", None, false)
+        .await
+        .unwrap();
+    memory
+        .store_self_knowledge("belief", "诚实很重要", 0.9, "seed", None, false)
+        .await
+        .unwrap();
 
     // Get all with min_confidence 0.0
     let all = memory.get_all_self_knowledge(0.0).await.unwrap();
@@ -488,7 +673,9 @@ async fn test_format_self_knowledge_for_prompt() {
 
 #[tokio::test]
 async fn test_episode_default_strength() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let content = Content {
         id: Uuid::new_v4(),
@@ -500,14 +687,22 @@ async fn test_episode_default_strength() {
     };
     memory.memorize(&content).await.unwrap();
 
-    let strength = memory.get_episode_strength(&content.id.to_string()).await.unwrap();
+    let strength = memory
+        .get_episode_strength(&content.id.to_string())
+        .await
+        .unwrap();
     assert!(strength.is_some());
-    assert!((strength.unwrap() - 0.5).abs() < 0.01, "Default strength should be 0.5");
+    assert!(
+        (strength.unwrap() - 0.5).abs() < 0.01,
+        "Default strength should be 0.5"
+    );
 }
 
 #[tokio::test]
 async fn test_episode_update_strength() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let content = Content {
         id: Uuid::new_v4(),
@@ -520,15 +715,24 @@ async fn test_episode_update_strength() {
     memory.memorize(&content).await.unwrap();
 
     // Simulate encoding layer: high emotional intensity → high strength
-    memory.update_episode_strength(&content.id.to_string(), 0.9).await.unwrap();
+    memory
+        .update_episode_strength(&content.id.to_string(), 0.9)
+        .await
+        .unwrap();
 
-    let strength = memory.get_episode_strength(&content.id.to_string()).await.unwrap().unwrap();
+    let strength = memory
+        .get_episode_strength(&content.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert!((strength - 0.9).abs() < 0.01);
 }
 
 #[tokio::test]
 async fn test_episode_decay() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let id1 = Uuid::new_v4();
     let id2 = Uuid::new_v4();
@@ -542,23 +746,36 @@ async fn test_episode_decay() {
             modality: Modality::Text,
         };
         memory.memorize(&content).await.unwrap();
-        memory.update_episode_strength(&id.to_string(), strength).await.unwrap();
+        memory
+            .update_episode_strength(&id.to_string(), strength)
+            .await
+            .unwrap();
     }
 
     // Decay all by 0.5
     let affected = memory.decay_episode_strengths(0.5).await.unwrap();
     assert_eq!(affected, 2);
 
-    let s1 = memory.get_episode_strength(&id1.to_string()).await.unwrap().unwrap();
+    let s1 = memory
+        .get_episode_strength(&id1.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert!((s1 - 0.4).abs() < 0.01, "0.8 * 0.5 = 0.4, got {}", s1);
 
-    let s2 = memory.get_episode_strength(&id2.to_string()).await.unwrap().unwrap();
+    let s2 = memory
+        .get_episode_strength(&id2.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert!((s2 - 0.15).abs() < 0.01, "0.3 * 0.5 = 0.15, got {}", s2);
 }
 
 #[tokio::test]
 async fn test_episode_rehearsal_boost() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let id = Uuid::new_v4();
     let content = Content {
@@ -573,17 +790,32 @@ async fn test_episode_rehearsal_boost() {
     // Start at 0.5 (default)
 
     // Rehearsal without reconstruction — just boost
-    memory.boost_episode_on_recall(&id.to_string(), 0.1, None).await.unwrap();
-    let s = memory.get_episode_strength(&id.to_string()).await.unwrap().unwrap();
+    memory
+        .boost_episode_on_recall(&id.to_string(), 0.1, None)
+        .await
+        .unwrap();
+    let s = memory
+        .get_episode_strength(&id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert!((s - 0.6).abs() < 0.01, "0.5 + 0.1 = 0.6, got {}", s);
 
     // Rehearsal WITH reconstruction — boost + overwrite body (B-10: 直接覆写)
-    memory.boost_episode_on_recall(
-        &id.to_string(), 0.15,
-        Some("Reconstructed: I remember it was a warm day"),
-    ).await.unwrap();
+    memory
+        .boost_episode_on_recall(
+            &id.to_string(),
+            0.15,
+            Some("Reconstructed: I remember it was a warm day"),
+        )
+        .await
+        .unwrap();
 
-    let s2 = memory.get_episode_strength(&id.to_string()).await.unwrap().unwrap();
+    let s2 = memory
+        .get_episode_strength(&id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert!((s2 - 0.75).abs() < 0.01, "0.6 + 0.15 = 0.75, got {}", s2);
 }
 
@@ -596,20 +828,24 @@ async fn test_feedback_persist_to_db() {
     use crate::SignalType;
     use std::sync::Arc;
 
-    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let memory = Arc::new(
+        SqliteMemory::new(":memory:")
+            .await
+            .expect("Failed to create memory"),
+    );
     let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
     let config = crate::OrganismConfig::default();
-    let coordinator = crate::OrganismCoordinator::with_config(
-        limbic, config, Some(memory.clone()),
-    );
+    let coordinator = crate::OrganismCoordinator::with_config(limbic, config, Some(memory.clone()));
 
     // Record feedback — should persist to DB
-    coordinator.record_feedback(
-        SignalType::UserEmotionalFeedback,
-        "用户表达了感激".to_string(),
-        0.8,
-        0.6,
-    ).await;
+    coordinator
+        .record_feedback(
+            SignalType::UserEmotionalFeedback,
+            "用户表达了感激".to_string(),
+            0.8,
+            0.6,
+        )
+        .await;
 
     // Verify it's in the DB
     let pending = memory.load_pending_feedback().await.unwrap();
@@ -620,25 +856,29 @@ async fn test_feedback_persist_to_db() {
 
 #[tokio::test]
 async fn test_feedback_consolidated_after_sleep() {
-    use crate::{SignalType, EpisodeDigest};
-    use std::sync::Arc;
+    use crate::{EpisodeDigest, SignalType};
     use chrono::Utc;
+    use std::sync::Arc;
 
-    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let memory = Arc::new(
+        SqliteMemory::new(":memory:")
+            .await
+            .expect("Failed to create memory"),
+    );
     let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
     let mut config = crate::OrganismConfig::default();
     config.sleep_config.allow_manual_trigger = true;
-    let coordinator = crate::OrganismCoordinator::with_config(
-        limbic, config, Some(memory.clone()),
-    );
+    let coordinator = crate::OrganismCoordinator::with_config(limbic, config, Some(memory.clone()));
 
     // Record feedback
-    coordinator.record_feedback(
-        SignalType::SelfReflection,
-        "我觉得自己回答得不错".to_string(),
-        0.9,
-        0.3,
-    ).await;
+    coordinator
+        .record_feedback(
+            SignalType::SelfReflection,
+            "我觉得自己回答得不错".to_string(),
+            0.9,
+            0.3,
+        )
+        .await;
 
     // Add episodes so sleep has something to consolidate
     {
@@ -662,7 +902,11 @@ async fn test_feedback_consolidated_after_sleep() {
 
     // After sleep, pending should be empty (all consolidated)
     let after = memory.load_pending_feedback().await.unwrap();
-    assert!(after.is_empty(), "Expected 0 pending after sleep, got {}", after.len());
+    assert!(
+        after.is_empty(),
+        "Expected 0 pending after sleep, got {}",
+        after.len()
+    );
 }
 
 // =============================================================================
@@ -672,16 +916,18 @@ async fn test_feedback_consolidated_after_sleep() {
 #[tokio::test]
 async fn test_sleep_decays_episodes() {
     use crate::EpisodeDigest;
-    use std::sync::Arc;
     use chrono::Utc;
+    use std::sync::Arc;
 
-    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let memory = Arc::new(
+        SqliteMemory::new(":memory:")
+            .await
+            .expect("Failed to create memory"),
+    );
     let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
     let mut config = crate::OrganismConfig::default();
     config.sleep_config.allow_manual_trigger = true;
-    let coordinator = crate::OrganismCoordinator::with_config(
-        limbic, config, Some(memory.clone()),
-    );
+    let coordinator = crate::OrganismCoordinator::with_config(limbic, config, Some(memory.clone()));
 
     // Store an episode with known strength
     let id = Uuid::new_v4();
@@ -694,7 +940,10 @@ async fn test_sleep_decays_episodes() {
         modality: Modality::Text,
     };
     memory.memorize(&content).await.unwrap();
-    memory.update_episode_strength(&id.to_string(), 0.8).await.unwrap();
+    memory
+        .update_episode_strength(&id.to_string(), 0.8)
+        .await
+        .unwrap();
 
     // Add episodes for consolidation
     {
@@ -712,9 +961,17 @@ async fn test_sleep_decays_episodes() {
     // Trigger sleep — should decay strengths by 0.95
     coordinator.trigger_sleep().await.unwrap();
 
-    let strength = memory.get_episode_strength(&id.to_string()).await.unwrap().unwrap();
+    let strength = memory
+        .get_episode_strength(&id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     // 0.8 * 0.95 = 0.76
-    assert!((strength - 0.76).abs() < 0.01, "Expected ~0.76, got {}", strength);
+    assert!(
+        (strength - 0.76).abs() < 0.01,
+        "Expected ~0.76, got {}",
+        strength
+    );
 }
 
 // =============================================================================
@@ -723,7 +980,9 @@ async fn test_sleep_decays_episodes() {
 
 #[tokio::test]
 async fn test_recall_with_bias_no_panic() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Store a few episodes
     for i in 0..5 {
@@ -741,7 +1000,12 @@ async fn test_recall_with_bias_no_panic() {
     // Various bias values should not panic
     for bias in [-1.0, -0.5, 0.0, 0.5, 1.0] {
         let result = Memory::recall_with_bias(&memory, "topic", bias).await;
-        assert!(result.is_ok(), "recall_with_bias({}) failed: {:?}", bias, result.err());
+        assert!(
+            result.is_ok(),
+            "recall_with_bias({}) failed: {:?}",
+            bias,
+            result.err()
+        );
         assert!(!result.unwrap().is_empty());
     }
 }
@@ -750,7 +1014,9 @@ async fn test_recall_with_bias_no_panic() {
 async fn test_recall_with_bias_ordering_differs() {
     use mneme_core::Memory;
 
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Store old and new episodes with the same topic
     let old_content = Content {
@@ -776,7 +1042,10 @@ async fn test_recall_with_bias_ordering_differs() {
     // Positive bias should favor recent
     let positive = memory.recall_with_bias("learning Rust", 0.8).await.unwrap();
     // Negative bias should favor old
-    let negative = memory.recall_with_bias("learning Rust", -0.8).await.unwrap();
+    let negative = memory
+        .recall_with_bias("learning Rust", -0.8)
+        .await
+        .unwrap();
 
     // Both should contain results
     assert!(positive.contains("Rust"));
@@ -795,7 +1064,9 @@ async fn test_modulation_sample_persist() {
     use crate::learning::ModulationSample;
     use mneme_limbic::ModulationVector;
 
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let sample = ModulationSample {
         id: 0,
@@ -831,7 +1102,9 @@ async fn test_modulation_sample_mark_consumed() {
     use crate::learning::ModulationSample;
     use mneme_limbic::ModulationVector;
 
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Save two samples
     for i in 0..2 {
@@ -863,7 +1136,9 @@ async fn test_modulation_sample_mark_consumed() {
 async fn test_curves_persist_and_load() {
     use mneme_limbic::ModulationCurves;
 
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Initially no curves
     let loaded = memory.load_learned_curves().await.unwrap();
@@ -891,17 +1166,20 @@ async fn test_curves_persist_and_load() {
 #[tokio::test]
 async fn test_sleep_learns_curves() {
     use crate::{learning::ModulationSample, EpisodeDigest};
+    use chrono::Utc;
     use mneme_limbic::ModulationVector;
     use std::sync::Arc;
-    use chrono::Utc;
 
-    let memory = Arc::new(SqliteMemory::new(":memory:").await.expect("Failed to create memory"));
+    let memory = Arc::new(
+        SqliteMemory::new(":memory:")
+            .await
+            .expect("Failed to create memory"),
+    );
     let limbic = Arc::new(mneme_limbic::LimbicSystem::new());
     let mut config = crate::OrganismConfig::default();
     config.sleep_config.allow_manual_trigger = true;
-    let coordinator = crate::OrganismCoordinator::with_config(
-        limbic.clone(), config, Some(memory.clone()),
-    );
+    let coordinator =
+        crate::OrganismCoordinator::with_config(limbic.clone(), config, Some(memory.clone()));
 
     // Record enough positive modulation samples
     let high_mv = ModulationVector {
@@ -949,20 +1227,31 @@ async fn test_sleep_learns_curves() {
     // Curves should have changed
     let after = limbic.get_curves().await;
     let changed = (after.energy_to_max_tokens.1 - before.energy_to_max_tokens.1).abs() > 0.001;
-    assert!(changed, "Curves should have been adjusted by offline learning");
+    assert!(
+        changed,
+        "Curves should have been adjusted by offline learning"
+    );
 
     // Samples should be consumed
     let remaining = memory.load_unconsumed_samples().await.unwrap();
-    assert!(remaining.is_empty(), "All samples should be consumed after sleep");
+    assert!(
+        remaining.is_empty(),
+        "All samples should be consumed after sleep"
+    );
 
     // Curves should be persisted
     let persisted = memory.load_learned_curves().await.unwrap();
-    assert!(persisted.is_some(), "Learned curves should be persisted to DB");
+    assert!(
+        persisted.is_some(),
+        "Learned curves should be persisted to DB"
+    );
 }
 
 #[tokio::test]
 async fn test_recall_random_by_strength() {
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Store several episodes with varying strengths
     for i in 0..10 {
@@ -977,7 +1266,10 @@ async fn test_recall_random_by_strength() {
         memory.memorize(&content).await.unwrap();
         // Set varying strengths: 0.1 * (i+1)
         let strength = 0.1 * (i as f32 + 1.0);
-        memory.update_episode_strength(&content.id.to_string(), strength).await.unwrap();
+        memory
+            .update_episode_strength(&content.id.to_string(), strength)
+            .await
+            .unwrap();
     }
 
     // Recall 3 random seeds
@@ -1002,7 +1294,9 @@ async fn test_recall_random_by_strength() {
 #[tokio::test]
 async fn test_vec_recall_basic() {
     // Verify that recall uses the vec_episodes ANN index and returns relevant results
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let content = Content {
         id: Uuid::new_v4(),
@@ -1023,7 +1317,9 @@ async fn test_vec_recall_removes_limit() {
     // The old implementation had LIMIT 1000 on episodes, meaning old memories
     // beyond 1000 could never be recalled. With sqlite-vec KNN, all episodes
     // are searchable regardless of count.
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     // Insert a unique "needle" episode first (oldest)
     let needle = Content {
@@ -1070,7 +1366,9 @@ async fn test_vec_backfill() {
 
     // Phase 1: Create memory and insert episodes
     {
-        let memory = SqliteMemory::new(db_str).await.expect("Failed to create memory");
+        let memory = SqliteMemory::new(db_str)
+            .await
+            .expect("Failed to create memory");
         let content = Content {
             id: Uuid::new_v4(),
             source: "test".to_string(),
@@ -1084,7 +1382,9 @@ async fn test_vec_backfill() {
 
     // Phase 2: Re-open the database (simulates restart, backfill runs again)
     {
-        let memory = SqliteMemory::new(db_str).await.expect("Failed to reopen memory");
+        let memory = SqliteMemory::new(db_str)
+            .await
+            .expect("Failed to reopen memory");
         // The backfill should have ensured vec_episodes is populated
         let result = memory.recall("machine learning").await.unwrap();
         assert!(
@@ -1103,7 +1403,9 @@ async fn test_vec_backfill() {
 async fn test_rule_persist_and_load() {
     use crate::rules::*;
 
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let rule = BehaviorRule {
         id: 0,
@@ -1111,8 +1413,14 @@ async fn test_rule_persist_and_load() {
         priority: 50,
         enabled: true,
         trigger: RuleTrigger::OnTick,
-        condition: RuleCondition::StateLt { field: "energy".into(), value: 0.3 },
-        action: RuleAction::ModifyState { field: "boredom".into(), delta: 0.2 },
+        condition: RuleCondition::StateLt {
+            field: "energy".into(),
+            value: 0.3,
+        },
+        action: RuleAction::ModifyState {
+            field: "boredom".into(),
+            delta: 0.2,
+        },
         cooldown_secs: Some(300),
         last_fired: None,
     };
@@ -1130,14 +1438,22 @@ async fn test_rule_persist_and_load() {
 async fn test_seed_rules_idempotent() {
     use crate::rules::seed_rules;
 
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
 
     let seeds = seed_rules();
-    let count1 = memory.seed_behavior_rules(&seeds).await.expect("seed failed");
+    let count1 = memory
+        .seed_behavior_rules(&seeds)
+        .await
+        .expect("seed failed");
     assert_eq!(count1, 3);
 
     // Second call should be a no-op
-    let count2 = memory.seed_behavior_rules(&seeds).await.expect("seed failed");
+    let count2 = memory
+        .seed_behavior_rules(&seeds)
+        .await
+        .expect("seed failed");
     assert_eq!(count2, 0);
 }
 
@@ -1149,7 +1465,9 @@ async fn test_seed_rules_idempotent() {
 async fn test_goal_crud() {
     use crate::goals::*;
 
-    let memory = SqliteMemory::new(":memory:").await.expect("Failed to create memory");
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
     let gm = GoalManager::new(std::sync::Arc::new(memory));
 
     let goal = Goal {

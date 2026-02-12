@@ -4,13 +4,13 @@
 //! Only content generation goes through the LLM. Rules follow a
 //! trigger → condition → action three-stage pattern.
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use anyhow::Result;
 
-use mneme_core::OrganismState;
 use crate::coordinator::LifecycleState;
 use crate::SqliteMemory;
+use mneme_core::OrganismState;
 
 // ============================================================================
 // Rule Data Model
@@ -84,7 +84,10 @@ pub enum RuleAction {
     /// Transition lifecycle state.
     TransitionLifecycle { target: String },
     /// Execute a tool autonomously.
-    ExecuteTool { name: String, input: serde_json::Value },
+    ExecuteTool {
+        name: String,
+        input: serde_json::Value,
+    },
     /// Composite: execute multiple actions.
     Composite { actions: Vec<RuleAction> },
 }
@@ -125,14 +128,20 @@ impl Default for RuleEngine {
 impl RuleEngine {
     /// Create an empty rule engine (no DB persistence).
     pub fn new() -> Self {
-        Self { rules: Vec::new(), db: None }
+        Self {
+            rules: Vec::new(),
+            db: None,
+        }
     }
 
     /// Load all enabled rules from the database.
     pub async fn load(db: Arc<SqliteMemory>) -> Result<Self> {
         let rules = db.load_behavior_rules().await?;
         tracing::info!("Loaded {} behavior rules", rules.len());
-        Ok(Self { rules, db: Some(db) })
+        Ok(Self {
+            rules,
+            db: Some(db),
+        })
     }
 
     /// Add a rule programmatically (for testing or seed rules).
@@ -198,13 +207,16 @@ fn trigger_matches(rule_trigger: &RuleTrigger, ctx_trigger: &RuleTrigger) -> boo
         (RuleTrigger::OnMessage, RuleTrigger::OnMessage) => true,
         (RuleTrigger::OnTick, RuleTrigger::OnTick) => true,
         (
-            RuleTrigger::OnStateChange { field: rf, threshold: rt },
-            RuleTrigger::OnStateChange { field: cf, threshold: ct },
+            RuleTrigger::OnStateChange {
+                field: rf,
+                threshold: rt,
+            },
+            RuleTrigger::OnStateChange {
+                field: cf,
+                threshold: ct,
+            },
         ) => rf == cf && (rt - ct).abs() < f32::EPSILON,
-        (
-            RuleTrigger::OnSchedule { cron: rc },
-            RuleTrigger::OnSchedule { cron: cc },
-        ) => rc == cc,
+        (RuleTrigger::OnSchedule { cron: rc }, RuleTrigger::OnSchedule { cron: cc }) => rc == cc,
         _ => false,
     }
 }
@@ -227,19 +239,22 @@ fn get_state_field(state: &OrganismState, field: &str) -> Option<f32> {
 fn evaluate_condition(cond: &RuleCondition, ctx: &RuleContext, last_fired: Option<i64>) -> bool {
     match cond {
         RuleCondition::Always => true,
-        RuleCondition::All { conditions } => {
-            conditions.iter().all(|c| evaluate_condition(c, ctx, last_fired))
-        }
-        RuleCondition::Any { conditions } => {
-            conditions.iter().any(|c| evaluate_condition(c, ctx, last_fired))
-        }
+        RuleCondition::All { conditions } => conditions
+            .iter()
+            .all(|c| evaluate_condition(c, ctx, last_fired)),
+        RuleCondition::Any { conditions } => conditions
+            .iter()
+            .any(|c| evaluate_condition(c, ctx, last_fired)),
         RuleCondition::StateGt { field, value } => {
             get_state_field(&ctx.state, field).is_some_and(|v| v > *value)
         }
         RuleCondition::StateLt { field, value } => {
             get_state_field(&ctx.state, field).is_some_and(|v| v < *value)
         }
-        RuleCondition::TimeBetween { start_hour, end_hour } => {
+        RuleCondition::TimeBetween {
+            start_hour,
+            end_hour,
+        } => {
             if start_hour <= end_hour {
                 ctx.current_hour >= *start_hour && ctx.current_hour < *end_hour
             } else {
@@ -247,12 +262,10 @@ fn evaluate_condition(cond: &RuleCondition, ctx: &RuleContext, last_fired: Optio
                 ctx.current_hour >= *start_hour || ctx.current_hour < *end_hour
             }
         }
-        RuleCondition::CooldownElapsed { secs } => {
-            match last_fired {
-                None => true,
-                Some(last) => ctx.now - last >= *secs,
-            }
-        }
+        RuleCondition::CooldownElapsed { secs } => match last_fired {
+            None => true,
+            Some(last) => ctx.now - last >= *secs,
+        },
         RuleCondition::InteractionCount { min } => ctx.interaction_count >= *min,
         RuleCondition::LifecycleIs { state } => {
             let current = format!("{:?}", ctx.lifecycle);
@@ -269,28 +282,55 @@ fn evaluate_condition(cond: &RuleCondition, ctx: &RuleContext, last_fired: Optio
 pub fn seed_rules() -> Vec<BehaviorRule> {
     vec![
         BehaviorRule {
-            id: 0, name: "low_energy_silence".into(), priority: 50, enabled: true,
+            id: 0,
+            name: "low_energy_silence".into(),
+            priority: 50,
+            enabled: true,
             trigger: RuleTrigger::OnTick,
-            condition: RuleCondition::StateLt { field: "energy".into(), value: 0.2 },
-            action: RuleAction::ModifyState { field: "boredom".into(), delta: 0.3 },
-            cooldown_secs: Some(300), last_fired: None,
+            condition: RuleCondition::StateLt {
+                field: "energy".into(),
+                value: 0.2,
+            },
+            action: RuleAction::ModifyState {
+                field: "boredom".into(),
+                delta: 0.3,
+            },
+            cooldown_secs: Some(300),
+            last_fired: None,
         },
         BehaviorRule {
-            id: 0, name: "night_drowsy".into(), priority: 40, enabled: true,
+            id: 0,
+            name: "night_drowsy".into(),
+            priority: 40,
+            enabled: true,
             trigger: RuleTrigger::OnTick,
-            condition: RuleCondition::All { conditions: vec![
-                RuleCondition::TimeBetween { start_hour: 2, end_hour: 6 },
-                RuleCondition::InteractionCount { min: 10 },
-            ]},
-            action: RuleAction::TransitionLifecycle { target: "drowsy".into() },
-            cooldown_secs: Some(3600), last_fired: None,
+            condition: RuleCondition::All {
+                conditions: vec![
+                    RuleCondition::TimeBetween {
+                        start_hour: 2,
+                        end_hour: 6,
+                    },
+                    RuleCondition::InteractionCount { min: 10 },
+                ],
+            },
+            action: RuleAction::TransitionLifecycle {
+                target: "drowsy".into(),
+            },
+            cooldown_secs: Some(3600),
+            last_fired: None,
         },
         BehaviorRule {
-            id: 0, name: "greeting_quick".into(), priority: 60, enabled: true,
+            id: 0,
+            name: "greeting_quick".into(),
+            priority: 60,
+            enabled: true,
             trigger: RuleTrigger::OnMessage,
             condition: RuleCondition::Always,
-            action: RuleAction::SetDecisionLevel { level: "quick".into() },
-            cooldown_secs: None, last_fired: None,
+            action: RuleAction::SetDecisionLevel {
+                level: "quick".into(),
+            },
+            cooldown_secs: None,
+            last_fired: None,
         },
     ]
 }
@@ -316,7 +356,10 @@ mod tests {
     fn test_rule_condition_all_logic() {
         let cond = RuleCondition::All {
             conditions: vec![
-                RuleCondition::StateGt { field: "energy".into(), value: 0.3 },
+                RuleCondition::StateGt {
+                    field: "energy".into(),
+                    value: 0.3,
+                },
                 RuleCondition::InteractionCount { min: 3 },
             ],
         };
@@ -329,7 +372,10 @@ mod tests {
     fn test_rule_condition_any_logic() {
         let cond = RuleCondition::Any {
             conditions: vec![
-                RuleCondition::StateLt { field: "energy".into(), value: 0.1 },
+                RuleCondition::StateLt {
+                    field: "energy".into(),
+                    value: 0.1,
+                },
                 RuleCondition::InteractionCount { min: 3 },
             ],
         };
@@ -342,18 +388,31 @@ mod tests {
     async fn test_rule_priority_ordering() {
         let mut engine = RuleEngine::new();
         engine.add_rule(BehaviorRule {
-            id: 1, name: "low_pri".into(), priority: 10, enabled: true,
+            id: 1,
+            name: "low_pri".into(),
+            priority: 10,
+            enabled: true,
             trigger: RuleTrigger::OnTick,
             condition: RuleCondition::Always,
-            action: RuleAction::ModifyState { field: "energy".into(), delta: 0.1 },
-            cooldown_secs: None, last_fired: None,
+            action: RuleAction::ModifyState {
+                field: "energy".into(),
+                delta: 0.1,
+            },
+            cooldown_secs: None,
+            last_fired: None,
         });
         engine.add_rule(BehaviorRule {
-            id: 2, name: "high_pri".into(), priority: 100, enabled: true,
+            id: 2,
+            name: "high_pri".into(),
+            priority: 100,
+            enabled: true,
             trigger: RuleTrigger::OnTick,
             condition: RuleCondition::Always,
-            action: RuleAction::SetDecisionLevel { level: "quick".into() },
-            cooldown_secs: None, last_fired: None,
+            action: RuleAction::SetDecisionLevel {
+                level: "quick".into(),
+            },
+            cooldown_secs: None,
+            last_fired: None,
         });
 
         let ctx = test_ctx(RuleTrigger::OnTick);
@@ -368,10 +427,16 @@ mod tests {
     async fn test_rule_cooldown_respected() {
         let mut engine = RuleEngine::new();
         engine.add_rule(BehaviorRule {
-            id: 1, name: "cooldown_rule".into(), priority: 50, enabled: true,
+            id: 1,
+            name: "cooldown_rule".into(),
+            priority: 50,
+            enabled: true,
             trigger: RuleTrigger::OnTick,
             condition: RuleCondition::Always,
-            action: RuleAction::ModifyState { field: "energy".into(), delta: 0.1 },
+            action: RuleAction::ModifyState {
+                field: "energy".into(),
+                delta: 0.1,
+            },
             cooldown_secs: Some(600),
             last_fired: Some(999500), // fired 500s ago
         });
@@ -394,25 +459,58 @@ mod tests {
     #[test]
     fn test_trigger_matches_compares_inner_data() {
         // OnMessage/OnTick: variant-only match
-        assert!(trigger_matches(&RuleTrigger::OnMessage, &RuleTrigger::OnMessage));
+        assert!(trigger_matches(
+            &RuleTrigger::OnMessage,
+            &RuleTrigger::OnMessage
+        ));
         assert!(trigger_matches(&RuleTrigger::OnTick, &RuleTrigger::OnTick));
-        assert!(!trigger_matches(&RuleTrigger::OnMessage, &RuleTrigger::OnTick));
+        assert!(!trigger_matches(
+            &RuleTrigger::OnMessage,
+            &RuleTrigger::OnTick
+        ));
 
         // OnStateChange: must match field AND threshold
-        let energy_rule = RuleTrigger::OnStateChange { field: "energy".into(), threshold: 0.3 };
-        let energy_ctx = RuleTrigger::OnStateChange { field: "energy".into(), threshold: 0.3 };
-        let stress_ctx = RuleTrigger::OnStateChange { field: "stress".into(), threshold: 0.3 };
-        let energy_diff = RuleTrigger::OnStateChange { field: "energy".into(), threshold: 0.9 };
+        let energy_rule = RuleTrigger::OnStateChange {
+            field: "energy".into(),
+            threshold: 0.3,
+        };
+        let energy_ctx = RuleTrigger::OnStateChange {
+            field: "energy".into(),
+            threshold: 0.3,
+        };
+        let stress_ctx = RuleTrigger::OnStateChange {
+            field: "stress".into(),
+            threshold: 0.3,
+        };
+        let energy_diff = RuleTrigger::OnStateChange {
+            field: "energy".into(),
+            threshold: 0.9,
+        };
         assert!(trigger_matches(&energy_rule, &energy_ctx));
-        assert!(!trigger_matches(&energy_rule, &stress_ctx), "different field should not match");
-        assert!(!trigger_matches(&energy_rule, &energy_diff), "different threshold should not match");
+        assert!(
+            !trigger_matches(&energy_rule, &stress_ctx),
+            "different field should not match"
+        );
+        assert!(
+            !trigger_matches(&energy_rule, &energy_diff),
+            "different threshold should not match"
+        );
 
         // OnSchedule: must match cron expression
-        let cron_a = RuleTrigger::OnSchedule { cron: "0 * * * *".into() };
-        let cron_b = RuleTrigger::OnSchedule { cron: "0 * * * *".into() };
-        let cron_c = RuleTrigger::OnSchedule { cron: "30 * * * *".into() };
+        let cron_a = RuleTrigger::OnSchedule {
+            cron: "0 * * * *".into(),
+        };
+        let cron_b = RuleTrigger::OnSchedule {
+            cron: "0 * * * *".into(),
+        };
+        let cron_c = RuleTrigger::OnSchedule {
+            cron: "30 * * * *".into(),
+        };
         assert!(trigger_matches(&cron_a, &cron_b));
-        assert!(!trigger_matches(&cron_a, &cron_c), "different cron should not match");
+        assert!(
+            !trigger_matches(&cron_a, &cron_c),
+            "different cron should not match"
+        );
 
         // Cross-variant never matches
         assert!(!trigger_matches(&energy_rule, &RuleTrigger::OnTick));
@@ -421,7 +519,10 @@ mod tests {
 
     #[test]
     fn test_time_between_wraps_midnight() {
-        let cond = RuleCondition::TimeBetween { start_hour: 22, end_hour: 6 };
+        let cond = RuleCondition::TimeBetween {
+            start_hour: 22,
+            end_hour: 6,
+        };
         let mut ctx = test_ctx(RuleTrigger::OnTick);
 
         ctx.current_hour = 23;

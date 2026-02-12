@@ -8,8 +8,8 @@
 //! Phase 1: Rule-based template stitching (no LLM dependency).
 //! Phase 2 (future): LLM-generated dream narratives.
 
-use mneme_core::OrganismState;
 use crate::sqlite::DreamSeed;
+use mneme_core::OrganismState;
 
 /// A generated dream episode ready for storage.
 #[derive(Debug, Clone)]
@@ -41,7 +41,8 @@ impl DreamGenerator {
         let mood = state.medium.mood_bias;
 
         // Extract key fragments from each seed (truncate to ~80 chars)
-        let fragments: Vec<String> = seeds.iter()
+        let fragments: Vec<String> = seeds
+            .iter()
             .map(|s| Self::extract_fragment(&s.body))
             .collect();
 
@@ -104,9 +105,7 @@ impl DreamGenerator {
 
     fn positive_template(f1: &str, f2: &str, f3: &str) -> String {
         if f3.is_empty() {
-            format!(
-                "梦见了一些温暖的画面……{f1}……然后场景变了，{f2}……醒来时心里暖暖的。"
-            )
+            format!("梦见了一些温暖的画面……{f1}……然后场景变了，{f2}……醒来时心里暖暖的。")
         } else {
             format!(
                 "梦见了一些温暖的画面……{f1}……然后场景变了，{f2}……最后隐约看到{f3}……醒来时心里暖暖的。"
@@ -116,26 +115,18 @@ impl DreamGenerator {
 
     fn negative_template(f1: &str, f2: &str, f3: &str) -> String {
         if f3.is_empty() {
-            format!(
-                "做了一个不太舒服的梦……{f1}……突然，{f2}……醒来后还有点不安。"
-            )
+            format!("做了一个不太舒服的梦……{f1}……突然，{f2}……醒来后还有点不安。")
         } else {
-            format!(
-                "做了一个不太舒服的梦……{f1}……突然，{f2}……然后{f3}……醒来后还有点不安。"
-            )
+            format!("做了一个不太舒服的梦……{f1}……突然，{f2}……然后{f3}……醒来后还有点不安。")
         }
     }
 
     fn chaotic_template(f1: &str, f2: &str, f3: &str) -> String {
-        format!(
-            "梦很碎，{f1}和{f2}混在一起，分不清先后……还有{f3}……醒来后只记得一些片段。"
-        )
+        format!("梦很碎，{f1}和{f2}混在一起，分不清先后……还有{f3}……醒来后只记得一些片段。")
     }
 
     fn neutral_template(f1: &str, f2: &str) -> String {
-        format!(
-            "做了一个梦……好像是关于{f1}……后来又变成了{f2}……细节记不太清了。"
-        )
+        format!("做了一个梦……好像是关于{f1}……后来又变成了{f2}……细节记不太清了。")
     }
 
     /// Compute emotional tone from seeds and mood bias.
@@ -218,10 +209,7 @@ mod tests {
     #[test]
     fn test_dream_emotional_tone_calculation() {
         // High strength seeds + positive mood → positive tone
-        let seeds = vec![
-            make_seed("a", "记忆一", 0.9),
-            make_seed("b", "记忆二", 0.8),
-        ];
+        let seeds = vec![make_seed("a", "记忆一", 0.9), make_seed("b", "记忆二", 0.8)];
         let tone_positive = DreamGenerator::compute_emotional_tone(&seeds, 0.5);
         let tone_negative = DreamGenerator::compute_emotional_tone(&seeds, -0.5);
 

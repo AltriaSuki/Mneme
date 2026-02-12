@@ -3,12 +3,12 @@
 //! Goals drive Mneme's autonomous behavior. They emerge from interactions
 //! and self-reflection, and are pursued through proactive triggers.
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use anyhow::Result;
 
-use mneme_core::{OrganismState, Trigger, TriggerEvaluator};
 use crate::SqliteMemory;
+use mneme_core::{OrganismState, Trigger, TriggerEvaluator};
 
 // ============================================================================
 // Goal Data Model
@@ -100,7 +100,9 @@ impl GoalManager {
         let progress = progress.clamp(0.0, 1.0);
         self.db.update_goal_progress(goal_id, progress).await?;
         if progress >= 1.0 {
-            self.db.set_goal_status(goal_id, &GoalStatus::Completed).await?;
+            self.db
+                .set_goal_status(goal_id, &GoalStatus::Completed)
+                .await?;
         }
         Ok(())
     }
@@ -117,31 +119,43 @@ impl GoalManager {
 
         if state.fast.social_need > 0.7 {
             suggestions.push(Goal {
-                id: 0, goal_type: GoalType::Social,
+                id: 0,
+                goal_type: GoalType::Social,
                 description: "和创建者聊聊近况".into(),
                 priority: state.fast.social_need,
-                status: GoalStatus::Active, progress: 0.0,
-                created_at: now, deadline: None, parent_id: None,
+                status: GoalStatus::Active,
+                progress: 0.0,
+                created_at: now,
+                deadline: None,
+                parent_id: None,
                 metadata: serde_json::json!({"source": "state_suggest"}),
             });
         }
         if state.fast.curiosity > 0.8 {
             suggestions.push(Goal {
-                id: 0, goal_type: GoalType::Exploration,
+                id: 0,
+                goal_type: GoalType::Exploration,
                 description: "探索一个新的知识领域".into(),
                 priority: state.fast.curiosity * 0.8,
-                status: GoalStatus::Active, progress: 0.0,
-                created_at: now, deadline: None, parent_id: None,
+                status: GoalStatus::Active,
+                progress: 0.0,
+                created_at: now,
+                deadline: None,
+                parent_id: None,
                 metadata: serde_json::json!({"source": "state_suggest"}),
             });
         }
         if state.fast.energy < 0.3 {
             suggestions.push(Goal {
-                id: 0, goal_type: GoalType::Maintenance,
+                id: 0,
+                goal_type: GoalType::Maintenance,
                 description: "恢复能量到健康水平".into(),
                 priority: 0.9,
-                status: GoalStatus::Active, progress: state.fast.energy / 0.5,
-                created_at: now, deadline: None, parent_id: None,
+                status: GoalStatus::Active,
+                progress: state.fast.energy / 0.5,
+                created_at: now,
+                deadline: None,
+                parent_id: None,
                 metadata: serde_json::json!({"source": "state_suggest"}),
             });
         }
@@ -162,11 +176,11 @@ pub struct GoalTriggerEvaluator {
 }
 
 impl GoalTriggerEvaluator {
-    pub fn new(
-        goal_manager: Arc<GoalManager>,
-        state: Arc<RwLock<OrganismState>>,
-    ) -> Self {
-        Self { goal_manager, state }
+    pub fn new(goal_manager: Arc<GoalManager>, state: Arc<RwLock<OrganismState>>) -> Self {
+        Self {
+            goal_manager,
+            state,
+        }
     }
 }
 
@@ -227,7 +241,9 @@ mod tests {
         let mut state = OrganismState::default();
         state.fast.curiosity = 0.9;
         let suggestions = GoalManager::suggest_goals(&state);
-        assert!(suggestions.iter().any(|g| g.goal_type == GoalType::Exploration));
+        assert!(suggestions
+            .iter()
+            .any(|g| g.goal_type == GoalType::Exploration));
     }
 
     #[test]
@@ -235,7 +251,9 @@ mod tests {
         let mut state = OrganismState::default();
         state.fast.energy = 0.1;
         let suggestions = GoalManager::suggest_goals(&state);
-        assert!(suggestions.iter().any(|g| g.goal_type == GoalType::Maintenance));
+        assert!(suggestions
+            .iter()
+            .any(|g| g.goal_type == GoalType::Maintenance));
     }
 
     #[test]

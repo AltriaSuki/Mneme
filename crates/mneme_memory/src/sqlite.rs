@@ -1,13 +1,13 @@
+use crate::embedding::EmbeddingModel;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use mneme_core::{Content, Memory, SocialGraph, Person, PersonContext, OrganismState};
-use serde::{Serialize, Deserialize};
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, Row};
+use mneme_core::{Content, Memory, OrganismState, Person, PersonContext, SocialGraph};
+use serde::{Deserialize, Serialize};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::path::Path;
-use uuid::Uuid;
-use crate::embedding::EmbeddingModel;
 use std::sync::Arc;
 use std::sync::Once;
+use uuid::Uuid;
 
 /// Register sqlite-vec extension globally (once per process).
 /// Must be called before any SQLite connections are opened.
@@ -24,8 +24,6 @@ fn ensure_sqlite_vec_registered() {
     });
 }
 
-
-
 #[derive(Clone)]
 pub struct SqliteMemory {
     pool: Pool<Sqlite>,
@@ -35,22 +33,30 @@ pub struct SqliteMemory {
 impl SqliteMemory {
     pub async fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         // Initialize embedding model first (might take a moment to load/download)
-        let embedding_model = Arc::new(EmbeddingModel::new().context("Failed to initialize embedding model")?);
+        let embedding_model =
+            Arc::new(EmbeddingModel::new().context("Failed to initialize embedding model")?);
 
         // Register sqlite-vec extension before opening any connections
         ensure_sqlite_vec_registered();
 
         let db_url = format!("sqlite://{}?mode=rwc", db_path.as_ref().display());
         let pool = SqlitePoolOptions::new()
-            .after_connect(|conn, _meta| Box::pin(async move {
-                sqlx::query("PRAGMA foreign_keys = ON").execute(conn).await?;
-                Ok(())
-            }))
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            })
             .connect(&db_url)
             .await
             .context("Failed to connect to SQLite database")?;
 
-        let memory = Self { pool, embedding_model };
+        let memory = Self {
+            pool,
+            embedding_model,
+        };
         memory.migrate().await?;
         Ok(memory)
     }
@@ -66,7 +72,7 @@ impl SqliteMemory {
                 timestamp INTEGER NOT NULL,
                 modality TEXT NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -75,20 +81,27 @@ impl SqliteMemory {
         // Add embedding column if it doesn't exist (v1 -> v2 migration)
         if let Err(e) = sqlx::query("ALTER TABLE episodes ADD COLUMN embedding BLOB")
             .execute(&self.pool)
-            .await 
+            .await
         {
             // This is expected if the column already exists
-            tracing::debug!("Column 'embedding' likely exists or migration skipped: {}", e);
+            tracing::debug!(
+                "Column 'embedding' likely exists or migration skipped: {}",
+                e
+            );
         }
 
         // Add strength column if it doesn't exist (v2 -> v3 migration)
         // Strength: memory trace intensity (0.0 - 1.0). Default 0.5 for pre-existing episodes.
         // Encoding layer of the three-layer forgetting model (B-10).
-        if let Err(e) = sqlx::query("ALTER TABLE episodes ADD COLUMN strength REAL NOT NULL DEFAULT 0.5")
-            .execute(&self.pool)
-            .await
+        if let Err(e) =
+            sqlx::query("ALTER TABLE episodes ADD COLUMN strength REAL NOT NULL DEFAULT 0.5")
+                .execute(&self.pool)
+                .await
         {
-            tracing::debug!("Column 'strength' likely exists or migration skipped: {}", e);
+            tracing::debug!(
+                "Column 'strength' likely exists or migration skipped: {}",
+                e
+            );
         }
 
         sqlx::query(
@@ -102,27 +115,23 @@ impl SqliteMemory {
                 created_at INTEGER NOT NULL DEFAULT 0,
                 updated_at INTEGER NOT NULL DEFAULT 0
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
         .context("Failed to create facts table")?;
 
         // Index for fast subject lookup
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject)"
-        )
-        .execute(&self.pool)
-        .await
-        .context("Failed to create facts subject index")?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject)")
+            .execute(&self.pool)
+            .await
+            .context("Failed to create facts subject index")?;
 
         // Index for fast predicate lookup (useful for querying "all likes", "all knows", etc.)
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_facts_predicate ON facts(predicate)"
-        )
-        .execute(&self.pool)
-        .await
-        .context("Failed to create facts predicate index")?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_facts_predicate ON facts(predicate)")
+            .execute(&self.pool)
+            .await
+            .context("Failed to create facts predicate index")?;
 
         sqlx::query(
             r#"
@@ -130,7 +139,7 @@ impl SqliteMemory {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -145,7 +154,7 @@ impl SqliteMemory {
                 PRIMARY KEY (platform, platform_id),
                 FOREIGN KEY(person_id) REFERENCES people(id)
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -161,7 +170,7 @@ impl SqliteMemory {
                 FOREIGN KEY(source_id) REFERENCES people(id),
                 FOREIGN KEY(target_id) REFERENCES people(id)
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -175,7 +184,7 @@ impl SqliteMemory {
         .context("Failed to create relationships index")?;
 
         // === New tables for Organism State persistence ===
-        
+
         // Organism state (singleton - only one row)
         sqlx::query(
             r#"
@@ -184,7 +193,7 @@ impl SqliteMemory {
                 state_json TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -206,7 +215,7 @@ impl SqliteMemory {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -224,7 +233,7 @@ impl SqliteMemory {
                 timestamp INTEGER NOT NULL,
                 consolidated INTEGER NOT NULL DEFAULT 0
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -240,7 +249,7 @@ impl SqliteMemory {
                 trigger TEXT NOT NULL,
                 diff_summary TEXT
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -267,14 +276,14 @@ impl SqliteMemory {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
         .context("Failed to create self_knowledge table")?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_self_knowledge_domain ON self_knowledge(domain)"
+            "CREATE INDEX IF NOT EXISTS idx_self_knowledge_domain ON self_knowledge(domain)",
         )
         .execute(&self.pool)
         .await
@@ -289,14 +298,14 @@ impl SqliteMemory {
                 output_tokens INTEGER NOT NULL,
                 timestamp INTEGER NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
         .context("Failed to create token_usage table")?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_token_usage_timestamp ON token_usage(timestamp)"
+            "CREATE INDEX IF NOT EXISTS idx_token_usage_timestamp ON token_usage(timestamp)",
         )
         .execute(&self.pool)
         .await
@@ -317,7 +326,7 @@ impl SqliteMemory {
                 timestamp INTEGER NOT NULL,
                 consumed INTEGER NOT NULL DEFAULT 0
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -331,7 +340,7 @@ impl SqliteMemory {
                 curves_json TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -345,7 +354,7 @@ impl SqliteMemory {
                 thresholds_json TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -360,7 +369,7 @@ impl SqliteMemory {
                 episode_id TEXT PRIMARY KEY,
                 embedding float[384]
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -385,7 +394,7 @@ impl SqliteMemory {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -407,7 +416,7 @@ impl SqliteMemory {
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 FOREIGN KEY(parent_id) REFERENCES goals(id)
             );
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await
@@ -425,7 +434,7 @@ impl SqliteMemory {
             FROM episodes e
             LEFT JOIN vec_episodes v ON v.episode_id = e.id
             WHERE e.embedding IS NOT NULL AND v.episode_id IS NULL
-            "#
+            "#,
         )
         .fetch_all(&self.pool)
         .await
@@ -444,13 +453,12 @@ impl SqliteMemory {
             if let Ok(embedding) = bincode::deserialize::<Vec<f32>>(&blob) {
                 let json_vec = serde_json::to_string(&embedding)
                     .context("Failed to serialize embedding to JSON")?;
-                if let Err(e) = sqlx::query(
-                    "INSERT INTO vec_episodes (episode_id, embedding) VALUES (?, ?)"
-                )
-                .bind(&id)
-                .bind(&json_vec)
-                .execute(&self.pool)
-                .await
+                if let Err(e) =
+                    sqlx::query("INSERT INTO vec_episodes (episode_id, embedding) VALUES (?, ?)")
+                        .bind(&id)
+                        .bind(&json_vec)
+                        .execute(&self.pool)
+                        .await
                 {
                     tracing::warn!("Failed to backfill vec_episodes for {}: {}", id, e);
                 }
@@ -466,7 +474,10 @@ impl SqliteMemory {
 impl Memory for SqliteMemory {
     #[tracing::instrument(skip(self), fields(query))]
     async fn recall(&self, query: &str) -> Result<String> {
-        let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
+        let query_embedding = self
+            .embedding_model
+            .embed(query)
+            .context("Failed to embed query")?;
         let json_query = serde_json::to_string(&query_embedding)
             .context("Failed to serialize query embedding")?;
 
@@ -480,7 +491,7 @@ impl Memory for SqliteMemory {
               AND k = 20
               AND e.strength > 0.05
             ORDER BY v.distance
-            "#
+            "#,
         )
         .bind(&json_query)
         .fetch_all(&self.pool)
@@ -516,7 +527,10 @@ impl Memory for SqliteMemory {
 
     #[tracing::instrument(skip(self), fields(query, mood_bias))]
     async fn recall_with_bias(&self, query: &str, mood_bias: f32) -> Result<String> {
-        let query_embedding = self.embedding_model.embed(query).context("Failed to embed query")?;
+        let query_embedding = self
+            .embedding_model
+            .embed(query)
+            .context("Failed to embed query")?;
         let json_query = serde_json::to_string(&query_embedding)
             .context("Failed to serialize query embedding")?;
 
@@ -530,7 +544,7 @@ impl Memory for SqliteMemory {
               AND k = 20
               AND e.strength > 0.05
             ORDER BY v.distance
-            "#
+            "#,
         )
         .bind(&json_query)
         .fetch_all(&self.pool)
@@ -589,8 +603,7 @@ impl Memory for SqliteMemory {
         let modality_str = format!("{:?}", content.modality);
 
         // Generate embedding
-        let embedding = self.embedding_model.embed(&content.body)
-            .ok();
+        let embedding = self.embedding_model.embed(&content.body).ok();
 
         // Serialize embedding to efficient binary format for episodes table
         let embedding_blob = if let Some(ref emb) = embedding {
@@ -625,7 +638,7 @@ impl Memory for SqliteMemory {
             let json_vec = serde_json::to_string(emb)
                 .context("Failed to serialize embedding to JSON for vec index")?;
             if let Err(e) = sqlx::query(
-                "INSERT OR IGNORE INTO vec_episodes (episode_id, embedding) VALUES (?, ?)"
+                "INSERT OR IGNORE INTO vec_episodes (episode_id, embedding) VALUES (?, ?)",
             )
             .bind(content.id.to_string())
             .bind(&json_vec)
@@ -639,7 +652,13 @@ impl Memory for SqliteMemory {
         Ok(())
     }
 
-    async fn store_fact(&self, subject: &str, predicate: &str, object: &str, confidence: f32) -> Result<()> {
+    async fn store_fact(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f32,
+    ) -> Result<()> {
         // Delegate to the inherent method, discarding the returned id
         let _ = SqliteMemory::store_fact(self, subject, predicate, object, confidence).await?;
         Ok(())
@@ -647,7 +666,10 @@ impl Memory for SqliteMemory {
 
     async fn recall_self_knowledge_by_domain(&self, domain: &str) -> Result<Vec<(String, f32)>> {
         let entries = self.recall_self_knowledge(domain).await?;
-        Ok(entries.into_iter().map(|sk| (sk.content, sk.confidence)).collect())
+        Ok(entries
+            .into_iter()
+            .map(|sk| (sk.content, sk.confidence))
+            .collect())
     }
 }
 #[async_trait]
@@ -659,7 +681,7 @@ impl SocialGraph for SqliteMemory {
             FROM people p
             JOIN aliases a ON p.id = a.person_id
             WHERE a.platform = ? AND a.platform_id = ?
-            "#
+            "#,
         )
         .bind(platform)
         .bind(platform_id)
@@ -673,12 +695,11 @@ impl SocialGraph for SqliteMemory {
             let id = Uuid::parse_str(&id_str)?;
 
             // Fetch aliases
-            let aliases_rows: Vec<(String, String)> = sqlx::query_as(
-                "SELECT platform, platform_id FROM aliases WHERE person_id = ?"
-            )
-            .bind(&id_str)
-            .fetch_all(&self.pool)
-            .await?;
+            let aliases_rows: Vec<(String, String)> =
+                sqlx::query_as("SELECT platform, platform_id FROM aliases WHERE person_id = ?")
+                    .bind(&id_str)
+                    .fetch_all(&self.pool)
+                    .await?;
 
             let aliases = aliases_rows.into_iter().collect();
 
@@ -687,7 +708,7 @@ impl SocialGraph for SqliteMemory {
             Ok(None)
         }
     }
-    
+
     async fn upsert_person(&self, person: &Person) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
@@ -715,12 +736,12 @@ impl SocialGraph for SqliteMemory {
         tx.commit().await?;
         Ok(())
     }
-    
+
     async fn record_interaction(&self, from: Uuid, to: Uuid, context: &str) -> Result<()> {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
-            
+
         sqlx::query(
             "INSERT INTO relationships (source_id, target_id, context, timestamp) VALUES (?, ?, ?, ?)"
         )
@@ -730,7 +751,7 @@ impl SocialGraph for SqliteMemory {
         .bind(ts)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
@@ -752,12 +773,11 @@ impl SocialGraph for SqliteMemory {
         let name: String = person_row.get("name");
 
         // Fetch aliases
-        let aliases_rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT platform, platform_id FROM aliases WHERE person_id = ?"
-        )
-        .bind(&id_str)
-        .fetch_all(&self.pool)
-        .await?;
+        let aliases_rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT platform, platform_id FROM aliases WHERE person_id = ?")
+                .bind(&id_str)
+                .fetch_all(&self.pool)
+                .await?;
 
         let person = Person {
             id: person_id,
@@ -786,7 +806,8 @@ impl SocialGraph for SqliteMemory {
         .fetch_all(&self.pool)
         .await?;
 
-        let notes: Vec<String> = recent_rows.iter()
+        let notes: Vec<String> = recent_rows
+            .iter()
             .map(|r| r.get::<String, _>("context"))
             .filter(|s| !s.is_empty())
             .collect();
@@ -805,8 +826,8 @@ impl SocialGraph for SqliteMemory {
 // Organism State Persistence
 // =============================================================================
 
-use crate::narrative::NarrativeChapter;
 use crate::feedback_buffer::{FeedbackSignal, SignalType};
+use crate::narrative::NarrativeChapter;
 use chrono::{DateTime, Utc};
 
 impl SqliteMemory {
@@ -819,8 +840,8 @@ impl SqliteMemory {
 
         if let Some(row) = row {
             let json: String = row.get("state_json");
-            let state: OrganismState = serde_json::from_str(&json)
-                .context("Failed to deserialize organism state")?;
+            let state: OrganismState =
+                serde_json::from_str(&json).context("Failed to deserialize organism state")?;
             Ok(Some(state))
         } else {
             Ok(None)
@@ -829,8 +850,7 @@ impl SqliteMemory {
 
     /// Save organism state to database
     pub async fn save_organism_state(&self, state: &OrganismState) -> Result<()> {
-        let json = serde_json::to_string(state)
-            .context("Failed to serialize organism state")?;
+        let json = serde_json::to_string(state).context("Failed to serialize organism state")?;
         let now = Utc::now().timestamp();
 
         sqlx::query(
@@ -866,8 +886,7 @@ impl SqliteMemory {
         trigger: &str,
         prev_state: Option<&OrganismState>,
     ) -> Result<()> {
-        let json = serde_json::to_string(state)
-            .context("Failed to serialize state for history")?;
+        let json = serde_json::to_string(state).context("Failed to serialize state for history")?;
         let now = chrono::Utc::now().timestamp();
 
         let diff_summary = prev_state.map(|prev| compute_state_diff(prev, state));
@@ -901,7 +920,7 @@ impl SqliteMemory {
             "SELECT id, timestamp, state_json, trigger, diff_summary \
              FROM organism_state_history \
              WHERE timestamp >= ? AND timestamp <= ? \
-             ORDER BY timestamp ASC LIMIT ?"
+             ORDER BY timestamp ASC LIMIT ?",
         )
         .bind(from_ts)
         .bind(to_ts)
@@ -931,7 +950,7 @@ impl SqliteMemory {
         let rows = sqlx::query(
             "SELECT id, timestamp, state_json, trigger, diff_summary \
              FROM organism_state_history \
-             ORDER BY timestamp DESC LIMIT ?"
+             ORDER BY timestamp DESC LIMIT ?",
         )
         .bind(count)
         .fetch_all(&self.pool)
@@ -964,18 +983,16 @@ impl SqliteMemory {
         let cutoff_ts = chrono::Utc::now().timestamp() - max_age_secs;
 
         // Delete by age
-        let age_result = sqlx::query(
-            "DELETE FROM organism_state_history WHERE timestamp < ?"
-        )
-        .bind(cutoff_ts)
-        .execute(&self.pool)
-        .await
-        .context("Failed to prune old state history")?;
+        let age_result = sqlx::query("DELETE FROM organism_state_history WHERE timestamp < ?")
+            .bind(cutoff_ts)
+            .execute(&self.pool)
+            .await
+            .context("Failed to prune old state history")?;
 
         // Delete excess rows (keep only `keep_count` most recent)
         let excess_result = sqlx::query(
             "DELETE FROM organism_state_history WHERE id NOT IN \
-             (SELECT id FROM organism_state_history ORDER BY timestamp DESC LIMIT ?)"
+             (SELECT id FROM organism_state_history ORDER BY timestamp DESC LIMIT ?)",
         )
         .bind(keep_count)
         .execute(&self.pool)
@@ -994,7 +1011,7 @@ impl SqliteMemory {
         let rows = sqlx::query(
             "SELECT id, title, content, period_start, period_end, emotional_tone, 
                     themes_json, people_json, turning_points_json, created_at, updated_at 
-             FROM narrative_chapters ORDER BY period_start"
+             FROM narrative_chapters ORDER BY period_start",
         )
         .fetch_all(&self.pool)
         .await
@@ -1010,7 +1027,8 @@ impl SqliteMemory {
                 id: row.get("id"),
                 title: row.get("title"),
                 content: row.get("content"),
-                period_start: DateTime::from_timestamp(row.get("period_start"), 0).unwrap_or_default(),
+                period_start: DateTime::from_timestamp(row.get("period_start"), 0)
+                    .unwrap_or_default(),
                 period_end: DateTime::from_timestamp(row.get("period_end"), 0).unwrap_or_default(),
                 emotional_tone: row.get("emotional_tone"),
                 themes,
@@ -1037,7 +1055,7 @@ impl SqliteMemory {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET 
               title = excluded.title, content = excluded.content,
-              updated_at = excluded.updated_at"
+              updated_at = excluded.updated_at",
         )
         .bind(chapter.id)
         .bind(&chapter.title)
@@ -1217,7 +1235,7 @@ impl SqliteMemory {
 
         // Check if this exact triple already exists
         let existing = sqlx::query(
-            "SELECT id, confidence FROM facts WHERE subject = ? AND predicate = ? AND object = ?"
+            "SELECT id, confidence FROM facts WHERE subject = ? AND predicate = ? AND object = ?",
         )
         .bind(subject)
         .bind(predicate)
@@ -1232,17 +1250,23 @@ impl SqliteMemory {
             // Bayesian-ish update: reinforce confidence when seen again
             let new_confidence = (old_confidence as f32 * 0.3 + confidence * 0.7).clamp(0.0, 1.0);
 
-            sqlx::query(
-                "UPDATE facts SET confidence = ?, updated_at = ? WHERE id = ?"
-            )
-            .bind(new_confidence)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .context("Failed to update fact confidence")?;
+            sqlx::query("UPDATE facts SET confidence = ?, updated_at = ? WHERE id = ?")
+                .bind(new_confidence)
+                .bind(now)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .context("Failed to update fact confidence")?;
 
-            tracing::debug!("Updated fact #{}: ({}, {}, {}) confidence {} → {}", id, subject, predicate, object, old_confidence, new_confidence);
+            tracing::debug!(
+                "Updated fact #{}: ({}, {}, {}) confidence {} → {}",
+                id,
+                subject,
+                predicate,
+                object,
+                old_confidence,
+                new_confidence
+            );
             Ok(id)
         } else {
             let result = sqlx::query(
@@ -1259,7 +1283,14 @@ impl SqliteMemory {
             .context("Failed to insert fact")?;
 
             let id = result.last_insert_rowid();
-            tracing::debug!("Stored fact #{}: ({}, {}, {}) confidence={}", id, subject, predicate, object, confidence);
+            tracing::debug!(
+                "Stored fact #{}: ({}, {}, {}) confidence={}",
+                id,
+                subject,
+                predicate,
+                object,
+                confidence
+            );
             Ok(id)
         }
     }
@@ -1268,7 +1299,8 @@ impl SqliteMemory {
     /// Returns facts sorted by confidence descending.
     pub async fn recall_facts(&self, query: &str) -> Result<Vec<SemanticFact>> {
         // Split query into keywords for flexible matching
-        let keywords: Vec<&str> = query.split_whitespace()
+        let keywords: Vec<&str> = query
+            .split_whitespace()
             .filter(|w| w.len() >= 2) // skip very short words
             .collect();
 
@@ -1301,11 +1333,14 @@ impl SqliteMemory {
             q = q.bind(bind);
         }
 
-        let rows = q.fetch_all(&self.pool).await
+        let rows = q
+            .fetch_all(&self.pool)
+            .await
             .context("Failed to recall facts")?;
 
-        let facts = rows.iter().map(|row| {
-            SemanticFact {
+        let facts = rows
+            .iter()
+            .map(|row| SemanticFact {
                 id: row.get("id"),
                 subject: row.get("subject"),
                 predicate: row.get("predicate"),
@@ -1313,8 +1348,8 @@ impl SqliteMemory {
                 confidence: row.get::<f64, _>("confidence") as f32,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(facts)
     }
@@ -1324,15 +1359,16 @@ impl SqliteMemory {
         let rows = sqlx::query(
             "SELECT id, subject, predicate, object, confidence, \
                     COALESCE(created_at, 0) as created_at, COALESCE(updated_at, 0) as updated_at \
-             FROM facts WHERE subject = ? AND confidence > 0.1 ORDER BY confidence DESC"
+             FROM facts WHERE subject = ? AND confidence > 0.1 ORDER BY confidence DESC",
         )
         .bind(subject)
         .fetch_all(&self.pool)
         .await
         .context("Failed to get facts about subject")?;
 
-        let facts = rows.iter().map(|row| {
-            SemanticFact {
+        let facts = rows
+            .iter()
+            .map(|row| SemanticFact {
                 id: row.get("id"),
                 subject: row.get("subject"),
                 predicate: row.get("predicate"),
@@ -1340,8 +1376,8 @@ impl SqliteMemory {
                 confidence: row.get::<f64, _>("confidence") as f32,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(facts)
     }
@@ -1351,15 +1387,16 @@ impl SqliteMemory {
         let rows = sqlx::query(
             "SELECT id, subject, predicate, object, confidence, \
                     COALESCE(created_at, 0) as created_at, COALESCE(updated_at, 0) as updated_at \
-             FROM facts WHERE confidence > 0.1 ORDER BY confidence DESC, updated_at DESC LIMIT ?"
+             FROM facts WHERE confidence > 0.1 ORDER BY confidence DESC, updated_at DESC LIMIT ?",
         )
         .bind(limit)
         .fetch_all(&self.pool)
         .await
         .context("Failed to get top facts")?;
 
-        let facts = rows.iter().map(|row| {
-            SemanticFact {
+        let facts = rows
+            .iter()
+            .map(|row| SemanticFact {
                 id: row.get("id"),
                 subject: row.get("subject"),
                 predicate: row.get("predicate"),
@@ -1367,8 +1404,8 @@ impl SqliteMemory {
                 confidence: row.get::<f64, _>("confidence") as f32,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(facts)
     }
@@ -1376,15 +1413,13 @@ impl SqliteMemory {
     /// Decay a fact's confidence (called when contradicting information appears).
     pub async fn decay_fact(&self, fact_id: i64, decay_factor: f32) -> Result<()> {
         let now = Utc::now().timestamp();
-        sqlx::query(
-            "UPDATE facts SET confidence = confidence * ?, updated_at = ? WHERE id = ?"
-        )
-        .bind(decay_factor)
-        .bind(now)
-        .bind(fact_id)
-        .execute(&self.pool)
-        .await
-        .context("Failed to decay fact")?;
+        sqlx::query("UPDATE facts SET confidence = confidence * ?, updated_at = ? WHERE id = ?")
+            .bind(decay_factor)
+            .bind(now)
+            .bind(fact_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to decay fact")?;
         Ok(())
     }
 
@@ -1398,7 +1433,9 @@ impl SqliteMemory {
         for fact in facts {
             output.push_str(&format!(
                 "- {} {} {} (确信度: {:.0}%)\n",
-                fact.subject, fact.predicate, fact.object,
+                fact.subject,
+                fact.predicate,
+                fact.object,
                 fact.confidence * 100.0
             ));
         }
@@ -1428,7 +1465,7 @@ impl SqliteMemory {
 
         // Check for existing entry with same domain + content
         let existing = sqlx::query(
-            "SELECT id, confidence FROM self_knowledge WHERE domain = ? AND content = ?"
+            "SELECT id, confidence FROM self_knowledge WHERE domain = ? AND content = ?",
         )
         .bind(domain)
         .bind(content)
@@ -1443,7 +1480,7 @@ impl SqliteMemory {
 
             sqlx::query(
                 "UPDATE self_knowledge SET confidence = ?, source = ?, \
-                 source_episode_id = ?, updated_at = ? WHERE id = ?"
+                 source_episode_id = ?, updated_at = ? WHERE id = ?",
             )
             .bind(merged)
             .bind(source)
@@ -1454,13 +1491,18 @@ impl SqliteMemory {
             .await
             .context("Failed to update self_knowledge")?;
 
-            tracing::debug!("Updated self_knowledge #{}: conf {:.2} → {:.2}", id, old_conf, merged);
+            tracing::debug!(
+                "Updated self_knowledge #{}: conf {:.2} → {:.2}",
+                id,
+                old_conf,
+                merged
+            );
             Ok(id)
         } else {
             let result = sqlx::query(
                 "INSERT INTO self_knowledge (domain, content, confidence, source, \
                  source_episode_id, is_private, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(domain)
             .bind(content)
@@ -1486,14 +1528,17 @@ impl SqliteMemory {
             "SELECT id, domain, content, confidence, source, source_episode_id, \
              is_private, created_at, updated_at \
              FROM self_knowledge WHERE domain = ? AND confidence > 0.1 \
-             ORDER BY confidence DESC"
+             ORDER BY confidence DESC",
         )
         .bind(domain)
         .fetch_all(&self.pool)
         .await
         .context("Failed to recall self_knowledge by domain")?;
 
-        Ok(rows.iter().map(|row| self.row_to_self_knowledge(row)).collect())
+        Ok(rows
+            .iter()
+            .map(|row| self.row_to_self_knowledge(row))
+            .collect())
     }
 
     /// Get all self-knowledge entries above a confidence threshold.
@@ -1502,21 +1547,24 @@ impl SqliteMemory {
             "SELECT id, domain, content, confidence, source, source_episode_id, \
              is_private, created_at, updated_at \
              FROM self_knowledge WHERE confidence > ? \
-             ORDER BY domain, confidence DESC"
+             ORDER BY domain, confidence DESC",
         )
         .bind(min_confidence)
         .fetch_all(&self.pool)
         .await
         .context("Failed to get all self_knowledge")?;
 
-        Ok(rows.iter().map(|row| self.row_to_self_knowledge(row)).collect())
+        Ok(rows
+            .iter()
+            .map(|row| self.row_to_self_knowledge(row))
+            .collect())
     }
 
     /// Decay a self-knowledge entry's confidence.
     pub async fn decay_self_knowledge(&self, id: i64, decay_factor: f32) -> Result<()> {
         let now = Utc::now().timestamp();
         sqlx::query(
-            "UPDATE self_knowledge SET confidence = confidence * ?, updated_at = ? WHERE id = ?"
+            "UPDATE self_knowledge SET confidence = confidence * ?, updated_at = ? WHERE id = ?",
         )
         .bind(decay_factor)
         .bind(now)
@@ -1575,7 +1623,8 @@ impl SqliteMemory {
                 let private_mark = if item.is_private { " 🔒" } else { "" };
                 output.push_str(&format!(
                     "- {}{} (确信度: {:.0}%)\n",
-                    item.content, private_mark,
+                    item.content,
+                    private_mark,
                     item.confidence * 100.0
                 ));
             }
@@ -1589,24 +1638,30 @@ impl SqliteMemory {
     /// high confidence (0.9). Idempotent: skips if seed entries already exist.
     pub async fn seed_self_knowledge(&self, entries: &[(&str, &str)]) -> Result<usize> {
         // Check if any seed entries already exist
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM self_knowledge WHERE source = 'seed'"
-        )
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to check seed entries")?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM self_knowledge WHERE source = 'seed'")
+                .fetch_one(&self.pool)
+                .await
+                .context("Failed to check seed entries")?;
 
         if count > 0 {
-            tracing::info!("Self-knowledge already seeded ({} entries), skipping", count);
+            tracing::info!(
+                "Self-knowledge already seeded ({} entries), skipping",
+                count
+            );
             return Ok(0);
         }
 
         let mut seeded = 0;
         for (domain, content) in entries {
-            self.store_self_knowledge(domain, content, 0.9, "seed", None, false).await?;
+            self.store_self_knowledge(domain, content, 0.9, "seed", None, false)
+                .await?;
             seeded += 1;
         }
-        tracing::info!("Seeded {} self-knowledge entries from persona files", seeded);
+        tracing::info!(
+            "Seeded {} self-knowledge entries from persona files",
+            seeded
+        );
         Ok(seeded)
     }
 
@@ -1648,17 +1703,20 @@ impl SqliteMemory {
     /// (driven by self_knowledge traits). The caller decides the factor.
     /// Typical: decay_factor = 0.995 per tick (slow exponential decay).
     pub async fn decay_episode_strengths(&self, decay_factor: f32) -> Result<u64> {
-        let result = sqlx::query(
-            "UPDATE episodes SET strength = strength * ? WHERE strength > 0.05"
-        )
-        .bind(decay_factor as f64)
-        .execute(&self.pool)
-        .await
-        .context("Failed to decay episode strengths")?;
+        let result =
+            sqlx::query("UPDATE episodes SET strength = strength * ? WHERE strength > 0.05")
+                .bind(decay_factor as f64)
+                .execute(&self.pool)
+                .await
+                .context("Failed to decay episode strengths")?;
 
         let affected = result.rows_affected();
         if affected > 0 {
-            tracing::debug!("Decayed {} episode strengths by factor {:.4}", affected, decay_factor);
+            tracing::debug!(
+                "Decayed {} episode strengths by factor {:.4}",
+                affected,
+                decay_factor
+            );
         }
         Ok(affected)
     }
@@ -1679,7 +1737,7 @@ impl SqliteMemory {
         if let Some(new_body) = reconstructed_body {
             // Overwrite with reconstructed version + boost strength
             sqlx::query(
-                "UPDATE episodes SET strength = MIN(1.0, strength + ?), body = ? WHERE id = ?"
+                "UPDATE episodes SET strength = MIN(1.0, strength + ?), body = ? WHERE id = ?",
             )
             .bind(boost as f64)
             .bind(new_body)
@@ -1689,14 +1747,12 @@ impl SqliteMemory {
             .context("Failed to boost episode with reconstruction")?;
         } else {
             // Just boost strength, no reconstruction
-            sqlx::query(
-                "UPDATE episodes SET strength = MIN(1.0, strength + ?) WHERE id = ?"
-            )
-            .bind(boost as f64)
-            .bind(episode_id)
-            .execute(&self.pool)
-            .await
-            .context("Failed to boost episode strength")?;
+            sqlx::query("UPDATE episodes SET strength = MIN(1.0, strength + ?) WHERE id = ?")
+                .bind(boost as f64)
+                .bind(episode_id)
+                .execute(&self.pool)
+                .await
+                .context("Failed to boost episode strength")?;
         }
 
         tracing::debug!("Boosted episode {} strength by {:.2}", episode_id, boost);
@@ -1727,7 +1783,7 @@ impl SqliteMemory {
         let candidate_limit = (count * 5).max(10) as i64;
         let rows = sqlx::query(
             "SELECT id, author, body, timestamp, strength FROM episodes \
-             WHERE strength > 0.1 ORDER BY RANDOM() LIMIT ?"
+             WHERE strength > 0.1 ORDER BY RANDOM() LIMIT ?",
         )
         .bind(candidate_limit)
         .fetch_all(&self.pool)
@@ -1739,15 +1795,16 @@ impl SqliteMemory {
         }
 
         // Build candidates with strength as weight
-        let mut candidates: Vec<DreamSeed> = rows.iter().map(|row| {
-            DreamSeed {
+        let mut candidates: Vec<DreamSeed> = rows
+            .iter()
+            .map(|row| DreamSeed {
                 id: row.get::<String, _>("id"),
                 author: row.get::<String, _>("author"),
                 body: row.get::<String, _>("body"),
                 timestamp: row.get::<i64, _>("timestamp"),
                 strength: row.get::<f64, _>("strength") as f32,
-            }
-        }).collect();
+            })
+            .collect();
 
         // Weighted sampling without replacement
         let mut selected = Vec::with_capacity(count.min(candidates.len()));
@@ -1781,13 +1838,15 @@ impl SqliteMemory {
 
     pub async fn record_token_usage(&self, input_tokens: u64, output_tokens: u64) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        sqlx::query("INSERT INTO token_usage (input_tokens, output_tokens, timestamp) VALUES (?, ?, ?)")
-            .bind(input_tokens as i64)
-            .bind(output_tokens as i64)
-            .bind(now)
-            .execute(&self.pool)
-            .await
-            .context("Failed to record token usage")?;
+        sqlx::query(
+            "INSERT INTO token_usage (input_tokens, output_tokens, timestamp) VALUES (?, ?, ?)",
+        )
+        .bind(input_tokens as i64)
+        .bind(output_tokens as i64)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to record token usage")?;
         Ok(())
     }
 
@@ -1811,7 +1870,10 @@ impl SqliteMemory {
 
 impl SqliteMemory {
     /// Save a modulation sample (state + modulation + feedback) for offline learning.
-    pub async fn save_modulation_sample(&self, sample: &crate::learning::ModulationSample) -> Result<i64> {
+    pub async fn save_modulation_sample(
+        &self,
+        sample: &crate::learning::ModulationSample,
+    ) -> Result<i64> {
         let modulation_json = serde_json::to_string(&sample.modulation)
             .context("Failed to serialize modulation vector")?;
 
@@ -1879,15 +1941,16 @@ impl SqliteMemory {
         for id in ids {
             query = query.bind(id);
         }
-        query.execute(&self.pool).await
+        query
+            .execute(&self.pool)
+            .await
             .context("Failed to mark samples consumed")?;
         Ok(())
     }
 
     /// Save learned ModulationCurves (upsert — always id=1).
     pub async fn save_learned_curves(&self, curves: &mneme_limbic::ModulationCurves) -> Result<()> {
-        let json = serde_json::to_string(curves)
-            .context("Failed to serialize curves")?;
+        let json = serde_json::to_string(curves).context("Failed to serialize curves")?;
         let now = chrono::Utc::now().timestamp();
 
         sqlx::query(
@@ -1921,9 +1984,11 @@ impl SqliteMemory {
     }
 
     /// Save learned BehaviorThresholds (upsert — always id=1).
-    pub async fn save_learned_thresholds(&self, thresholds: &mneme_limbic::BehaviorThresholds) -> Result<()> {
-        let json = serde_json::to_string(thresholds)
-            .context("Failed to serialize thresholds")?;
+    pub async fn save_learned_thresholds(
+        &self,
+        thresholds: &mneme_limbic::BehaviorThresholds,
+    ) -> Result<()> {
+        let json = serde_json::to_string(thresholds).context("Failed to serialize thresholds")?;
         let now = chrono::Utc::now().timestamp();
 
         sqlx::query(
@@ -1939,7 +2004,9 @@ impl SqliteMemory {
     }
 
     /// Load previously learned BehaviorThresholds from DB.
-    pub async fn load_learned_thresholds(&self) -> Result<Option<mneme_limbic::BehaviorThresholds>> {
+    pub async fn load_learned_thresholds(
+        &self,
+    ) -> Result<Option<mneme_limbic::BehaviorThresholds>> {
         let row = sqlx::query("SELECT thresholds_json FROM learned_thresholds WHERE id = 1")
             .fetch_optional(&self.pool)
             .await
@@ -1961,7 +2028,7 @@ impl SqliteMemory {
 // Behavior Rules CRUD (ADR-004, v0.6.0)
 // =============================================================================
 
-use crate::rules::{BehaviorRule, RuleTrigger, RuleCondition, RuleAction};
+use crate::rules::{BehaviorRule, RuleAction, RuleCondition, RuleTrigger};
 
 impl SqliteMemory {
     /// Load all enabled behavior rules, sorted by priority DESC then id ASC.
@@ -1970,7 +2037,7 @@ impl SqliteMemory {
             "SELECT id, name, priority, enabled, trigger_json, condition_json, \
              action_json, cooldown_secs, last_fired, created_at, updated_at \
              FROM behavior_rules WHERE enabled = 1 \
-             ORDER BY priority DESC, id ASC"
+             ORDER BY priority DESC, id ASC",
         )
         .fetch_all(&self.pool)
         .await
@@ -2016,7 +2083,7 @@ impl SqliteMemory {
               priority=excluded.priority, enabled=excluded.enabled, \
               trigger_json=excluded.trigger_json, condition_json=excluded.condition_json, \
               action_json=excluded.action_json, cooldown_secs=excluded.cooldown_secs, \
-              updated_at=excluded.updated_at"
+              updated_at=excluded.updated_at",
         )
         .bind(&rule.name)
         .bind(rule.priority)
@@ -2048,12 +2115,10 @@ impl SqliteMemory {
 
     /// Seed behavior rules if none exist yet.
     pub async fn seed_behavior_rules(&self, rules: &[BehaviorRule]) -> Result<usize> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM behavior_rules"
-        )
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to count behavior_rules")?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM behavior_rules")
+            .fetch_one(&self.pool)
+            .await
+            .context("Failed to count behavior_rules")?;
 
         if count > 0 {
             tracing::info!("Behavior rules already seeded ({} rules), skipping", count);
@@ -2074,7 +2139,7 @@ impl SqliteMemory {
 // Goals CRUD (#22, v0.6.0)
 // =============================================================================
 
-use crate::goals::{Goal, GoalType, GoalStatus};
+use crate::goals::{Goal, GoalStatus, GoalType};
 
 impl SqliteMemory {
     /// Load active goals sorted by priority DESC.
@@ -2083,7 +2148,7 @@ impl SqliteMemory {
             "SELECT id, goal_type, description, priority, status, progress, \
              created_at, deadline, parent_id, metadata_json \
              FROM goals WHERE status = 'active' \
-             ORDER BY priority DESC"
+             ORDER BY priority DESC",
         )
         .fetch_all(&self.pool)
         .await
@@ -2103,7 +2168,7 @@ impl SqliteMemory {
             "INSERT INTO goals \
              (goal_type, description, priority, status, progress, \
               created_at, deadline, parent_id, metadata_json) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&goal_type_str)
         .bind(&goal.description)
@@ -2182,32 +2247,50 @@ fn compute_state_diff(prev: &OrganismState, curr: &OrganismState) -> String {
 
     // Fast state
     let de = curr.fast.energy - prev.fast.energy;
-    if de.abs() > eps { changes.push(format!("E{:+.2}", de)); }
+    if de.abs() > eps {
+        changes.push(format!("E{:+.2}", de));
+    }
 
     let ds = curr.fast.stress - prev.fast.stress;
-    if ds.abs() > eps { changes.push(format!("S{:+.2}", ds)); }
+    if ds.abs() > eps {
+        changes.push(format!("S{:+.2}", ds));
+    }
 
     let dv = curr.fast.affect.valence - prev.fast.affect.valence;
-    if dv.abs() > eps { changes.push(format!("V{:+.2}", dv)); }
+    if dv.abs() > eps {
+        changes.push(format!("V{:+.2}", dv));
+    }
 
     let da = curr.fast.affect.arousal - prev.fast.affect.arousal;
-    if da.abs() > eps { changes.push(format!("Ar{:+.2}", da)); }
+    if da.abs() > eps {
+        changes.push(format!("Ar{:+.2}", da));
+    }
 
     let dc = curr.fast.curiosity - prev.fast.curiosity;
-    if dc.abs() > eps { changes.push(format!("C{:+.2}", dc)); }
+    if dc.abs() > eps {
+        changes.push(format!("C{:+.2}", dc));
+    }
 
     let dsn = curr.fast.social_need - prev.fast.social_need;
-    if dsn.abs() > eps { changes.push(format!("SN{:+.2}", dsn)); }
+    if dsn.abs() > eps {
+        changes.push(format!("SN{:+.2}", dsn));
+    }
 
     let db = curr.fast.boredom - prev.fast.boredom;
-    if db.abs() > eps { changes.push(format!("B{:+.2}", db)); }
+    if db.abs() > eps {
+        changes.push(format!("B{:+.2}", db));
+    }
 
     // Medium state
     let dm = curr.medium.mood_bias - prev.medium.mood_bias;
-    if dm.abs() > eps { changes.push(format!("M{:+.2}", dm)); }
+    if dm.abs() > eps {
+        changes.push(format!("M{:+.2}", dm));
+    }
 
     let do_ = curr.medium.openness - prev.medium.openness;
-    if do_.abs() > eps { changes.push(format!("O{:+.2}", do_)); }
+    if do_.abs() > eps {
+        changes.push(format!("O{:+.2}", do_));
+    }
 
     if changes.is_empty() {
         "no significant change".to_string()
