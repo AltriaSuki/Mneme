@@ -3,6 +3,21 @@ use mneme_core::{Content, Memory, Modality, Person, SocialGraph};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Seed N dummy episodes to move past the sensitive period threshold.
+async fn seed_episodes(memory: &SqliteMemory, count: u64) {
+    for i in 0..count {
+        let content = Content {
+            id: Uuid::new_v4(),
+            source: "test".to_string(),
+            author: "test".to_string(),
+            body: format!("dummy episode {}", i),
+            timestamp: i as i64,
+            modality: Modality::Text,
+        };
+        memory.memorize(&content).await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn test_social_graph_ops() {
     let memory = SqliteMemory::new(":memory:")
@@ -533,6 +548,9 @@ async fn test_self_knowledge_confidence_merge() {
         .await
         .expect("Failed to create memory");
 
+    // Seed past the sensitive period so we test the normal merge formula
+    seed_episodes(&memory, 55).await;
+
     // Store a self-knowledge entry
     memory
         .store_self_knowledge("personality", "我喜欢安静", 0.5, "interaction", None)
@@ -564,6 +582,59 @@ async fn test_self_knowledge_confidence_merge() {
     assert!(conf < 0.85, "confidence={} should be < 0.85", conf);
     // Source should be updated to the latest
     assert_eq!(entries[0].source, "consolidation");
+}
+
+/// B-7: During the sensitive period (first 50 episodes), self_knowledge gets
+/// a confidence boost and the merge formula favors new knowledge more strongly.
+#[tokio::test]
+async fn test_self_knowledge_sensitive_period_boost() {
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
+
+    // 0 episodes → deep in sensitive period (boost = 1.3×)
+    let id = memory
+        .store_self_knowledge("personality", "早期印象", 0.5, "interaction", None)
+        .await
+        .unwrap();
+    assert!(id > 0);
+
+    let entries = memory.recall_self_knowledge("personality").await.unwrap();
+    assert_eq!(entries.len(), 1);
+    // 0.5 * 1.3 = 0.65 (boosted)
+    let conf = entries[0].confidence;
+    assert!(
+        conf > 0.6,
+        "sensitive period should boost confidence: got {}",
+        conf
+    );
+    assert!(conf < 0.7, "boost should not exceed 1.3×: got {}", conf);
+}
+
+/// B-7: After the sensitive period, no boost is applied.
+#[tokio::test]
+async fn test_self_knowledge_no_boost_after_sensitive_period() {
+    let memory = SqliteMemory::new(":memory:")
+        .await
+        .expect("Failed to create memory");
+
+    // Seed past the sensitive period
+    seed_episodes(&memory, 55).await;
+
+    memory
+        .store_self_knowledge("personality", "后期印象", 0.5, "interaction", None)
+        .await
+        .unwrap();
+
+    let entries = memory.recall_self_knowledge("personality").await.unwrap();
+    assert_eq!(entries.len(), 1);
+    // No boost: confidence should be exactly 0.5
+    let conf = entries[0].confidence;
+    assert!(
+        (conf - 0.5).abs() < 0.01,
+        "no boost expected after sensitive period: got {}",
+        conf
+    );
 }
 
 #[tokio::test]

@@ -1539,6 +1539,44 @@ impl SqliteMemory {
     ) -> Result<i64> {
         let now = Utc::now().timestamp();
 
+        // B-7: Sensitive period — early experiences have greater weight.
+        // During the first SENSITIVE_PERIOD_EPISODES interactions, boost confidence
+        // and make the merge formula favor new knowledge more strongly.
+        const SENSITIVE_PERIOD_EPISODES: u64 = 50;
+        let episode_count = self.episode_count().await.unwrap_or(u64::MAX);
+        let in_sensitive_period = episode_count < SENSITIVE_PERIOD_EPISODES;
+
+        // Confidence boost: linearly decays from 1.3× at episode 0 to 1.0× at threshold
+        let sensitive_boost = if in_sensitive_period {
+            let progress = episode_count as f64 / SENSITIVE_PERIOD_EPISODES as f64;
+            1.3 - 0.3 * progress // 1.3 → 1.0
+        } else {
+            1.0
+        };
+
+        // Merge weights: during sensitive period, new knowledge has more impact
+        // Normal: 0.3×old + 0.7×new → Sensitive: 0.15×old + 0.85×new
+        let (old_weight, new_weight) = if in_sensitive_period {
+            let progress = episode_count as f64 / SENSITIVE_PERIOD_EPISODES as f64;
+            let old_w = 0.15 + 0.15 * progress; // 0.15 → 0.30
+            (old_w, 1.0 - old_w)
+        } else {
+            (0.3, 0.7)
+        };
+
+        if in_sensitive_period {
+            tracing::debug!(
+                "B-7 sensitive period: episode {}/{}, boost={:.2}×, merge={:.2}/{:.2}",
+                episode_count,
+                SENSITIVE_PERIOD_EPISODES,
+                sensitive_boost,
+                old_weight,
+                new_weight,
+            );
+        }
+
+        let boosted_confidence = (confidence as f64 * sensitive_boost).min(1.0);
+
         // Check for existing entry with same domain + content
         let existing = sqlx::query(
             "SELECT id, confidence, source FROM self_knowledge WHERE domain = ? AND content = ?",
@@ -1560,18 +1598,18 @@ impl SqliteMemory {
             let is_self_sourced = old_source.starts_with("self:");
             let is_external_new = !source.starts_with("self:");
             let effective_confidence = if is_self_sourced && is_external_new {
-                let capped = (confidence as f64).min(old_conf * 0.8);
+                let capped = boosted_confidence.min(old_conf * 0.8);
                 tracing::debug!(
                     "B-5 sovereignty: capping external confidence {:.2} → {:.2} (self-sourced entry)",
-                    confidence,
+                    boosted_confidence,
                     capped
                 );
                 capped
             } else {
-                confidence as f64
+                boosted_confidence
             };
 
-            let merged = old_conf * 0.3 + effective_confidence * 0.7;
+            let merged = old_conf * old_weight + effective_confidence * new_weight;
 
             sqlx::query(
                 "UPDATE self_knowledge SET confidence = ?, source = ?, \
@@ -1601,7 +1639,7 @@ impl SqliteMemory {
             )
             .bind(domain)
             .bind(content)
-            .bind(confidence)
+            .bind(boosted_confidence)
             .bind(source)
             .bind(source_episode_id)
             .bind(now)
