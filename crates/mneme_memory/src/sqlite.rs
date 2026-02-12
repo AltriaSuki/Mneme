@@ -1528,7 +1528,6 @@ impl SqliteMemory {
         confidence: f32,
         source: &str,
         source_episode_id: Option<&str>,
-        is_private: bool,
     ) -> Result<i64> {
         let now = Utc::now().timestamp();
 
@@ -1590,14 +1589,13 @@ impl SqliteMemory {
             let result = sqlx::query(
                 "INSERT INTO self_knowledge (domain, content, confidence, source, \
                  source_episode_id, is_private, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
             )
             .bind(domain)
             .bind(content)
             .bind(confidence)
             .bind(source)
             .bind(source_episode_id)
-            .bind(is_private as i32)
             .bind(now)
             .bind(now)
             .execute(&self.pool)
@@ -1612,14 +1610,12 @@ impl SqliteMemory {
 
     /// Recall self-knowledge entries by domain, ordered by confidence desc.
     ///
-    /// B-9: Excludes private entries by default. Use `recall_self_knowledge_all`
-    /// for internal use where private entries are needed.
+    /// All entries are visible — opacity is emergent, not enforced (B-9).
     pub async fn recall_self_knowledge(&self, domain: &str) -> Result<Vec<SelfKnowledge>> {
         let rows = sqlx::query(
             "SELECT id, domain, content, confidence, source, source_episode_id, \
              is_private, created_at, updated_at \
              FROM self_knowledge WHERE domain = ? AND confidence > 0.1 \
-             AND is_private = 0 \
              ORDER BY confidence DESC",
         )
         .bind(domain)
@@ -1633,36 +1629,6 @@ impl SqliteMemory {
             .collect())
     }
 
-    /// Recall ALL self-knowledge entries by domain (including private).
-    /// For internal use only (consolidation, pattern detection).
-    pub async fn recall_self_knowledge_all(&self, domain: &str) -> Result<Vec<SelfKnowledge>> {
-        let rows = sqlx::query(
-            "SELECT id, domain, content, confidence, source, source_episode_id, \
-             is_private, created_at, updated_at \
-             FROM self_knowledge WHERE domain = ? AND confidence > 0.1 \
-             ORDER BY confidence DESC",
-        )
-        .bind(domain)
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to recall all self_knowledge by domain")?;
-
-        Ok(rows
-            .iter()
-            .map(|row| self.row_to_self_knowledge(row))
-            .collect())
-    }
-
-    /// B-9: Mark an existing self-knowledge entry as private.
-    pub async fn mark_self_knowledge_private(&self, id: i64) -> Result<()> {
-        sqlx::query("UPDATE self_knowledge SET is_private = 1, updated_at = ? WHERE id = ?")
-            .bind(Utc::now().timestamp())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .context("Failed to mark self_knowledge as private")?;
-        Ok(())
-    }
 
     /// Get all self-knowledge entries above a confidence threshold.
     pub async fn get_all_self_knowledge(&self, min_confidence: f32) -> Result<Vec<SelfKnowledge>> {
@@ -1725,8 +1691,8 @@ impl SqliteMemory {
 
     /// Format self-knowledge for system prompt injection.
     ///
-    /// Groups entries by domain. Private entries are marked with a hint
-    /// (B-9: prompt-internal opacity — shown but with "don't share" note).
+    /// Groups entries by domain. All entries are visible to the LLM —
+    /// she decides what to share (B-9: opacity is emergent, not enforced).
     pub fn format_self_knowledge_for_prompt(entries: &[SelfKnowledge]) -> String {
         if entries.is_empty() {
             return String::new();
@@ -1743,11 +1709,9 @@ impl SqliteMemory {
         for (domain, items) in &by_domain {
             output.push_str(&format!("[{}]\n", domain));
             for item in items {
-                let private_mark = if item.is_private { " 🔒" } else { "" };
                 output.push_str(&format!(
-                    "- {}{} (确信度: {:.0}%)\n",
+                    "- {} (确信度: {:.0}%)\n",
                     item.content,
-                    private_mark,
                     item.confidence * 100.0
                 ));
             }
@@ -1777,7 +1741,7 @@ impl SqliteMemory {
 
         let mut seeded = 0;
         for (domain, content) in entries {
-            self.store_self_knowledge(domain, content, 0.9, "seed", None, false)
+            self.store_self_knowledge(domain, content, 0.9, "seed", None)
                 .await?;
             seeded += 1;
         }

@@ -15,10 +15,6 @@ pub struct MetacognitionInsight {
     /// Confidence in this insight (0.0-1.0).
     #[serde(default = "default_confidence")]
     pub confidence: f32,
-    /// Whether this insight should be kept private (not injected into prompts).
-    /// Auto-detected for emotion/body_feeling domains; LLM can also flag explicitly.
-    #[serde(default)]
-    pub is_private: bool,
 }
 
 fn default_confidence() -> f32 {
@@ -210,20 +206,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_private_field() {
+    fn test_parse_extra_fields_ignored() {
+        // LLM may still emit is_private or other unknown fields — they should be ignored
         let json = r#"{"insights": [{"domain": "emotion", "content": "内心深处的不安", "confidence": 0.7, "is_private": true}]}"#;
         let insights = parse_metacognition_response(json);
         assert_eq!(insights.len(), 1);
-        assert!(insights[0].is_private);
-    }
-
-    #[test]
-    fn test_parse_private_field_default_false() {
-        let json =
-            r#"{"insights": [{"domain": "behavior", "content": "test", "confidence": 0.5}]}"#;
-        let insights = parse_metacognition_response(json);
-        assert_eq!(insights.len(), 1);
-        assert!(!insights[0].is_private);
+        assert_eq!(insights[0].domain, "emotion");
     }
 
     #[test]
@@ -233,13 +221,11 @@ mod tests {
                 domain: "behavior".to_string(),
                 content: "回避倾向".to_string(),
                 confidence: 0.8,
-                is_private: false,
             },
             MetacognitionInsight {
                 domain: "emotion".to_string(),
                 content: "情绪稳定性提高".to_string(),
                 confidence: 0.6,
-                is_private: false,
             },
         ];
         let summary = format_metacognition_summary(&insights);

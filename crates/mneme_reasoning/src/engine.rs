@@ -996,7 +996,6 @@ impl ReasoningEngine {
                     &insight.domain,
                     &insight.content,
                     insight.confidence,
-                    insight.is_private,
                 )
                 .await;
         }

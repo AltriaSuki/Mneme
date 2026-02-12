@@ -470,7 +470,6 @@ async fn test_store_and_recall_self_knowledge() {
             0.7,
             "consolidation",
             None,
-            false,
         )
         .await
         .expect("Failed to store sk 1");
@@ -482,7 +481,6 @@ async fn test_store_and_recall_self_knowledge() {
             0.6,
             "interaction",
             None,
-            false,
         )
         .await
         .expect("Failed to store sk 2");
@@ -494,7 +492,6 @@ async fn test_store_and_recall_self_knowledge() {
             0.8,
             "interaction",
             None,
-            false,
         )
         .await
         .expect("Failed to store sk 3");
@@ -506,7 +503,6 @@ async fn test_store_and_recall_self_knowledge() {
             0.9,
             "consolidation",
             None,
-            true,
         )
         .await
         .expect("Failed to store sk 4");
@@ -539,7 +535,7 @@ async fn test_self_knowledge_confidence_merge() {
 
     // Store a self-knowledge entry
     memory
-        .store_self_knowledge("personality", "我喜欢安静", 0.5, "interaction", None, false)
+        .store_self_knowledge("personality", "我喜欢安静", 0.5, "interaction", None)
         .await
         .unwrap();
 
@@ -551,7 +547,6 @@ async fn test_self_knowledge_confidence_merge() {
             0.9,
             "consolidation",
             None,
-            false,
         )
         .await
         .unwrap();
@@ -578,7 +573,7 @@ async fn test_self_knowledge_decay() {
         .expect("Failed to create memory");
 
     memory
-        .store_self_knowledge("belief", "说谎是不好的", 0.8, "seed", None, false)
+        .store_self_knowledge("belief", "说谎是不好的", 0.8, "seed", None)
         .await
         .unwrap();
 
@@ -601,15 +596,15 @@ async fn test_self_knowledge_get_all_and_delete() {
         .expect("Failed to create memory");
 
     memory
-        .store_self_knowledge("personality", "内向", 0.7, "seed", None, false)
+        .store_self_knowledge("personality", "内向", 0.7, "seed", None)
         .await
         .unwrap();
     memory
-        .store_self_knowledge("interest", "音乐", 0.6, "seed", None, false)
+        .store_self_knowledge("interest", "音乐", 0.6, "seed", None)
         .await
         .unwrap();
     memory
-        .store_self_knowledge("belief", "诚实很重要", 0.9, "seed", None, false)
+        .store_self_knowledge("belief", "诚实很重要", 0.9, "seed", None)
         .await
         .unwrap();
 
@@ -647,7 +642,7 @@ async fn test_format_self_knowledge_for_prompt() {
             confidence: 0.9,
             source: "consolidation".to_string(),
             source_episode_id: None,
-            is_private: true,
+            is_private: false,
             created_at: 0,
             updated_at: 0,
         },
@@ -659,8 +654,6 @@ async fn test_format_self_knowledge_for_prompt() {
     assert!(formatted.contains("[relationship]"));
     assert!(formatted.contains("深夜"));
     assert!(formatted.contains("70%"));
-    // Private entry should have lock mark
-    assert!(formatted.contains("🔒"));
 
     // Empty should produce empty string
     let empty = SqliteMemory::format_self_knowledge_for_prompt(&[]);
