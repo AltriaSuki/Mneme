@@ -186,6 +186,31 @@ async fn main() -> anyhow::Result<()> {
         info!("Seeded {} infrastructure self-awareness entries", infra_seeded);
     }
 
+    // DB schema self-awareness (#54)
+    // Mneme needs to know her own database structure so she doesn't guess wrong
+    // table names when using shell to query SQLite (B-15 body awareness).
+    let existing_schema = memory.recall_self_knowledge("system_knowledge").await.unwrap_or_default();
+    if existing_schema.is_empty() {
+        let schema_seeds: &[(&str, &str)] = &[
+            ("system_knowledge", "我的数据库是 SQLite，文件路径在启动时指定。主要表结构如下。"),
+            ("system_knowledge", "episodes 表存储我的情景记忆：id(TEXT), source, author, body, timestamp, modality, embedding(BLOB), strength(REAL)。"),
+            ("system_knowledge", "facts 表存储语义事实三元组：id, subject, predicate, object, confidence。例如「用户 喜欢 编程」。"),
+            ("system_knowledge", "people 表存储社交图谱中的人：id(TEXT), name。aliases 表关联 platform+platform_id 到 person_id。relationships 表记录互动。"),
+            ("system_knowledge", "self_knowledge 表存储我的自我认知：id, domain, content, confidence, source。domain 包括 personality/interest/belief/expression/infrastructure/system_knowledge 等。"),
+            ("system_knowledge", "goals 表存储我的目标：id, goal_type, description, priority, status, progress。"),
+            ("system_knowledge", "behavior_rules 表存储行为规则：id, name, priority, enabled, trigger_json, condition_json, action_json。"),
+            ("system_knowledge", "organism_state 表是单行表，存储我当前的身体状态 JSON（energy, stress, mood 等）。"),
+            ("system_knowledge", "token_usage 表记录 API token 消耗：input_tokens, output_tokens, timestamp。"),
+            ("system_knowledge", "vec_episodes 是向量搜索虚拟表（sqlite-vec），用于语义相似度检索。不要直接查询它。"),
+        ];
+        for (domain, content) in schema_seeds {
+            if let Err(e) = memory.store_self_knowledge(domain, content, 0.85, "seed:schema", None).await {
+                error!("Failed to seed schema knowledge: {}", e);
+            }
+        }
+        info!("Seeded {} DB schema self-knowledge entries", schema_seeds.len());
+    }
+
     // Restart time gap awareness (#93)
     // Detect temporal discontinuity from process restarts so Mneme perceives
     // the gap rather than silently ignoring it.
