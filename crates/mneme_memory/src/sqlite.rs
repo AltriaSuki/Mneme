@@ -1504,6 +1504,10 @@ impl SqliteMemory {
     ///
     /// "Similar" = same domain + content. On conflict, confidence is merged
     /// using the same Bayesian-ish rule as facts: 0.3 * old + 0.7 * new.
+    ///
+    /// B-5 Cognitive Sovereignty: when an external source tries to override a
+    /// self-sourced entry, the new confidence is capped at `min(new, old * 0.8)`.
+    /// This prevents user assertions from easily overwriting self-discovered knowledge.
     pub async fn store_self_knowledge(
         &self,
         domain: &str,
@@ -1517,7 +1521,7 @@ impl SqliteMemory {
 
         // Check for existing entry with same domain + content
         let existing = sqlx::query(
-            "SELECT id, confidence FROM self_knowledge WHERE domain = ? AND content = ?",
+            "SELECT id, confidence, source FROM self_knowledge WHERE domain = ? AND content = ?",
         )
         .bind(domain)
         .bind(content)
@@ -1528,7 +1532,26 @@ impl SqliteMemory {
         if let Some(row) = existing {
             let id: i64 = row.get("id");
             let old_conf: f64 = row.get("confidence");
-            let merged = old_conf * 0.3 + confidence as f64 * 0.7;
+            let old_source: String = row.get("source");
+
+            // B-5: Cognitive sovereignty — self-sourced knowledge resists external override.
+            // If existing entry is self-sourced and new source is external,
+            // cap the incoming confidence so it can't easily overwrite.
+            let is_self_sourced = old_source.starts_with("self:");
+            let is_external_new = !source.starts_with("self:");
+            let effective_confidence = if is_self_sourced && is_external_new {
+                let capped = (confidence as f64).min(old_conf * 0.8);
+                tracing::debug!(
+                    "B-5 sovereignty: capping external confidence {:.2} → {:.2} (self-sourced entry)",
+                    confidence,
+                    capped
+                );
+                capped
+            } else {
+                confidence as f64
+            };
+
+            let merged = old_conf * 0.3 + effective_confidence * 0.7;
 
             sqlx::query(
                 "UPDATE self_knowledge SET confidence = ?, source = ?, \
