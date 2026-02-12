@@ -237,6 +237,9 @@ async fn main() -> anyhow::Result<()> {
     // 4a. Wire up Social Graph (SqliteMemory implements SocialGraph)
     engine.set_social_graph(memory.clone());
 
+    // 4a'. Context budget from config (linked to model's context window)
+    engine.set_context_budget(config.llm.context_budget_chars);
+
     // 4b. Initialize Safety Guard
     let guard = Arc::new(mneme_core::safety::CapabilityGuard::new(
         config.safety.clone(),

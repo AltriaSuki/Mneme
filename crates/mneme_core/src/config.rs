@@ -62,6 +62,11 @@ impl MnemeConfig {
                 self.llm.temperature = n;
             }
         }
+        if let Ok(v) = std::env::var("LLM_CONTEXT_BUDGET") {
+            if let Ok(n) = v.parse() {
+                self.llm.context_budget_chars = n;
+            }
+        }
         // OneBot env overrides
         if let Ok(url) = std::env::var("ONEBOT_WS_URL") {
             let token = std::env::var("ONEBOT_ACCESS_TOKEN").ok();
@@ -85,6 +90,10 @@ pub struct LlmConfig {
     pub base_url: Option<String>,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Context budget in characters for the system prompt assembly pipeline.
+    /// Should roughly match the model's context window (~4 chars per token).
+    /// Default: 32000 (~8k tokens).
+    pub context_budget_chars: usize,
 }
 
 impl Default for LlmConfig {
@@ -95,6 +104,7 @@ impl Default for LlmConfig {
             base_url: None,
             max_tokens: 4096,
             temperature: 0.7,
+            context_budget_chars: 32_000,
         }
     }
 }

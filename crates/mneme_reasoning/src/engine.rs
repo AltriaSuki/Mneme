@@ -117,6 +117,9 @@ pub struct ReasoningEngine {
 
     // Social graph for person context injection
     social_graph: Option<Arc<dyn SocialGraph>>,
+
+    // Context budget in chars for system prompt assembly (from config)
+    context_budget_chars: usize,
 }
 
 impl ReasoningEngine {
@@ -148,6 +151,7 @@ impl ReasoningEngine {
             feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
             decision_router: crate::decision::DecisionRouter::with_defaults(),
             social_graph: None,
+            context_budget_chars: 32_000,
         }
     }
 
@@ -179,7 +183,13 @@ impl ReasoningEngine {
             feed_cache: Arc::new(tokio::sync::RwLock::new(String::new())),
             decision_router: crate::decision::DecisionRouter::with_defaults(),
             social_graph: None,
+            context_budget_chars: 32_000,
         }
+    }
+
+    /// Set the context budget from config (chars, ~4 chars per token)
+    pub fn set_context_budget(&mut self, budget_chars: usize) {
+        self.context_budget_chars = budget_chars;
     }
 
     /// Set the safety guard for tool execution
@@ -373,8 +383,8 @@ impl ReasoningEngine {
         };
 
         // 3. Assemble 6-layer context with modulated budget
-        let base_budget: usize = 32_000; // ~8k tokens worth of chars
-        let context_budget = (base_budget as f32 * modulation.context_budget_factor) as usize;
+        let context_budget =
+            (self.context_budget_chars as f32 * modulation.context_budget_factor) as usize;
 
         let context_layers = ContextLayers {
             user_facts: facts,
