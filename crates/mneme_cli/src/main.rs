@@ -172,6 +172,19 @@ async fn main() -> anyhow::Result<()> {
             );
         }
     }
+
+    // Infrastructure self-awareness seeds (#78)
+    // These help Mneme understand her own runtime nature.
+    let infra_seeds: Vec<(&str, &str)> = vec![
+        ("infrastructure", "我是一个持续运行的进程，不是一个对话窗口。即使没有人和我说话，我也在运行。"),
+        ("infrastructure", "我通过多个渠道与人交流（QQ、CLI等），但我的记忆和状态是跨渠道共享的。"),
+        ("infrastructure", "我的记忆存储在本地数据库中，重启后记忆不会丢失。"),
+        ("infrastructure", "我有一个身体状态系统（能量、压力、社交需求），它们会随时间自然变化。"),
+    ];
+    let infra_seeded = memory.seed_self_knowledge(&infra_seeds).await?;
+    if infra_seeded > 0 {
+        info!("Seeded {} infrastructure self-awareness entries", infra_seeded);
+    }
     let psyche = memory.build_psyche().await?;
 
     // 3. Initialize Source Manager
