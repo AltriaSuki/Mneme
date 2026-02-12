@@ -347,6 +347,15 @@ impl ReasoningEngine {
             String::new()
         };
 
+        // 1c. Self-knowledge: inject accumulated self-understanding for internal thoughts
+        //     (#71, #72, #77): ensures Mneme knows herself during metacognition,
+        //     inner monologue, and rumination — not just during user conversations.
+        let self_knowledge = if !is_user_message {
+            self.recall_self_knowledge_for_prompt().await
+        } else {
+            String::new()
+        };
+
         // 2. Prepare tool instructions (from registry if available, else hardcoded)
         // Aligned with B-8: "工具的终极接口不是一个列表，而是 shell + 网络"
         let tool_instructions = if let Some(ref registry) = self.registry {
@@ -372,6 +381,7 @@ impl ReasoningEngine {
             recalled_episodes,
             feed_digest: self.feed_cache.read().await.clone(),
             social_context,
+            self_knowledge,
         };
 
         let system_prompt = ContextAssembler::build_full_system_prompt(
@@ -883,22 +893,20 @@ impl ReasoningEngine {
         }
     }
 
-    /// Assemble context for metacognitive reflection.
+    /// Recall self-knowledge entries formatted for system prompt injection.
     ///
-    /// Gathers existing self-knowledge, recent episodes, and current somatic state
-    /// to give the LLM enough material for meaningful self-reflection.
-    async fn assemble_metacognition_context(&self) -> String {
-        let mut sections = Vec::new();
-
-        // 1. Existing self-knowledge (top entries per domain)
+    /// Used during internal thoughts (metacognition, inner monologue, rumination)
+    /// so Mneme retains self-awareness while thinking privately.
+    async fn recall_self_knowledge_for_prompt(&self) -> String {
         let domains = [
             "behavior",
             "emotion",
             "social",
             "expression",
             "body_feeling",
+            "infrastructure",
         ];
-        let mut sk_lines = Vec::new();
+        let mut lines = Vec::new();
         for domain in &domains {
             let entries = self
                 .memory
@@ -906,54 +914,33 @@ impl ReasoningEngine {
                 .await
                 .unwrap_or_default();
             for (content, confidence) in entries.iter().take(3) {
-                sk_lines.push(format!(
-                    "  [{}] {} (置信度: {:.0}%)",
+                lines.push(format!(
+                    "[{}] {} ({:.0}%)",
                     domain,
                     content,
                     confidence * 100.0
                 ));
             }
         }
-        if !sk_lines.is_empty() {
-            sections.push(format!("已有的自我认知：\n{}", sk_lines.join("\n")));
-        }
-
-        // 2. Recent episodes
-        let recent = self
-            .memory
-            .recall("最近的互动和行为模式")
-            .await
-            .unwrap_or_default();
-        if !recent.is_empty() {
-            sections.push(format!("近期记忆片段：\n{}", recent));
-        }
-
-        // 3. Current somatic state
-        let marker = self.limbic.get_somatic_marker().await;
-        sections.push(format!(
-            "当前身体状态：energy={:.2}, stress={:.2}, social_need={:.2}, mood_bias={:.2}",
-            marker.energy, marker.stress, marker.social_need, marker.mood_bias,
-        ));
-
-        sections.join("\n\n")
+        lines.join("\n")
     }
 
-    /// Handle a metacognition trigger: assemble context, call LLM, parse and store insights.
+    /// Handle a metacognition trigger: call LLM with full context pipeline, parse and store insights.
+    ///
+    /// Self-knowledge, persona, somatic state, and recalled episodes are all injected
+    /// by `process_thought_loop` via ContextAssembler — no need to duplicate here.
     async fn handle_metacognition(
         &self,
         trigger_reason: &str,
         context_summary: &str,
     ) -> Result<ReasoningOutput> {
-        let context = self.assemble_metacognition_context().await;
-
         let prompt = format!(
             "[元认知反思] 触发原因: {}。状态快照: {}。\n\n\
-             {}\n\n\
              请审视自己最近的行为模式、情绪变化和社交互动。\n\
              识别出值得注意的模式，并生成自我改进的洞察。\n\
              用 JSON 格式返回：\n\
              {{\"insights\": [{{\"domain\": \"behavior|emotion|social|expression\", \"content\": \"洞察内容\", \"confidence\": 0.0-1.0}}]}}",
-            trigger_reason, context_summary, context,
+            trigger_reason, context_summary,
         );
 
         let (response_text, emotion, affect) =

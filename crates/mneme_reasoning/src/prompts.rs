@@ -21,6 +21,8 @@ pub struct ContextLayers {
     pub recalled_episodes: String,
     /// Social context: person info for current speaker
     pub social_context: String,
+    /// Self-knowledge: accumulated self-understanding (populated for internal thoughts)
+    pub self_knowledge: String,
 }
 
 pub struct ContextAssembler;
@@ -85,6 +87,9 @@ impl ContextAssembler {
         //   facts > episodes > feed_digest
         let mut variable_sections: Vec<(&str, &str)> = Vec::new();
 
+        if !layers.self_knowledge.is_empty() {
+            variable_sections.push(("SELF KNOWLEDGE", &layers.self_knowledge));
+        }
         if !layers.user_facts.is_empty() {
             variable_sections.push(("KNOWN FACTS", &layers.user_facts));
         }
