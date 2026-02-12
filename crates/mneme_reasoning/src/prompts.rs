@@ -6,7 +6,7 @@ use mneme_limbic::SomaticMarker;
 /// Priority order (1 = highest, never dropped):
 ///   1. Persona (identity) — always present, never truncated
 ///   2. User facts (semantic memory) — known facts about the user
-///   3. Social feed digest — summarized perception data (TODO)
+///   3. Social feed digest — summarized perception data
 ///   4. Relevant episodes — recalled memories
 ///   5. Conversation history — sliding window (in messages, not system prompt)
 ///   6. Triggering event — the current input (in messages, not system prompt)
@@ -15,7 +15,7 @@ use mneme_limbic::SomaticMarker;
 pub struct ContextLayers {
     /// Layer 2: Known facts formatted for prompt
     pub user_facts: String,
-    /// Layer 3: Feed digest (not yet implemented, placeholder)
+    /// Layer 3: Feed digest from perception sources
     pub feed_digest: String,
     /// Layer 4: Recalled episodes from vector search
     pub recalled_episodes: String,
@@ -128,34 +128,6 @@ impl ContextAssembler {
             parts.push(tool_instructions.to_string());
         }
         parts.join("\n\n")
-    }
-
-    /// Build system prompt with somatic marker injection (new System 1 integration)
-    /// Legacy API — delegates to the full pipeline with no facts/feed.
-    pub fn build_system_prompt_with_soma(
-        psyche: &Psyche,
-        recalled_memory: &str,
-        somatic_marker: &SomaticMarker,
-    ) -> String {
-        let layers = ContextLayers {
-            recalled_episodes: recalled_memory.to_string(),
-            ..Default::default()
-        };
-        Self::build_full_system_prompt(psyche, somatic_marker, &layers, 32_000, "")
-    }
-
-    /// Legacy: Build system prompt with discrete emotion (backward compatibility)
-    pub fn build_system_prompt(
-        psyche: &Psyche,
-        recalled_memory: &str,
-        current_emotion: &mneme_core::Emotion,
-    ) -> String {
-        format!(
-            "{}\n\nYou are currently feeling: {}.\n\n== EMOTIONAL STATE ==\nAlways start your response with an emotional state tag: <emotion>STATE</emotion>, where STATE is one of: Neutral, Happy, Sad, Excited, Calm, Angry, Surprised.\n\nIf the user's message is a casual remark in a group chat not directed at you, or if you have nothing meaningful to add, you may output exactly: [SILENCE]\nThis will cause you to stay silent.\n\n== RECALLED CONTEXT ==\n{}",
-            psyche.format_context(),
-            current_emotion.as_str(),
-            recalled_memory
-        )
     }
 
     pub fn assemble_history(raw_history: &[Message], user_input: &str) -> Vec<Message> {
