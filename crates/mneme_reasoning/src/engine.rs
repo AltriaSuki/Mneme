@@ -328,10 +328,17 @@ impl ReasoningEngine {
         };
 
         // 1. Blended recall: episodes + facts in one call
-        let blended = self
+        //    B-10: Use reconstructed recall (mood/stress colored) instead of plain recall
+        let stress = somatic_marker.stress;
+        let recalled_episodes = self
             .memory
-            .recall_blended(input_text, modulation.recall_mood_bias)
+            .recall_reconstructed(input_text, modulation.recall_mood_bias, stress)
             .await?;
+        let facts = self
+            .memory
+            .recall_facts_formatted(input_text)
+            .await
+            .unwrap_or_default();
 
         // 1b. Social graph: look up person context for the current speaker
         let social_context = if let Some((source, author)) = speaker {
@@ -361,8 +368,8 @@ impl ReasoningEngine {
         let context_budget = (base_budget as f32 * modulation.context_budget_factor) as usize;
 
         let context_layers = ContextLayers {
-            user_facts: blended.facts,
-            recalled_episodes: blended.episodes,
+            user_facts: facts,
+            recalled_episodes,
             feed_digest: self.feed_cache.read().await.clone(),
             social_context,
         };
@@ -875,6 +882,118 @@ impl ReasoningEngine {
             }
         }
     }
+
+    /// Assemble context for metacognitive reflection.
+    ///
+    /// Gathers existing self-knowledge, recent episodes, and current somatic state
+    /// to give the LLM enough material for meaningful self-reflection.
+    async fn assemble_metacognition_context(&self) -> String {
+        let mut sections = Vec::new();
+
+        // 1. Existing self-knowledge (top entries per domain)
+        let domains = [
+            "behavior",
+            "emotion",
+            "social",
+            "expression",
+            "body_feeling",
+        ];
+        let mut sk_lines = Vec::new();
+        for domain in &domains {
+            let entries = self
+                .memory
+                .recall_self_knowledge_by_domain(domain)
+                .await
+                .unwrap_or_default();
+            for (content, confidence) in entries.iter().take(3) {
+                sk_lines.push(format!(
+                    "  [{}] {} (置信度: {:.0}%)",
+                    domain,
+                    content,
+                    confidence * 100.0
+                ));
+            }
+        }
+        if !sk_lines.is_empty() {
+            sections.push(format!("已有的自我认知：\n{}", sk_lines.join("\n")));
+        }
+
+        // 2. Recent episodes
+        let recent = self
+            .memory
+            .recall("最近的互动和行为模式")
+            .await
+            .unwrap_or_default();
+        if !recent.is_empty() {
+            sections.push(format!("近期记忆片段：\n{}", recent));
+        }
+
+        // 3. Current somatic state
+        let marker = self.limbic.get_somatic_marker().await;
+        sections.push(format!(
+            "当前身体状态：energy={:.2}, stress={:.2}, social_need={:.2}, mood_bias={:.2}",
+            marker.energy, marker.stress, marker.social_need, marker.mood_bias,
+        ));
+
+        sections.join("\n\n")
+    }
+
+    /// Handle a metacognition trigger: assemble context, call LLM, parse and store insights.
+    async fn handle_metacognition(
+        &self,
+        trigger_reason: &str,
+        context_summary: &str,
+    ) -> Result<ReasoningOutput> {
+        let context = self.assemble_metacognition_context().await;
+
+        let prompt = format!(
+            "[元认知反思] 触发原因: {}。状态快照: {}。\n\n\
+             {}\n\n\
+             请审视自己最近的行为模式、情绪变化和社交互动。\n\
+             识别出值得注意的模式，并生成自我改进的洞察。\n\
+             用 JSON 格式返回：\n\
+             {{\"insights\": [{{\"domain\": \"behavior|emotion|social|expression\", \"content\": \"洞察内容\", \"confidence\": 0.0-1.0}}]}}",
+            trigger_reason, context_summary, context,
+        );
+
+        let (response_text, emotion, affect) =
+            self.process_thought_loop(&prompt, false, None).await?;
+
+        // Parse insights from LLM response
+        let insights = crate::metacognition::parse_metacognition_response(&response_text);
+
+        // Store each insight as self-knowledge
+        for insight in &insights {
+            self.coordinator
+                .store_metacognition_insight(&insight.domain, &insight.content, insight.confidence)
+                .await;
+        }
+
+        // Store the reflection as a meta-episode
+        if !insights.is_empty() {
+            let summary = crate::metacognition::format_metacognition_summary(&insights);
+            let meta_content = mneme_core::Content {
+                id: uuid::Uuid::new_v4(),
+                source: "self:metacognition".to_string(),
+                author: "Mneme".to_string(),
+                body: summary,
+                timestamp: chrono::Utc::now().timestamp(),
+                modality: mneme_core::Modality::Text,
+            };
+            if let Err(e) = self.memory.memorize(&meta_content).await {
+                tracing::warn!("Failed to store metacognition episode: {}", e);
+            }
+
+            tracing::info!("Metacognition: stored {} insights", insights.len());
+        }
+
+        Ok(ReasoningOutput {
+            content: response_text,
+            modality: ResponseModality::Text,
+            emotion,
+            affect,
+        })
+    }
 }
 
 #[async_trait::async_trait]
@@ -1012,6 +1131,15 @@ impl Reasoning for ReasoningEngine {
                                 )
                             }
                         }
+                    }
+                    Trigger::Metacognition {
+                        trigger_reason,
+                        context_summary,
+                    } => {
+                        // #24: Metacognitive self-reflection
+                        return self
+                            .handle_metacognition(&trigger_reason, &context_summary)
+                            .await;
                     }
                 };
 

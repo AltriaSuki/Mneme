@@ -594,6 +594,40 @@ impl Memory for SqliteMemory {
         Ok(context)
     }
 
+    /// B-10: Reconstructed recall — memories colored by current emotional state.
+    ///
+    /// After KNN retrieval, prefixes each episode with an emotional lens annotation
+    /// based on current mood_bias and stress level. High stress narrows focus to
+    /// threat-relevant details; positive mood highlights pleasant aspects.
+    async fn recall_reconstructed(
+        &self,
+        query: &str,
+        mood_bias: f32,
+        stress: f32,
+    ) -> Result<String> {
+        // Use the existing biased recall as the base
+        let base = self.recall_with_bias(query, mood_bias).await?;
+        if base.starts_with("No relevant memories") {
+            return Ok(base);
+        }
+
+        // Determine emotional lens annotation
+        let lens = if stress > 0.7 {
+            "[高压回忆·聚焦威胁与紧张细节]"
+        } else if stress > 0.4 && mood_bias < -0.3 {
+            "[焦虑回忆·放大负面细节]"
+        } else if mood_bias > 0.3 {
+            "[温暖回忆·突出愉快细节]"
+        } else if mood_bias < -0.3 {
+            "[低落回忆·灰色滤镜]"
+        } else {
+            return Ok(base); // Neutral state: no reconstruction needed
+        };
+
+        // Prefix the recalled memories with the emotional lens
+        Ok(format!("{}\n{}", lens, base))
+    }
+
     async fn recall_facts_formatted(&self, query: &str) -> Result<String> {
         let facts = self.recall_facts(query).await?;
         Ok(Self::format_facts_for_prompt(&facts))
