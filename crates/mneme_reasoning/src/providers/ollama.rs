@@ -3,8 +3,8 @@
 //! Ollama exposes an OpenAI-compatible API at localhost:11434/v1,
 //! so we reuse the OpenAI SSE parsing logic.
 
-use crate::llm::{LlmClient, CompletionParams};
-use crate::api_types::{Message, Tool, MessagesResponse, ContentBlock, Role, StreamEvent};
+use crate::api_types::{ContentBlock, Message, MessagesResponse, Role, StreamEvent, Tool};
+use crate::llm::{CompletionParams, LlmClient};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -41,12 +41,26 @@ fn build_openai_messages(system: &str, messages: Vec<Message>) -> Vec<Value> {
     for msg in messages {
         match msg.role {
             Role::User => {
-                let final_text = msg.content.iter().filter_map(|b| {
-                    if let ContentBlock::Text { text } = b { Some(text.clone()) } else { None }
-                }).collect::<Vec<_>>().join("\n");
+                let final_text = msg
+                    .content
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
                 for block in &msg.content {
-                    if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                    if let ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        ..
+                    } = block
+                    {
                         openai_messages.push(json!({
                             "role": "tool",
                             "tool_call_id": tool_use_id,
@@ -79,7 +93,9 @@ fn build_openai_messages(system: &str, messages: Vec<Message>) -> Vec<Value> {
                 }
                 if !tool_calls.is_empty() {
                     msg_obj["tool_calls"] = json!(tool_calls);
-                    if text_parts.is_empty() { msg_obj["content"] = Value::Null; }
+                    if text_parts.is_empty() {
+                        msg_obj["content"] = Value::Null;
+                    }
                 }
                 openai_messages.push(msg_obj);
             }
@@ -89,16 +105,19 @@ fn build_openai_messages(system: &str, messages: Vec<Message>) -> Vec<Value> {
 }
 
 fn build_openai_tools(tools: &[Tool]) -> Vec<Value> {
-    tools.iter().map(|t| {
-        json!({
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.input_schema
-            }
+    tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema
+                }
+            })
         })
-    }).collect()
+        .collect()
 }
 
 #[async_trait::async_trait]
@@ -125,7 +144,9 @@ impl LlmClient for OllamaClient {
 
         let url = format!("{}/chat/completions", self.base_url);
 
-        let response = self.client.post(&url)
+        let response = self
+            .client
+            .post(&url)
             .json(&payload)
             .send()
             .await
@@ -140,12 +161,24 @@ impl LlmClient for OllamaClient {
         let resp_json: Value = response.json().await?;
 
         // Debug logging (mirrors Anthropic provider)
-        if env::var("DEBUG_PAYLOAD").map(|v| v == "true").unwrap_or(false) {
-            tracing::info!("Ollama request: {}", serde_json::to_string_pretty(&payload).unwrap_or_default());
-            tracing::info!("Ollama response: {}", serde_json::to_string_pretty(&resp_json).unwrap_or_default());
+        if env::var("DEBUG_PAYLOAD")
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                "Ollama request: {}",
+                serde_json::to_string_pretty(&payload).unwrap_or_default()
+            );
+            tracing::info!(
+                "Ollama response: {}",
+                serde_json::to_string_pretty(&resp_json).unwrap_or_default()
+            );
         } else if tracing::enabled!(tracing::Level::DEBUG) {
             let raw = serde_json::to_string(&resp_json).unwrap_or_default();
-            tracing::debug!("Ollama raw response (first 2000 chars): {}", &raw[..raw.len().min(2000)]);
+            tracing::debug!(
+                "Ollama raw response (first 2000 chars): {}",
+                &raw[..raw.len().min(2000)]
+            );
         }
 
         parse_openai_response(&resp_json)
@@ -174,7 +207,9 @@ impl LlmClient for OllamaClient {
 
         let url = format!("{}/chat/completions", self.base_url);
 
-        let response = self.client.post(&url)
+        let response = self
+            .client
+            .post(&url)
             .json(&payload)
             .send()
             .await
@@ -209,7 +244,9 @@ pub(crate) fn parse_openai_response(resp_json: &Value) -> Result<MessagesRespons
 
     if let Some(content) = message["content"].as_str() {
         if !content.is_empty() {
-            content_blocks.push(ContentBlock::Text { text: content.to_string() });
+            content_blocks.push(ContentBlock::Text {
+                text: content.to_string(),
+            });
         }
     }
 
@@ -232,9 +269,15 @@ pub(crate) fn parse_openai_response(resp_json: &Value) -> Result<MessagesRespons
     // Extract token usage from OpenAI-compatible response
     let usage = resp_json.get("usage").and_then(|u| {
         let input = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-        let output = u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let output = u
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         if input > 0 || output > 0 {
-            Some(crate::api_types::TokenUsage { input_tokens: input, output_tokens: output })
+            Some(crate::api_types::TokenUsage {
+                input_tokens: input,
+                output_tokens: output,
+            })
         } else {
             None
         }
@@ -327,7 +370,9 @@ mod tests {
             },
             Message {
                 role: Role::Assistant,
-                content: vec![ContentBlock::Text { text: "Hello!".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "Hello!".into(),
+                }],
             },
         ];
         let built = build_openai_messages("You are helpful.", messages);

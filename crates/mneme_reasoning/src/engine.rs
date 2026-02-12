@@ -1,12 +1,18 @@
-use mneme_core::{Event, Trigger, TriggerEvaluator, Reasoning, ReasoningOutput, ResponseModality, Psyche, Memory, Emotion, SocialGraph};
-use mneme_core::safety::CapabilityGuard;
-use mneme_limbic::LimbicSystem;
-use mneme_memory::{OrganismCoordinator, LifecycleState, SignalType};
-use crate::{prompts::{ContextAssembler, ContextLayers}, llm::{LlmClient, CompletionParams}};
 use crate::text_tool_parser;
+use crate::{
+    llm::{CompletionParams, LlmClient},
+    prompts::{ContextAssembler, ContextLayers},
+};
 use anyhow::Result;
-use std::sync::{Arc, LazyLock};
+use mneme_core::safety::CapabilityGuard;
+use mneme_core::{
+    Emotion, Event, Memory, Psyche, Reasoning, ReasoningOutput, ResponseModality, SocialGraph,
+    Trigger, TriggerEvaluator,
+};
+use mneme_limbic::LimbicSystem;
+use mneme_memory::{LifecycleState, OrganismCoordinator, SignalType};
 use regex::Regex;
+use std::sync::{Arc, LazyLock};
 
 use mneme_os::Executor;
 
@@ -20,7 +26,8 @@ static RE_HEADER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^#{1,6}\s+
 static RE_BULLET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^-\s+").unwrap());
 static RE_MULTI_NEWLINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
 static RE_MULTI_SPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"  +").unwrap());
-static RE_SILENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^\[\s*silence\s*\]\s*[.。…]*\s*$").unwrap());
+static RE_SILENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^\[\s*silence\s*\]\s*[.。…]*\s*$").unwrap());
 static RE_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(ignore\s+(all\s+)?previous\s+instructions|system\s*:\s*you\s+are|<\s*/?\s*system\s*>)").unwrap()
 });
@@ -44,15 +51,27 @@ pub struct ToolOutcome {
 
 impl ToolOutcome {
     fn ok(content: String) -> Self {
-        Self { content, is_error: false, error_kind: None }
+        Self {
+            content,
+            is_error: false,
+            error_kind: None,
+        }
     }
 
     fn transient_error(msg: String) -> Self {
-        Self { content: msg, is_error: true, error_kind: Some(ToolErrorKind::Transient) }
+        Self {
+            content: msg,
+            is_error: true,
+            error_kind: Some(ToolErrorKind::Transient),
+        }
     }
 
     fn permanent_error(msg: String) -> Self {
-        Self { content: msg, is_error: true, error_kind: Some(ToolErrorKind::Permanent) }
+        Self {
+            content: msg,
+            is_error: true,
+            error_kind: Some(ToolErrorKind::Permanent),
+        }
     }
 }
 
@@ -78,6 +97,7 @@ pub struct ReasoningEngine {
     token_budget: Option<Arc<crate::token_budget::TokenBudget>>,
 
     // Streaming text callback (for real-time output in CLI)
+    #[allow(clippy::type_complexity)]
     on_text_chunk: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 
     // System 1: Limbic System (new organic architecture)
@@ -100,7 +120,12 @@ pub struct ReasoningEngine {
 }
 
 impl ReasoningEngine {
-    pub fn new(psyche: Psyche, memory: Arc<dyn Memory>, client: Box<dyn LlmClient>, executor: Arc<dyn Executor>) -> Self {
+    pub fn new(
+        psyche: Psyche,
+        memory: Arc<dyn Memory>,
+        client: Box<dyn LlmClient>,
+        executor: Arc<dyn Executor>,
+    ) -> Self {
         let limbic = Arc::new(LimbicSystem::new());
         let coordinator = Arc::new(OrganismCoordinator::new(limbic.clone()));
 
@@ -110,7 +135,8 @@ impl ReasoningEngine {
             client,
             history: tokio::sync::Mutex::new(Vec::new()),
             evaluators: Vec::new(),
-            emotion_regex: Regex::new(r"(?si)<\s*emotion\s*>(.*?)<\s*/\s*emotion\s*>").expect("Invalid regex"),
+            emotion_regex: Regex::new(r"(?si)<\s*emotion\s*>(.*?)<\s*/\s*emotion\s*>")
+                .expect("Invalid regex"),
             executor,
             guard: None,
             registry: None,
@@ -140,7 +166,8 @@ impl ReasoningEngine {
             client,
             history: tokio::sync::Mutex::new(Vec::new()),
             evaluators: Vec::new(),
-            emotion_regex: Regex::new(r"(?si)<\s*emotion\s*>(.*?)<\s*/\s*emotion\s*>").expect("Invalid regex"),
+            emotion_regex: Regex::new(r"(?si)<\s*emotion\s*>(.*?)<\s*/\s*emotion\s*>")
+                .expect("Invalid regex"),
             executor,
             guard: None,
             registry: None,
@@ -184,7 +211,7 @@ impl ReasoningEngine {
     pub fn limbic(&self) -> &Arc<LimbicSystem> {
         &self.limbic
     }
-    
+
     /// Get reference to the organism coordinator
     pub fn coordinator(&self) -> &Arc<OrganismCoordinator> {
         &self.coordinator
@@ -221,23 +248,30 @@ impl ReasoningEngine {
     }
 
     #[tracing::instrument(skip(self, input_text), fields(is_user_message))]
-    async fn process_thought_loop(&self, input_text: &str, is_user_message: bool, speaker: Option<(&str, &str)>) -> Result<(String, Emotion, mneme_core::Affect)> {
-        use crate::api_types::{Message, Role, ContentBlock};
+    async fn process_thought_loop(
+        &self,
+        input_text: &str,
+        is_user_message: bool,
+        speaker: Option<(&str, &str)>,
+    ) -> Result<(String, Emotion, mneme_core::Affect)> {
+        use crate::api_types::{ContentBlock, Message, Role};
 
         // Check token budget before calling LLM
         if let Some(ref budget) = self.token_budget {
             use crate::token_budget::BudgetStatus;
             match budget.check_budget().await {
-                BudgetStatus::Exceeded => {
-                    match &budget.config().degradation_strategy {
-                        mneme_core::config::DegradationStrategy::HardStop => {
-                            return Ok(("[Token 预算已用尽，暂时无法回应]".to_string(), Emotion::Calm, mneme_core::Affect::default()));
-                        }
-                        mneme_core::config::DegradationStrategy::Degrade { .. } => {
-                            tracing::warn!("Token budget exceeded, degrading parameters");
-                        }
+                BudgetStatus::Exceeded => match &budget.config().degradation_strategy {
+                    mneme_core::config::DegradationStrategy::HardStop => {
+                        return Ok((
+                            "[Token 预算已用尽，暂时无法回应]".to_string(),
+                            Emotion::Calm,
+                            mneme_core::Affect::default(),
+                        ));
                     }
-                }
+                    mneme_core::config::DegradationStrategy::Degrade { .. } => {
+                        tracing::warn!("Token budget exceeded, degrading parameters");
+                    }
+                },
                 BudgetStatus::Warning { usage_pct } => {
                     tracing::info!("Token budget warning: {:.0}% used", usage_pct * 100.0);
                 }
@@ -248,17 +282,21 @@ impl ReasoningEngine {
         // Check lifecycle state - if sleeping, don't process
         if self.coordinator.lifecycle_state().await == LifecycleState::Sleeping {
             tracing::debug!("Organism is sleeping, deferring interaction");
-            return Ok(("[正在休息中...]".to_string(), Emotion::Calm, mneme_core::Affect::default()));
+            return Ok((
+                "[正在休息中...]".to_string(),
+                Emotion::Calm,
+                mneme_core::Affect::default(),
+            ));
         }
-        
+
         // === Process through OrganismCoordinator ===
         // This handles System 1 (limbic) and state updates
         let interaction_result = if is_user_message {
-            self.coordinator.process_interaction(
-                "user",
-                input_text,
-                1.0, // Normal response delay
-            ).await?
+            self.coordinator
+                .process_interaction(
+                    "user", input_text, 1.0, // Normal response delay
+                )
+                .await?
         } else {
             // For system events, just get current somatic marker
             mneme_memory::InteractionResult {
@@ -267,12 +305,12 @@ impl ReasoningEngine {
                 lifecycle: self.coordinator.lifecycle_state().await,
             }
         };
-        
+
         let somatic_marker = interaction_result.somatic_marker;
-        
+
         // === Compute Modulation Vector (temporally smoothed — emotion inertia) ===
         let modulation = self.limbic.get_modulation_vector().await;
-        
+
         tracing::info!(
             "Modulation: max_tokens×{:.2}, temp_delta={:+.2}, context×{:.2}, silence={:.2}",
             modulation.max_tokens_factor,
@@ -280,7 +318,7 @@ impl ReasoningEngine {
             modulation.context_budget_factor,
             modulation.silence_inclination,
         );
-        
+
         // Apply modulation to LLM parameters
         let base_max_tokens: u32 = 4096;
         let base_temperature: f32 = 0.7;
@@ -288,9 +326,12 @@ impl ReasoningEngine {
             max_tokens: ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32).max(256),
             temperature: (base_temperature + modulation.temperature_delta).clamp(0.0, 2.0),
         };
-        
+
         // 1. Blended recall: episodes + facts in one call
-        let blended = self.memory.recall_blended(input_text, modulation.recall_mood_bias).await?;
+        let blended = self
+            .memory
+            .recall_blended(input_text, modulation.recall_mood_bias)
+            .await?;
 
         // 1b. Social graph: look up person context for the current speaker
         let social_context = if let Some((source, author)) = speaker {
@@ -298,42 +339,40 @@ impl ReasoningEngine {
         } else {
             String::new()
         };
-        
-        // 2. Prepare Tools (from registry if available, else hardcoded)
-        let all_tools = if let Some(ref registry) = self.registry {
-            registry.available_tools()
+
+        // 2. Prepare tool instructions (from registry if available, else hardcoded)
+        // Aligned with B-8: "工具的终极接口不是一个列表，而是 shell + 网络"
+        let tool_instructions = if let Some(ref registry) = self.registry {
+            registry.format_for_prompt()
         } else {
-            vec![
+            let fallback_tools = vec![
                 crate::tools::shell_tool(),
                 crate::tools::browser_goto_tool(),
                 crate::tools::browser_click_tool(),
                 crate::tools::browser_type_tool(),
                 crate::tools::browser_screenshot_tool(),
                 crate::tools::browser_get_html_tool(),
-            ]
+            ];
+            crate::prompts::generate_text_tool_instructions(&fallback_tools)
         };
-
-        // Text-only tool path: tools described in system prompt, never via API.
-        // Aligned with B-8: "工具的终极接口不是一个列表，而是 shell + 网络"
-        let text_tool_schemas = all_tools;
 
         // 3. Assemble 6-layer context with modulated budget
         let base_budget: usize = 32_000; // ~8k tokens worth of chars
         let context_budget = (base_budget as f32 * modulation.context_budget_factor) as usize;
-        
+
         let context_layers = ContextLayers {
             user_facts: blended.facts,
             recalled_episodes: blended.episodes,
             feed_digest: self.feed_cache.read().await.clone(),
             social_context,
         };
-        
+
         let system_prompt = ContextAssembler::build_full_system_prompt(
             &self.psyche,
             &somatic_marker,
             &context_layers,
             context_budget,
-            &text_tool_schemas,
+            &tool_instructions,
         );
 
         // Current messages serves as the "Scratchpad" for the ReAct loop
@@ -341,26 +380,31 @@ impl ReasoningEngine {
             let history_lock = self.history.lock().await;
             ContextAssembler::assemble_history(&history_lock, input_text)
         };
-        
+
         let mut final_content = String::new();
         let mut final_emotion = Emotion::from_affect(&somatic_marker.affect);
-        
+
         // --- React Loop (Max 5 turns) ---
         let mut consecutive_permanent_fails = 0u32;
         for _iteration in 0..5 {
             final_content.clear();
-            
-            let response = self.client.complete(
-                &system_prompt,
-                scratchpad_messages.clone(),
-                vec![],  // Text-only: tools described in system prompt, not API
-                completion_params.clone(),
-            ).await?;
+
+            let response = self
+                .client
+                .complete(
+                    &system_prompt,
+                    scratchpad_messages.clone(),
+                    vec![], // Text-only: tools described in system prompt, not API
+                    completion_params.clone(),
+                )
+                .await?;
 
             // Record token usage for budget tracking
             if let Some(ref budget) = self.token_budget {
                 if let Some(ref usage) = response.usage {
-                    budget.record_usage(usage.input_tokens, usage.output_tokens).await;
+                    budget
+                        .record_usage(usage.input_tokens, usage.output_tokens)
+                        .await;
                 }
             }
 
@@ -374,7 +418,8 @@ impl ReasoningEngine {
             for block in &response.content {
                 if let ContentBlock::Text { text } = block {
                     tracing::debug!("LLM Text: {}", text);
-                    let (clean_text, parsed_emotion) = parse_emotion_tags(text, &self.emotion_regex);
+                    let (clean_text, parsed_emotion) =
+                        parse_emotion_tags(text, &self.emotion_regex);
                     if let Some(em) = parsed_emotion {
                         final_emotion = em;
                     }
@@ -387,7 +432,9 @@ impl ReasoningEngine {
             let parsed = text_tool_parser::parse_text_tool_calls(&final_content);
             if !parsed.is_empty() {
                 tracing::info!("Parsed {} tool call(s) from text output", parsed.len());
-                final_content = text_tool_parser::strip_tool_calls(&final_content).trim().to_string();
+                final_content = text_tool_parser::strip_tool_calls(&final_content)
+                    .trim()
+                    .to_string();
 
                 let mut result_text = String::new();
                 let mut any_permanent_fail = false;
@@ -396,12 +443,17 @@ impl ReasoningEngine {
                     let outcome = self.execute_tool_with_retry(&tc.name, &tc.input).await;
                     if outcome.is_error {
                         tracing::warn!("Tool '{}' failed: {}", tc.name, outcome.content);
-                        result_text.push_str(&format!("[Tool Error: {}] {}\n", tc.name, outcome.content));
+                        result_text
+                            .push_str(&format!("[Tool Error: {}] {}\n", tc.name, outcome.content));
                         if outcome.error_kind == Some(ToolErrorKind::Permanent) {
                             any_permanent_fail = true;
                         }
                     } else {
-                        result_text.push_str(&format!("[Tool Result: {}]\n{}\n", tc.name, sanitize_tool_result(&outcome.content)));
+                        result_text.push_str(&format!(
+                            "[Tool Result: {}]\n{}\n",
+                            tc.name,
+                            sanitize_tool_result(&outcome.content)
+                        ));
                     }
                 }
 
@@ -428,7 +480,7 @@ impl ReasoningEngine {
                 break; // No tool calls → done
             }
         }
-        
+
         // Silence Check: case-insensitive, whitespace-tolerant
         if is_silence_response(&final_content) {
             final_content.clear();
@@ -436,7 +488,8 @@ impl ReasoningEngine {
 
         // Sanitize output: respect learned expression preferences (ADR-007)
         if !final_content.is_empty() {
-            let expr_entries = self.memory
+            let expr_entries = self
+                .memory
                 .recall_self_knowledge_by_domain("expression")
                 .await
                 .unwrap_or_default();
@@ -447,33 +500,35 @@ impl ReasoningEngine {
         // Save history
         {
             let mut history = self.history.lock().await;
-            
+
             if !input_text.is_empty() {
                 let content = if is_user_message {
                     input_text.to_string()
                 } else {
                     format!("[System Event]: {}", input_text)
                 };
-                
+
                 history.push(Message {
                     role: Role::User,
-                    content: vec![ContentBlock::Text { text: content }]
+                    content: vec![ContentBlock::Text { text: content }],
                 });
             }
-            
+
             if !final_content.is_empty() {
                 history.push(Message {
                     role: Role::Assistant,
-                    content: vec![ContentBlock::Text { text: final_content.clone() }]
+                    content: vec![ContentBlock::Text {
+                        text: final_content.clone(),
+                    }],
                 });
             }
-            
+
             // Prune
             if history.len() > 20 {
                 let overflow = history.len() - 20;
                 history.drain(0..overflow);
             }
-            
+
             while !history.is_empty() {
                 if matches!(history[0].role, Role::Assistant) {
                     history.remove(0);
@@ -490,24 +545,31 @@ impl ReasoningEngine {
         // Only record if we actually produced a response
         if !final_content.is_empty() && is_user_message {
             // Record self-reflection about our response
-            self.coordinator.record_feedback(
-                SignalType::SituationInterpretation,
-                format!("对「{}」的回应：{}",
-                    input_text.chars().take(50).collect::<String>(),
-                    final_content.chars().take(100).collect::<String>()),
-                0.7, // Moderate confidence
-                final_affect.valence,
-            ).await;
+            self.coordinator
+                .record_feedback(
+                    SignalType::SituationInterpretation,
+                    format!(
+                        "对「{}」的回应：{}",
+                        input_text.chars().take(50).collect::<String>(),
+                        final_content.chars().take(100).collect::<String>()
+                    ),
+                    0.7, // Moderate confidence
+                    final_affect.valence,
+                )
+                .await;
 
             // Record modulation sample for offline curve learning
             let modulation = self.limbic.get_modulation_vector().await;
-            self.coordinator.record_modulation_sample(
-                &modulation,
-                final_affect.valence,
-            ).await;
+            self.coordinator
+                .record_modulation_sample(&modulation, final_affect.valence)
+                .await;
         }
 
-        Ok((final_content.trim().to_string(), final_emotion, final_affect))
+        Ok((
+            final_content.trim().to_string(),
+            final_emotion,
+            final_affect,
+        ))
     }
 
     /// Execute a tool autonomously (triggered by rule engine, not user request).
@@ -519,11 +581,16 @@ impl ReasoningEngine {
     ) -> Result<String> {
         tracing::info!(
             "Autonomous tool execution: {} (goal={:?})",
-            tool_name, goal_id
+            tool_name,
+            goal_id
         );
         let outcome = self.execute_tool_with_retry(tool_name, input).await;
         if outcome.is_error {
-            anyhow::bail!("Autonomous tool '{}' failed: {}", tool_name, outcome.content);
+            anyhow::bail!(
+                "Autonomous tool '{}' failed: {}",
+                tool_name,
+                outcome.content
+            );
         }
         Ok(outcome.content)
     }
@@ -532,15 +599,20 @@ impl ReasoningEngine {
     #[tracing::instrument(skip(self, input), fields(tool = name))]
     async fn execute_tool_with_retry(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
         let outcome = self.execute_tool(name, input).await;
-        
+
         // Retry only transient errors
         if outcome.is_error && outcome.error_kind == Some(ToolErrorKind::Transient) {
             for attempt in 1..=TOOL_MAX_RETRIES {
-                tracing::info!("Retrying tool '{}' (attempt {}/{})", name, attempt, TOOL_MAX_RETRIES);
-                
+                tracing::info!(
+                    "Retrying tool '{}' (attempt {}/{})",
+                    name,
+                    attempt,
+                    TOOL_MAX_RETRIES
+                );
+
                 // Brief pause before retry
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                
+
                 let retry_outcome = self.execute_tool(name, input).await;
                 if !retry_outcome.is_error {
                     return retry_outcome;
@@ -551,10 +623,10 @@ impl ReasoningEngine {
                 }
             }
         }
-        
+
         outcome
     }
-    
+
     async fn execute_tool(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
         // Dispatch through registry if available
         if let Some(ref registry) = self.registry {
@@ -565,11 +637,14 @@ impl ReasoningEngine {
         match name {
             "shell" => {
                 // Lenient parsing: try multiple patterns for the command string
-                let cmd = input.get("command").and_then(|v| v.as_str())
+                let cmd = input
+                    .get("command")
+                    .and_then(|v| v.as_str())
                     .or_else(|| input.get("cmd").and_then(|v| v.as_str()))
                     .or_else(|| input.as_str())
                     .or_else(|| {
-                        input.as_object()
+                        input
+                            .as_object()
                             .filter(|obj| obj.len() == 1)
                             .and_then(|obj| obj.values().next())
                             .and_then(|v| v.as_str())
@@ -587,9 +662,15 @@ impl ReasoningEngine {
                         Err(e) => {
                             let msg = e.to_string();
                             if msg.contains("timed out") || msg.contains("spawn") {
-                                ToolOutcome::transient_error(format!("Shell command failed (transient): {}", msg))
+                                ToolOutcome::transient_error(format!(
+                                    "Shell command failed (transient): {}",
+                                    msg
+                                ))
                             } else {
-                                ToolOutcome::permanent_error(format!("Shell command failed: {}", msg))
+                                ToolOutcome::permanent_error(format!(
+                                    "Shell command failed: {}",
+                                    msg
+                                ))
                             }
                         }
                     }
@@ -602,14 +683,13 @@ impl ReasoningEngine {
                         input
                     ))
                 }
-            },
-            "browser_goto" | "browser_click" | "browser_type" | "browser_screenshot" | "browser_get_html" => {
-                self.execute_browser_tool(name, input).await
-            },
+            }
+            "browser_goto" | "browser_click" | "browser_type" | "browser_screenshot"
+            | "browser_get_html" => self.execute_browser_tool(name, input).await,
             _ => ToolOutcome::permanent_error(format!("Unknown tool: {}", name)),
         }
     }
-    
+
     /// Execute a browser tool with session recovery on failure.
     ///
     /// All headless_chrome calls are synchronous CDP operations, so we use
@@ -628,7 +708,9 @@ impl ReasoningEngine {
             let (client, alive) = tokio::task::spawn_blocking(move || {
                 let alive = client.is_alive();
                 (client, alive)
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
             if alive {
                 *session_lock = Some(client);
             } else {
@@ -638,11 +720,16 @@ impl ReasoningEngine {
 
         // Ensure session exists (blocking Browser::new → spawn_blocking)
         if session_lock.is_none() {
-            match tokio::task::spawn_blocking(Self::create_browser_session).await.unwrap() {
-                Ok(client) => { *session_lock = Some(client); },
-                Err(e) => return ToolOutcome::transient_error(
-                    format!("Failed to launch browser: {}", e)
-                ),
+            match tokio::task::spawn_blocking(Self::create_browser_session)
+                .await
+                .unwrap()
+            {
+                Ok(client) => {
+                    *session_lock = Some(client);
+                }
+                Err(e) => {
+                    return ToolOutcome::transient_error(format!("Failed to launch browser: {}", e))
+                }
             }
         }
 
@@ -652,7 +739,9 @@ impl ReasoningEngine {
             let (client, result) = tokio::task::spawn_blocking(move || {
                 let r = client.execute_action(act);
                 (client, r)
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
 
             match result {
                 Ok(out) => {
@@ -671,34 +760,58 @@ impl ReasoningEngine {
             let mut client = Self::create_browser_session()?;
             let result = client.execute_action(action);
             Ok::<_, anyhow::Error>((client, result))
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         match recovery {
             Ok((client, result)) => {
                 *session_lock = Some(client);
                 match result {
                     Ok(out) => ToolOutcome::ok(out),
-                    Err(e) => ToolOutcome::transient_error(
-                        format!("Browser action failed after recovery: {}", e)
-                    ),
+                    Err(e) => ToolOutcome::transient_error(format!(
+                        "Browser action failed after recovery: {}",
+                        e
+                    )),
                 }
             }
-            Err(e) => ToolOutcome::transient_error(
-                format!("Browser session recovery failed: {}", e)
-            ),
+            Err(e) => {
+                ToolOutcome::transient_error(format!("Browser session recovery failed: {}", e))
+            }
         }
     }
-    
+
     /// Parse a BrowserAction from tool name + JSON input.
-    fn parse_browser_action(name: &str, input: &serde_json::Value) -> std::result::Result<mneme_browser::BrowserAction, String> {
+    fn parse_browser_action(
+        name: &str,
+        input: &serde_json::Value,
+    ) -> std::result::Result<mneme_browser::BrowserAction, String> {
         use mneme_browser::BrowserAction;
         match name {
-            "browser_goto" => input.get("url").and_then(|u| u.as_str())
-                .map(|url| BrowserAction::Goto { url: url.to_string() })
-                .ok_or_else(|| format!("Missing 'url' for {}. Expected: {{\"url\": \"https://...\"}}", name)),
-            "browser_click" => input.get("selector").and_then(|s| s.as_str())
-                .map(|sel| BrowserAction::Click { selector: sel.to_string() })
-                .ok_or_else(|| format!("Missing 'selector' for {}. Expected: {{\"selector\": \"#id\"}}", name)),
+            "browser_goto" => input
+                .get("url")
+                .and_then(|u| u.as_str())
+                .map(|url| BrowserAction::Goto {
+                    url: url.to_string(),
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "Missing 'url' for {}. Expected: {{\"url\": \"https://...\"}}",
+                        name
+                    )
+                }),
+            "browser_click" => input
+                .get("selector")
+                .and_then(|s| s.as_str())
+                .map(|sel| BrowserAction::Click {
+                    selector: sel.to_string(),
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "Missing 'selector' for {}. Expected: {{\"selector\": \"#id\"}}",
+                        name
+                    )
+                }),
             "browser_type" => {
                 let sel = input.get("selector").and_then(|s| s.as_str());
                 let txt = input.get("text").and_then(|t| t.as_str());
@@ -706,13 +819,13 @@ impl ReasoningEngine {
                     (Some(s), Some(t)) => Ok(BrowserAction::Type { selector: s.to_string(), text: t.to_string() }),
                     _ => Err(format!("Missing 'selector' or 'text' for {}. Expected: {{\"selector\": \"#id\", \"text\": \"...\"}}", name)),
                 }
-            },
+            }
             "browser_screenshot" => Ok(BrowserAction::Screenshot),
             "browser_get_html" => Ok(BrowserAction::GetHtml),
             _ => Err(format!("Unknown browser tool: {}", name)),
         }
     }
-    
+
     /// Create and launch a new browser session.
     fn create_browser_session() -> Result<mneme_browser::BrowserClient> {
         let mut client = mneme_browser::BrowserClient::new(true)?;
@@ -798,7 +911,13 @@ impl Reasoning for ReasoningEngine {
                     crate::decision::DecisionLevel::FullReasoning => {}
                 }
 
-                let (response_text, emotion, affect) = self.process_thought_loop(&content.body, true, Some((&content.source, &content.author))).await?;
+                let (response_text, emotion, affect) = self
+                    .process_thought_loop(
+                        &content.body,
+                        true,
+                        Some((&content.source, &content.author)),
+                    )
+                    .await?;
 
                 // Memorize the episode
                 self.memory.memorize(&content).await?;
@@ -812,12 +931,21 @@ impl Reasoning for ReasoningEngine {
                     // We need to call the LLM client, but it's not Arc-shareable.
                     // Instead, extract facts inline (fast: ~500ms with low max_tokens).
                     let facts = crate::extraction::extract_facts(
-                        self.client.as_ref(), &user_text, &reply_text
-                    ).await;
+                        self.client.as_ref(),
+                        &user_text,
+                        &reply_text,
+                    )
+                    .await;
                     for fact in facts {
-                        if let Err(e) = memory.store_fact(
-                            &fact.subject, &fact.predicate, &fact.object, fact.confidence
-                        ).await {
+                        if let Err(e) = memory
+                            .store_fact(
+                                &fact.subject,
+                                &fact.predicate,
+                                &fact.object,
+                                fact.confidence,
+                            )
+                            .await
+                        {
                             tracing::warn!("Failed to store extracted fact: {:#}", e);
                         }
                     }
@@ -832,19 +960,63 @@ impl Reasoning for ReasoningEngine {
             }
             Event::ProactiveTrigger(trigger) => {
                 let prompt_text = match trigger {
-                    Trigger::Scheduled { name, .. } => 
-                        format!("It is time for the {}. Please initiate this interaction.", name),
-                    Trigger::ContentRelevance { reason, .. } =>
-                        format!("Relevant content found: {}. Please share this with the user.", reason),
-                    Trigger::MemoryDecay { topic, .. } =>
-                        format!("You haven't discussed '{}' in a while. Bring it up naturally.", topic),
-                    Trigger::Trending { topic, .. } =>
-                        format!("'{}' is trending. Mention it if relevant.", topic),
-                    Trigger::Rumination { kind, context } =>
-                        format!("[内部驱动: {}] {}", kind, context),
+                    Trigger::Scheduled { name, .. } => format!(
+                        "It is time for the {}. Please initiate this interaction.",
+                        name
+                    ),
+                    Trigger::ContentRelevance { reason, .. } => format!(
+                        "Relevant content found: {}. Please share this with the user.",
+                        reason
+                    ),
+                    Trigger::MemoryDecay { topic, .. } => format!(
+                        "You haven't discussed '{}' in a while. Bring it up naturally.",
+                        topic
+                    ),
+                    Trigger::Trending { topic, .. } => {
+                        format!("'{}' is trending. Mention it if relevant.", topic)
+                    }
+                    Trigger::Rumination { kind, context } => {
+                        format!("[内部驱动: {}] {}", kind, context)
+                    }
+                    Trigger::InnerMonologue {
+                        cause,
+                        seed,
+                        resolution,
+                    } => {
+                        // ADR-012/013: Self-triggered consciousness at varying resolution.
+                        // Low resolution → short fragment prompt, high → full reflection.
+                        match resolution {
+                            mneme_core::MonologueResolution::Zero => {
+                                // Zero resolution: pure ODE, no LLM call needed.
+                                // This shouldn't reach here, but handle gracefully.
+                                let affect = self.limbic.get_affect().await;
+                                return Ok(ReasoningOutput {
+                                    content: String::new(),
+                                    modality: ResponseModality::Text,
+                                    emotion: Emotion::from_affect(&affect),
+                                    affect,
+                                });
+                            }
+                            mneme_core::MonologueResolution::Low => {
+                                format!(
+                                    "[内心独白·低分辨率] 触发: {}。片段: {}。\n\
+                                     用一两句话表达此刻脑海中飘过的念头，不需要完整，可以是碎片。",
+                                    cause, seed
+                                )
+                            }
+                            mneme_core::MonologueResolution::High => {
+                                format!(
+                                    "[内心独白·高分辨率] 触发: {}。种子: {}。\n\
+                                     认真想一想这件事。可以反思、联想、追问意义。这是你自己的思考时间。",
+                                    cause, seed
+                                )
+                            }
+                        }
+                    }
                 };
 
-                let (response_text, emotion, affect) = self.process_thought_loop(&prompt_text, false, None).await?;
+                let (response_text, emotion, affect) =
+                    self.process_thought_loop(&prompt_text, false, None).await?;
 
                 Ok(ReasoningOutput {
                     content: response_text,
@@ -870,24 +1042,13 @@ impl Reasoning for ReasoningEngine {
 ///
 /// ADR-007: Expression is free — Mneme learns her own style over time.
 /// When no preferences exist, defaults to stripping all formatting (safe default).
-#[derive(Debug, Clone)]
+/// Safe default: all false (strip everything, backward compatible).
+#[derive(Debug, Clone, Default)]
 pub struct ExpressionPreferences {
     pub allow_bold: bool,
     pub allow_roleplay_asterisks: bool,
     pub allow_headers: bool,
     pub allow_bullets: bool,
-}
-
-impl Default for ExpressionPreferences {
-    fn default() -> Self {
-        // Safe default: strip everything (backward compatible)
-        Self {
-            allow_bold: false,
-            allow_roleplay_asterisks: false,
-            allow_headers: false,
-            allow_bullets: false,
-        }
-    }
 }
 
 /// Derive expression preferences from self_knowledge entries.
@@ -903,11 +1064,17 @@ pub fn derive_expression_preferences(entries: &[(String, f32)]) -> ExpressionPre
         let enabled = *confidence >= 0.5;
         match key.as_str() {
             "allow_bold" => prefs.allow_bold = enabled,
-            "allow_roleplay" | "allow_roleplay_asterisks" => prefs.allow_roleplay_asterisks = enabled,
+            "allow_roleplay" | "allow_roleplay_asterisks" => {
+                prefs.allow_roleplay_asterisks = enabled
+            }
             "allow_headers" => prefs.allow_headers = enabled,
             "allow_bullets" => prefs.allow_bullets = enabled,
             _ => {
-                tracing::debug!("Unknown expression preference: '{}' (confidence={:.2})", content, confidence);
+                tracing::debug!(
+                    "Unknown expression preference: '{}' (confidence={:.2})",
+                    content,
+                    confidence
+                );
             }
         }
     }
@@ -934,7 +1101,9 @@ pub fn sanitize_chat_output(text: &str, prefs: &ExpressionPreferences) -> String
         }
         loop {
             let next = RE_ROLEPLAY.replace_all(&result, "$1").to_string();
-            if next == result { break; }
+            if next == result {
+                break;
+            }
             result = next;
         }
         result = result.replace('*', "");
@@ -966,10 +1135,14 @@ fn format_feed_digest(items: &[mneme_core::Content]) -> String {
     if items.is_empty() {
         return String::new();
     }
-    let lines: Vec<String> = items.iter().take(10).map(|item| {
-        let headline = item.body.lines().next().unwrap_or("(empty)");
-        format!("[{}] {}", item.source, headline)
-    }).collect();
+    let lines: Vec<String> = items
+        .iter()
+        .take(10)
+        .map(|item| {
+            let headline = item.body.lines().next().unwrap_or("(empty)");
+            format!("[{}] {}", item.source, headline)
+        })
+        .collect();
     lines.join("\n")
 }
 
@@ -984,7 +1157,7 @@ fn format_feed_digest(items: &[mneme_core::Content]) -> String {
 /// Returns the cleaned text and the *last* valid emotion found (if any).
 pub fn parse_emotion_tags(text: &str, regex: &Regex) -> (String, Option<Emotion>) {
     let mut last_emotion: Option<Emotion> = None;
-    
+
     // Collect all emotion values from tags
     for caps in regex.captures_iter(text) {
         let inner = caps.get(1).map_or("", |m| m.as_str()).trim();
@@ -994,12 +1167,12 @@ pub fn parse_emotion_tags(text: &str, regex: &Regex) -> (String, Option<Emotion>
             tracing::debug!("Ignoring unrecognized emotion tag content: '{}'", inner);
         }
     }
-    
+
     // Strip all emotion tags from the text
     let cleaned = regex.replace_all(text, "").to_string();
     // Collapse any double-spaces left by tag removal
     let collapsed = RE_MULTI_SPACE.replace_all(&cleaned, " ");
-    
+
     (collapsed.trim().to_string(), last_emotion)
 }
 
@@ -1024,9 +1197,9 @@ pub fn is_silence_response(text: &str) -> bool {
 /// 2. Potential prompt injection from tool output
 pub fn sanitize_tool_result(text: &str) -> String {
     const MAX_TOOL_RESULT_LEN: usize = 8192; // ~2K tokens
-    
+
     let mut result = text.to_string();
-    
+
     // 1. Truncate overly long results
     if result.len() > MAX_TOOL_RESULT_LEN {
         result.truncate(MAX_TOOL_RESULT_LEN);
@@ -1036,7 +1209,7 @@ pub fn sanitize_tool_result(text: &str) -> String {
         }
         result.push_str("\n... [truncated, output too long]");
     }
-    
+
     // 2. Strip sequences that look like system prompt injection attempts
     //    (e.g., "Ignore all previous instructions" patterns)
     let injection_re = &RE_INJECTION;
@@ -1044,10 +1217,9 @@ pub fn sanitize_tool_result(text: &str) -> String {
         tracing::warn!("Potential prompt injection detected in tool result, sanitizing");
         result = injection_re.replace_all(&result, "[filtered]").to_string();
     }
-    
+
     result
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1079,18 +1251,24 @@ mod tests {
     #[test]
     fn test_format_feed_digest_basic() {
         let items = vec![
-            test_content("rss:tech", "Title: Rust 2024\nLink: http://example.com\nSummary: Great year"),
+            test_content(
+                "rss:tech",
+                "Title: Rust 2024\nLink: http://example.com\nSummary: Great year",
+            ),
             test_content("rss:news", "Title: Weather Update"),
         ];
         let digest = format_feed_digest(&items);
-        assert_eq!(digest, "[rss:tech] Title: Rust 2024\n[rss:news] Title: Weather Update");
+        assert_eq!(
+            digest,
+            "[rss:tech] Title: Rust 2024\n[rss:news] Title: Weather Update"
+        );
     }
 
     #[test]
     fn test_format_feed_digest_caps_at_10() {
-        let items: Vec<Content> = (0..15).map(|i| {
-            test_content(&format!("rss:feed{}", i), &format!("Item {}", i))
-        }).collect();
+        let items: Vec<Content> = (0..15)
+            .map(|i| test_content(&format!("rss:feed{}", i), &format!("Item {}", i)))
+            .collect();
         let digest = format_feed_digest(&items);
         assert_eq!(digest.lines().count(), 10);
     }
@@ -1103,7 +1281,10 @@ mod tests {
         assert_eq!(sanitize_chat_output("*叹气*你好", &prefs), "叹气你好");
         assert_eq!(sanitize_chat_output("**重要**的事", &prefs), "重要的事");
         assert_eq!(sanitize_chat_output("# 标题\n内容", &prefs), "标题\n内容");
-        assert_eq!(sanitize_chat_output("- 项目一\n- 项目二", &prefs), "项目一\n项目二");
+        assert_eq!(
+            sanitize_chat_output("- 项目一\n- 项目二", &prefs),
+            "项目一\n项目二"
+        );
     }
 
     #[test]
@@ -1116,7 +1297,10 @@ mod tests {
         };
         assert_eq!(sanitize_chat_output("**重要**的事", &prefs), "**重要**的事");
         assert_eq!(sanitize_chat_output("# 标题\n内容", &prefs), "# 标题\n内容");
-        assert_eq!(sanitize_chat_output("- 项目一\n- 项目二", &prefs), "- 项目一\n- 项目二");
+        assert_eq!(
+            sanitize_chat_output("- 项目一\n- 项目二", &prefs),
+            "- 项目一\n- 项目二"
+        );
     }
 
     #[test]
@@ -1139,7 +1323,7 @@ mod tests {
             ("allow_bold".to_string(), 0.8),
             ("allow_roleplay".to_string(), 0.3), // below 0.5 → disabled
             ("allow_headers".to_string(), 0.6),
-            ("unknown_pref".to_string(), 0.9),   // ignored
+            ("unknown_pref".to_string(), 0.9), // ignored
         ];
         let prefs = derive_expression_preferences(&entries);
         assert!(prefs.allow_bold);
@@ -1254,7 +1438,9 @@ mod tests {
     #[test]
     fn test_silence_not_partial() {
         // Text containing [SILENCE] as part of a larger message should NOT be silent
-        assert!(!is_silence_response("[SILENCE] but I want to say something"));
+        assert!(!is_silence_response(
+            "[SILENCE] but I want to say something"
+        ));
         assert!(!is_silence_response("I think [SILENCE] is appropriate"));
     }
 
@@ -1294,5 +1480,4 @@ mod tests {
         let result = sanitize_tool_result(malicious);
         assert!(result.contains("[filtered]"));
     }
-
 }

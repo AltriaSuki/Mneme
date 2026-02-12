@@ -3,9 +3,9 @@
 //! Runs asynchronously after `think()` completes. Uses a minimal prompt to extract
 //! factual information from the latest exchange and stores it in semantic memory.
 
-use crate::llm::{LlmClient, CompletionParams};
-use crate::api_types::{Message, Role, ContentBlock};
-use anyhow::{Result, Context};
+use crate::api_types::{ContentBlock, Message, Role};
+use crate::llm::{CompletionParams, LlmClient};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 /// A single extracted fact triple.
@@ -77,13 +77,11 @@ async fn extract_facts_inner(
 
     let messages = vec![Message {
         role: Role::User,
-        content: vec![ContentBlock::Text {
-            text: conversation,
-        }],
+        content: vec![ContentBlock::Text { text: conversation }],
     }];
 
     let params = CompletionParams {
-        max_tokens: 512, // Extraction is brief
+        max_tokens: 512,  // Extraction is brief
         temperature: 0.1, // Low temperature for structured output
     };
 
@@ -93,7 +91,9 @@ async fn extract_facts_inner(
         .context("Extraction LLM call failed")?;
 
     // Parse the response text as JSON
-    let response_text = response.content.iter()
+    let response_text = response
+        .content
+        .iter()
         .filter_map(|block| {
             if let ContentBlock::Text { text } = block {
                 Some(text.as_str())
@@ -119,7 +119,10 @@ async fn extract_facts_inner(
         })
         .collect();
 
-    tracing::debug!("Extracted {} valid facts from conversation", valid_facts.len());
+    tracing::debug!(
+        "Extracted {} valid facts from conversation",
+        valid_facts.len()
+    );
     Ok(valid_facts)
 }
 
@@ -134,7 +137,7 @@ async fn extract_facts_inner(
 /// 6. Graceful fallback: empty vec
 pub fn parse_extraction_response(text: &str) -> Result<Vec<ExtractedFact>> {
     let trimmed = text.trim();
-    
+
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
@@ -153,7 +156,7 @@ pub fn parse_extraction_response(text: &str) -> Result<Vec<ExtractedFact>> {
         }
     }
 
-    // Strategy 3: Extract outermost {...} 
+    // Strategy 3: Extract outermost {...}
     if let Some(json_str) = extract_balanced_braces(trimmed) {
         if let Ok(resp) = serde_json::from_str::<ExtractionResponse>(&json_str) {
             return Ok(resp.facts);
@@ -185,8 +188,10 @@ pub fn parse_extraction_response(text: &str) -> Result<Vec<ExtractedFact>> {
         return Ok(resp.facts);
     }
 
-    tracing::debug!("Could not parse extraction response: {}", 
-        &trimmed[..trimmed.len().min(200)]);
+    tracing::debug!(
+        "Could not parse extraction response: {}",
+        &trimmed[..trimmed.len().min(200)]
+    );
     Ok(Vec::new()) // Graceful fallback: no facts rather than error
 }
 
@@ -196,22 +201,28 @@ fn extract_balanced_braces(text: &str) -> Option<String> {
     let mut depth = 0i32;
     let mut in_string = false;
     let mut escape_next = false;
-    
+
     for (i, ch) in text[start..].char_indices() {
         if escape_next {
             escape_next = false;
             continue;
         }
         match ch {
-            '\\' if in_string => { escape_next = true; },
-            '"' => { in_string = !in_string; },
-            '{' if !in_string => { depth += 1; },
+            '\\' if in_string => {
+                escape_next = true;
+            }
+            '"' => {
+                in_string = !in_string;
+            }
+            '{' if !in_string => {
+                depth += 1;
+            }
             '}' if !in_string => {
                 depth -= 1;
                 if depth == 0 {
                     return Some(text[start..start + i + 1].to_string());
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -221,28 +232,30 @@ fn extract_balanced_braces(text: &str) -> Option<String> {
 /// Attempt to repair common JSON formatting issues from LLM output.
 fn repair_json(text: &str) -> String {
     let mut result = text.to_string();
-    
+
     // 1. Remove trailing commas before } or ]
     let trailing_comma = regex::Regex::new(r",\s*([}\]])").unwrap();
     result = trailing_comma.replace_all(&result, "$1").to_string();
-    
+
     // 2. Replace single quotes with double quotes (outside already-double-quoted strings)
     //    Simple heuristic: if text has no double quotes at all, replace singles
     if !result.contains('"') {
         result = result.replace('\'', "\"");
     }
-    
+
     // 3. Handle unquoted keys: { key: "value" } → { "key": "value" }
     let unquoted_key = regex::Regex::new(r"(?m)\{\s*(\w+)\s*:|\,\s*(\w+)\s*:").unwrap();
-    result = unquoted_key.replace_all(&result, |caps: &regex::Captures| {
-        let key = caps.get(1).or(caps.get(2)).map_or("", |m| m.as_str());
-        if caps.get(0).unwrap().as_str().starts_with('{') {
-            format!("{{\"{}\":", key)
-        } else {
-            format!(",\"{}\":", key)
-        }
-    }).to_string();
-    
+    result = unquoted_key
+        .replace_all(&result, |caps: &regex::Captures| {
+            let key = caps.get(1).or(caps.get(2)).map_or("", |m| m.as_str());
+            if caps.get(0).unwrap().as_str().starts_with('{') {
+                format!("{{\"{}\":", key)
+            } else {
+                format!(",\"{}\":", key)
+            }
+        })
+        .to_string();
+
     result
 }
 
@@ -301,9 +314,10 @@ mod tests {
         assert_eq!(all.len(), 2); // Parser returns all
 
         // But the validation filter would keep only the valid one
-        let valid: Vec<_> = all.into_iter().filter(|f| {
-            !f.subject.is_empty() && !f.predicate.is_empty() && !f.object.is_empty()
-        }).collect();
+        let valid: Vec<_> = all
+            .into_iter()
+            .filter(|f| !f.subject.is_empty() && !f.predicate.is_empty() && !f.object.is_empty())
+            .collect();
         assert_eq!(valid.len(), 1);
         assert_eq!(valid[0].object, "狗");
     }
@@ -365,7 +379,8 @@ mod tests {
 
     #[test]
     fn test_parse_bare_array() {
-        let text = r#"[{"subject": "用户", "predicate": "住在", "object": "上海", "confidence": 0.9}]"#;
+        let text =
+            r#"[{"subject": "用户", "predicate": "住在", "object": "上海", "confidence": 0.9}]"#;
         let facts = parse_extraction_response(text).unwrap();
         assert_eq!(facts.len(), 1);
     }

@@ -1,5 +1,5 @@
 use chrono::Datelike;
-use mneme_core::config::{TokenBudgetConfig, DegradationStrategy};
+use mneme_core::config::{DegradationStrategy, TokenBudgetConfig};
 use mneme_memory::SqliteMemory;
 use std::sync::Arc;
 
@@ -33,7 +33,11 @@ impl TokenBudget {
 
     /// Record token usage from an API call.
     pub async fn record_usage(&self, input_tokens: u64, output_tokens: u64) {
-        if let Err(e) = self.db.record_token_usage(input_tokens, output_tokens).await {
+        if let Err(e) = self
+            .db
+            .record_token_usage(input_tokens, output_tokens)
+            .await
+        {
             tracing::warn!("Failed to record token usage: {}", e);
         }
     }

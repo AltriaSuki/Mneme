@@ -3,10 +3,10 @@
 //! Dynamically adjusts tick and trigger intervals based on organism state,
 //! lifecycle, active goals, and time of day.
 
-use std::time::Duration;
 use chrono::Timelike;
 use mneme_core::OrganismState;
 use mneme_memory::LifecycleState;
+use std::time::Duration;
 
 /// State-aware scheduler that computes dynamic intervals.
 pub struct PresenceScheduler {
@@ -16,15 +16,14 @@ pub struct PresenceScheduler {
 
 impl PresenceScheduler {
     pub fn new(base_tick: Duration, base_trigger: Duration) -> Self {
-        Self { base_tick, base_trigger }
+        Self {
+            base_tick,
+            base_trigger,
+        }
     }
 
     /// Compute the next tick interval based on state and lifecycle.
-    pub fn next_tick_interval(
-        &self,
-        state: &OrganismState,
-        lifecycle: LifecycleState,
-    ) -> Duration {
+    pub fn next_tick_interval(&self, state: &OrganismState, lifecycle: LifecycleState) -> Duration {
         let base = self.base_tick.as_secs_f64();
 
         let factor = match lifecycle {
@@ -45,11 +44,7 @@ impl PresenceScheduler {
     }
 
     /// Compute the next trigger evaluation interval.
-    pub fn next_trigger_interval(
-        &self,
-        state: &OrganismState,
-        active_goals: usize,
-    ) -> Duration {
+    pub fn next_trigger_interval(&self, state: &OrganismState, active_goals: usize) -> Duration {
         let base = self.base_trigger.as_secs_f64();
         let mut factor = 1.0;
 
@@ -81,10 +76,7 @@ mod tests {
     use super::*;
 
     fn base_scheduler() -> PresenceScheduler {
-        PresenceScheduler::new(
-            Duration::from_secs(10),
-            Duration::from_secs(120),
-        )
+        PresenceScheduler::new(Duration::from_secs(10), Duration::from_secs(120))
     }
 
     #[test]

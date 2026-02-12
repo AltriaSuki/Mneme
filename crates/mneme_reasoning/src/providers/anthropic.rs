@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use reqwest::Client;
 use std::env;
-use futures_util::StreamExt;
 
 #[derive(Debug, Clone)]
 pub struct AnthropicClient {
@@ -10,7 +10,7 @@ pub struct AnthropicClient {
     model: String,
 }
 
-use crate::llm::{LlmClient, CompletionParams};
+use crate::llm::{CompletionParams, LlmClient};
 
 #[async_trait::async_trait]
 impl LlmClient for AnthropicClient {
@@ -22,14 +22,14 @@ impl LlmClient for AnthropicClient {
         tools: Vec<crate::api_types::Tool>,
         params: CompletionParams,
     ) -> Result<crate::api_types::MessagesResponse> {
-        use crate::api_types::{MessagesRequest, ContentBlock, MessagesResponse};
+        use crate::api_types::{ContentBlock, MessagesRequest, MessagesResponse};
 
         if self.api_key == "mock" {
             // Mock delay to simulate network
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             return Ok(MessagesResponse {
                 content: vec![ContentBlock::Text {
-                    text: "(Mock Response) I received your prompt.".to_string()
+                    text: "(Mock Response) I received your prompt.".to_string(),
                 }],
                 stop_reason: Some("end_turn".to_string()),
                 usage: None,
@@ -48,16 +48,24 @@ impl LlmClient for AnthropicClient {
 
         let (system_field, final_messages) = if use_legacy && !system.is_empty() {
             // Legacy mode: prepend system as a user message
-            use crate::api_types::{Message, Role, ContentBlock};
+            use crate::api_types::{ContentBlock, Message, Role};
             let mut msgs = vec![Message {
                 role: Role::User,
-                content: vec![ContentBlock::Text { text: format!("[System]\n{}", system) }],
+                content: vec![ContentBlock::Text {
+                    text: format!("[System]\n{}", system),
+                }],
             }];
             // Add an assistant acknowledgment if first real message is from user
-            if messages.first().map(|m| matches!(m.role, Role::User)).unwrap_or(false) {
+            if messages
+                .first()
+                .map(|m| matches!(m.role, Role::User))
+                .unwrap_or(false)
+            {
                 msgs.push(Message {
                     role: Role::Assistant,
-                    content: vec![ContentBlock::Text { text: "Understood.".to_string() }],
+                    content: vec![ContentBlock::Text {
+                        text: "Understood.".to_string(),
+                    }],
                 });
             }
             msgs.extend(messages);
@@ -76,17 +84,28 @@ impl LlmClient for AnthropicClient {
         };
 
         // Debug: log the request body (always at debug level; full dump with DEBUG_PAYLOAD=true)
-        if env::var("DEBUG_PAYLOAD").map(|v| v == "true").unwrap_or(false) {
-            tracing::info!("Anthropic request: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+        if env::var("DEBUG_PAYLOAD")
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                "Anthropic request: {}",
+                serde_json::to_string_pretty(&request_body).unwrap_or_default()
+            );
         } else if tracing::enabled!(tracing::Level::DEBUG) {
             // At least log tool definitions so we can diagnose schema issues
             let tools_json = serde_json::to_string(&request_body.tools).unwrap_or_default();
-            tracing::debug!("Anthropic tools payload ({}): {}", request_body.tools.len(), tools_json);
+            tracing::debug!(
+                "Anthropic tools payload ({}): {}",
+                request_body.tools.len(),
+                tools_json
+            );
         }
-        
+
         tracing::debug!(
             "LLM params: max_tokens={}, temperature={:.2}",
-            params.max_tokens, params.temperature
+            params.max_tokens,
+            params.temperature
         );
 
         let retry_config = crate::retry::RetryConfig::default();
@@ -103,7 +122,8 @@ impl LlmClient for AnthropicClient {
                 .await
                 .context("Failed to send request to Anthropic")?;
             Ok(resp)
-        }).await?;
+        })
+        .await?;
 
         // Log raw response for debugging tool-use issues (visible with RUST_LOG=debug)
         let resp_text = response.text().await?;
@@ -111,8 +131,8 @@ impl LlmClient for AnthropicClient {
             "Anthropic raw response (first 2000 chars): {}",
             &resp_text[..resp_text.len().min(2000)]
         );
-        let api_response: MessagesResponse = serde_json::from_str(&resp_text)
-            .context("Failed to parse Anthropic response")?;
+        let api_response: MessagesResponse =
+            serde_json::from_str(&resp_text).context("Failed to parse Anthropic response")?;
         Ok(api_response)
     }
 
@@ -128,8 +148,16 @@ impl LlmClient for AnthropicClient {
         if self.api_key == "mock" {
             let (tx, rx) = tokio::sync::mpsc::channel(32);
             tokio::spawn(async move {
-                let _ = tx.send(StreamEvent::TextDelta("(Mock Response) I received your prompt.".into())).await;
-                let _ = tx.send(StreamEvent::Done { stop_reason: Some("end_turn".into()) }).await;
+                let _ = tx
+                    .send(StreamEvent::TextDelta(
+                        "(Mock Response) I received your prompt.".into(),
+                    ))
+                    .await;
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        stop_reason: Some("end_turn".into()),
+                    })
+                    .await;
             });
             return Ok(rx);
         }
@@ -143,15 +171,23 @@ impl LlmClient for AnthropicClient {
             .unwrap_or(false);
 
         let (system_field, final_messages) = if use_legacy && !system.is_empty() {
-            use crate::api_types::{Message, Role, ContentBlock};
+            use crate::api_types::{ContentBlock, Message, Role};
             let mut msgs = vec![Message {
                 role: Role::User,
-                content: vec![ContentBlock::Text { text: format!("[System]\n{}", system) }],
+                content: vec![ContentBlock::Text {
+                    text: format!("[System]\n{}", system),
+                }],
             }];
-            if messages.first().map(|m| matches!(m.role, Role::User)).unwrap_or(false) {
+            if messages
+                .first()
+                .map(|m| matches!(m.role, Role::User))
+                .unwrap_or(false)
+            {
                 msgs.push(Message {
                     role: Role::Assistant,
-                    content: vec![ContentBlock::Text { text: "Understood.".to_string() }],
+                    content: vec![ContentBlock::Text {
+                        text: "Understood.".to_string(),
+                    }],
                 });
             }
             msgs.extend(messages);
@@ -175,7 +211,8 @@ impl LlmClient for AnthropicClient {
         }
         body["temperature"] = serde_json::json!(params.temperature);
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -231,7 +268,9 @@ pub(crate) async fn parse_anthropic_sse<S>(
     tx: &tokio::sync::mpsc::Sender<crate::api_types::StreamEvent>,
 ) -> Result<()>
 where
-    S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send,
+    S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>>
+        + Unpin
+        + Send,
 {
     use crate::api_types::StreamEvent;
 
@@ -268,8 +307,16 @@ where
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_data) {
                         if let Some(cb) = v.get("content_block") {
                             if cb.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                                let id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let id = cb
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let name = cb
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 let _ = tx.send(StreamEvent::ToolUseStart { id, name }).await;
                             }
                         }
@@ -278,16 +325,22 @@ where
                 "content_block_delta" => {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_data) {
                         if let Some(delta) = v.get("delta") {
-                            let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            let delta_type =
+                                delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
                             match delta_type {
                                 "text_delta" => {
                                     if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                                        let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
+                                        let _ =
+                                            tx.send(StreamEvent::TextDelta(text.to_string())).await;
                                     }
                                 }
                                 "input_json_delta" => {
-                                    if let Some(json) = delta.get("partial_json").and_then(|t| t.as_str()) {
-                                        let _ = tx.send(StreamEvent::ToolInputDelta(json.to_string())).await;
+                                    if let Some(json) =
+                                        delta.get("partial_json").and_then(|t| t.as_str())
+                                    {
+                                        let _ = tx
+                                            .send(StreamEvent::ToolInputDelta(json.to_string()))
+                                            .await;
                                     }
                                 }
                                 _ => {}
@@ -305,7 +358,11 @@ where
                     }
                 }
                 "message_stop" => {
-                    let _ = tx.send(StreamEvent::Done { stop_reason: stop_reason.take() }).await;
+                    let _ = tx
+                        .send(StreamEvent::Done {
+                            stop_reason: stop_reason.take(),
+                        })
+                        .await;
                     return Ok(());
                 }
                 "error" => {
@@ -335,16 +392,22 @@ where
                 "content_block_delta" => {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_data) {
                         if let Some(delta) = v.get("delta") {
-                            let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            let delta_type =
+                                delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
                             match delta_type {
                                 "text_delta" => {
                                     if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                                        let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
+                                        let _ =
+                                            tx.send(StreamEvent::TextDelta(text.to_string())).await;
                                     }
                                 }
                                 "input_json_delta" => {
-                                    if let Some(json) = delta.get("partial_json").and_then(|t| t.as_str()) {
-                                        let _ = tx.send(StreamEvent::ToolInputDelta(json.to_string())).await;
+                                    if let Some(json) =
+                                        delta.get("partial_json").and_then(|t| t.as_str())
+                                    {
+                                        let _ = tx
+                                            .send(StreamEvent::ToolInputDelta(json.to_string()))
+                                            .await;
                                     }
                                 }
                                 _ => {}
@@ -362,7 +425,11 @@ where
                     }
                 }
                 "message_stop" => {
-                    let _ = tx.send(StreamEvent::Done { stop_reason: stop_reason.take() }).await;
+                    let _ = tx
+                        .send(StreamEvent::Done {
+                            stop_reason: stop_reason.take(),
+                        })
+                        .await;
                     return Ok(());
                 }
                 "error" => {
@@ -385,7 +452,10 @@ mod tests {
     use crate::api_types::StreamEvent;
 
     /// Helper: create a fake byte stream from raw SSE text
-    fn fake_stream(data: &str) -> impl futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send {
+    fn fake_stream(
+        data: &str,
+    ) -> impl futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send
+    {
         let bytes = bytes::Bytes::from(data.to_string());
         futures_util::stream::iter(vec![Ok(bytes)])
     }
@@ -402,7 +472,9 @@ mod tests {
         while let Some(ev) = rx.recv().await {
             match ev {
                 StreamEvent::TextDelta(t) => texts.push(t),
-                StreamEvent::Done { .. } => { done = true; }
+                StreamEvent::Done { .. } => {
+                    done = true;
+                }
                 _ => {}
             }
         }

@@ -1,8 +1,8 @@
+use crate::scheduler::PresenceScheduler;
 use mneme_core::{Trigger, TriggerEvaluator};
 use mneme_memory::OrganismCoordinator;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::scheduler::PresenceScheduler;
 
 // ============================================================================
 // AgentAction
@@ -66,15 +66,11 @@ impl AgentLoop {
     async fn evaluate_triggers(&self) -> Vec<Trigger> {
         let mut triggers = Vec::new();
         for evaluator in &self.evaluators {
-            match tokio::time::timeout(
-                Duration::from_secs(10),
-                evaluator.evaluate(),
-            ).await {
+            match tokio::time::timeout(Duration::from_secs(10), evaluator.evaluate()).await {
                 Ok(Ok(found)) => triggers.extend(found),
-                Ok(Err(e)) => tracing::error!(
-                    "AgentLoop: evaluator '{}' failed: {}",
-                    evaluator.name(), e
-                ),
+                Ok(Err(e)) => {
+                    tracing::error!("AgentLoop: evaluator '{}' failed: {}", evaluator.name(), e)
+                }
                 Err(_) => tracing::error!(
                     "AgentLoop: evaluator '{}' timed out (10s)",
                     evaluator.name(),
@@ -183,7 +179,9 @@ mod tests {
         async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>> {
             Ok(self.triggers.clone())
         }
-        fn name(&self) -> &'static str { "fixed_test" }
+        fn name(&self) -> &'static str {
+            "fixed_test"
+        }
     }
 
     /// A test evaluator that always fails.
@@ -194,7 +192,9 @@ mod tests {
         async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>> {
             Err(anyhow::anyhow!("test failure"))
         }
-        fn name(&self) -> &'static str { "failing_test" }
+        fn name(&self) -> &'static str {
+            "failing_test"
+        }
     }
 
     /// A test evaluator that hangs forever (for timeout testing).
@@ -206,7 +206,9 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(60)).await;
             Ok(vec![])
         }
-        fn name(&self) -> &'static str { "slow_test" }
+        fn name(&self) -> &'static str {
+            "slow_test"
+        }
     }
 
     fn test_coordinator() -> Arc<OrganismCoordinator> {
@@ -230,8 +232,14 @@ mod tests {
     async fn test_evaluate_triggers_collects_all() {
         let eval = FixedEvaluator {
             triggers: vec![
-                Trigger::Scheduled { name: "morning".into(), schedule: "08:00".into() },
-                Trigger::Scheduled { name: "evening".into(), schedule: "22:00".into() },
+                Trigger::Scheduled {
+                    name: "morning".into(),
+                    schedule: "08:00".into(),
+                },
+                Trigger::Scheduled {
+                    name: "evening".into(),
+                    schedule: "22:00".into(),
+                },
             ],
         };
         let (agent, _rx) = AgentLoop::new(
@@ -247,7 +255,10 @@ mod tests {
     #[tokio::test]
     async fn test_evaluate_triggers_resilient_to_failure() {
         let good = FixedEvaluator {
-            triggers: vec![Trigger::Scheduled { name: "ok".into(), schedule: "08:00".into() }],
+            triggers: vec![Trigger::Scheduled {
+                name: "ok".into(),
+                schedule: "08:00".into(),
+            }],
         };
         let (agent, _rx) = AgentLoop::new(
             test_coordinator(),
@@ -263,7 +274,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_evaluate_triggers_timeout() {
         let good = FixedEvaluator {
-            triggers: vec![Trigger::Scheduled { name: "ok".into(), schedule: "08:00".into() }],
+            triggers: vec![Trigger::Scheduled {
+                name: "ok".into(),
+                schedule: "08:00".into(),
+            }],
         };
         let (agent, _rx) = AgentLoop::new(
             test_coordinator(),
@@ -282,16 +296,13 @@ mod tests {
         let (agent, mut rx) = AgentLoop::new(
             test_coordinator(),
             vec![],
-            Duration::from_millis(50),  // Fast tick
-            Duration::from_secs(600),   // Slow trigger (won't fire in test)
+            Duration::from_millis(50), // Fast tick
+            Duration::from_secs(600),  // Slow trigger (won't fire in test)
         );
         let handle = agent.spawn();
 
         // Should receive a StateUpdate within a reasonable time
-        let action = tokio::time::timeout(
-            Duration::from_millis(200),
-            rx.recv(),
-        ).await;
+        let action = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
         assert!(action.is_ok());
         assert!(matches!(action.unwrap(), Some(AgentAction::StateUpdate)));
 
@@ -301,13 +312,16 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_sends_proactive_trigger() {
         let eval = FixedEvaluator {
-            triggers: vec![Trigger::Scheduled { name: "test".into(), schedule: "08:00".into() }],
+            triggers: vec![Trigger::Scheduled {
+                name: "test".into(),
+                schedule: "08:00".into(),
+            }],
         };
         let (agent, mut rx) = AgentLoop::new(
             test_coordinator(),
             vec![Box::new(eval)],
-            Duration::from_secs(600),   // Slow tick
-            Duration::from_millis(50),  // Fast trigger
+            Duration::from_secs(600),  // Slow tick
+            Duration::from_millis(50), // Fast trigger
         );
         let handle = agent.spawn();
 
@@ -331,7 +345,10 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_stops_when_receiver_dropped() {
         let eval = FixedEvaluator {
-            triggers: vec![Trigger::Scheduled { name: "test".into(), schedule: "08:00".into() }],
+            triggers: vec![Trigger::Scheduled {
+                name: "test".into(),
+                schedule: "08:00".into(),
+            }],
         };
         let (agent, rx) = AgentLoop::new(
             test_coordinator(),
@@ -345,10 +362,10 @@ mod tests {
         drop(rx);
 
         // The loop should exit gracefully
-        let result = tokio::time::timeout(
-            Duration::from_millis(500),
-            handle,
-        ).await;
-        assert!(result.is_ok(), "AgentLoop should stop when receiver is dropped");
+        let result = tokio::time::timeout(Duration::from_millis(500), handle).await;
+        assert!(
+            result.is_ok(),
+            "AgentLoop should stop when receiver is dropped"
+        );
     }
 }

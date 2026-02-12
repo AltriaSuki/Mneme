@@ -1,4 +1,4 @@
-use crate::api_types::{MessagesResponse, StreamEvent, ContentBlock};
+use crate::api_types::{ContentBlock, MessagesResponse, StreamEvent};
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -49,20 +49,19 @@ pub trait LlmClient: Send + Sync {
                         let _ = tx.send(StreamEvent::TextDelta(text)).await;
                     }
                     ContentBlock::ToolUse { id, name, input } => {
-                        let _ = tx.send(StreamEvent::ToolUseStart {
-                            id,
-                            name,
-                        }).await;
-                        let _ = tx.send(StreamEvent::ToolInputDelta(
-                            input.to_string(),
-                        )).await;
+                        let _ = tx.send(StreamEvent::ToolUseStart { id, name }).await;
+                        let _ = tx
+                            .send(StreamEvent::ToolInputDelta(input.to_string()))
+                            .await;
                     }
                     _ => {}
                 }
             }
-            let _ = tx.send(StreamEvent::Done {
-                stop_reason: response.stop_reason,
-            }).await;
+            let _ = tx
+                .send(StreamEvent::Done {
+                    stop_reason: response.stop_reason,
+                })
+                .await;
         });
         Ok(rx)
     }

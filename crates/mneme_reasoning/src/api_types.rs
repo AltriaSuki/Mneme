@@ -17,7 +17,9 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,
@@ -42,7 +44,7 @@ pub struct Tool {
 pub struct ToolInputSchema {
     #[serde(rename = "type")]
     pub schema_type: String, // usually "object"
-    pub properties: Value,   // JSON Schema
+    pub properties: Value, // JSON Schema
     pub required: Vec<String>,
 }
 

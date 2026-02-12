@@ -38,7 +38,7 @@ fn is_retryable_status(status: StatusCode) -> bool {
         || status == StatusCode::BAD_GATEWAY           // 502
         || status == StatusCode::SERVICE_UNAVAILABLE   // 503
         || status == StatusCode::GATEWAY_TIMEOUT       // 504
-        || status == StatusCode::REQUEST_TIMEOUT       // 408
+        || status == StatusCode::REQUEST_TIMEOUT // 408
 }
 
 /// Execute an async HTTP operation with retry logic.
@@ -63,25 +63,28 @@ where
         match operation().await {
             Ok(response) => {
                 let status = response.status();
-                
+
                 if status.is_success() {
                     if attempt > 1 {
                         tracing::info!("{} succeeded on attempt {}", provider_name, attempt);
                     }
                     return Ok(response);
                 }
-                
+
                 if !is_retryable_status(status) {
                     // Non-retryable error (400, 401, 403, etc.) — fail immediately
                     let error_text = response.text().await.unwrap_or_default();
                     anyhow::bail!("{} API Error ({}): {}", provider_name, status, error_text);
                 }
-                
+
                 // Retryable error
                 let error_text = response.text().await.unwrap_or_default();
                 tracing::warn!(
                     "{} returned {} on attempt {}/{}: {}",
-                    provider_name, status, attempt, config.max_attempts, 
+                    provider_name,
+                    status,
+                    attempt,
+                    config.max_attempts,
                     error_text.chars().take(200).collect::<String>()
                 );
                 last_error = Some(format!("{} ({}): {}", provider_name, status, error_text));
@@ -90,7 +93,10 @@ where
                 // Network error (timeout, DNS failure, connection refused)
                 tracing::warn!(
                     "{} network error on attempt {}/{}: {}",
-                    provider_name, attempt, config.max_attempts, e
+                    provider_name,
+                    attempt,
+                    config.max_attempts,
+                    e
                 );
                 last_error = Some(format!("{}: {}", provider_name, e));
             }
@@ -101,17 +107,20 @@ where
             // For simplicity, use exponential backoff with jitter
             let jitter = Duration::from_millis(rand_jitter());
             let sleep_time = delay + jitter;
-            
+
             tracing::info!(
                 "{} retrying in {:.1}s (attempt {}/{})",
-                provider_name, sleep_time.as_secs_f64(), attempt + 1, config.max_attempts
+                provider_name,
+                sleep_time.as_secs_f64(),
+                attempt + 1,
+                config.max_attempts
             );
-            
+
             tokio::time::sleep(sleep_time).await;
-            
+
             // Increase delay for next attempt
             delay = Duration::from_secs_f64(
-                (delay.as_secs_f64() * config.backoff_factor).min(config.max_delay.as_secs_f64())
+                (delay.as_secs_f64() * config.backoff_factor).min(config.max_delay.as_secs_f64()),
             );
         }
     }

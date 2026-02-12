@@ -1,5 +1,5 @@
 use crate::api_types::Tool;
-use crate::engine::{ToolOutcome, ToolErrorKind};
+use crate::engine::{ToolErrorKind, ToolOutcome};
 use mneme_core::safety::CapabilityGuard;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,6 +75,18 @@ impl ToolRegistry {
                 error_kind: Some(ToolErrorKind::Permanent),
             },
         }
+    }
+
+    /// Format all registered tools as a text prompt section for the LLM.
+    ///
+    /// This is the single source of truth for tool descriptions in the system prompt.
+    /// Returns an empty string if no tools are registered.
+    pub fn format_for_prompt(&self) -> String {
+        let tools = self.available_tools();
+        if tools.is_empty() {
+            return String::new();
+        }
+        crate::prompts::generate_text_tool_instructions(&tools)
     }
 
     /// Get a reference to the safety guard (if set).

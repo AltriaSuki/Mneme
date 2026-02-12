@@ -1,10 +1,10 @@
-use serde_json::json;
-use std::sync::Arc;
 use crate::api_types::{Tool, ToolInputSchema};
-use crate::engine::{ToolOutcome, ToolErrorKind};
+use crate::engine::{ToolErrorKind, ToolOutcome};
 use crate::tool_registry::ToolHandler;
 use mneme_core::safety::CapabilityGuard;
 use mneme_os::Executor;
+use serde_json::json;
+use std::sync::Arc;
 
 /// Tool descriptions embed parameter specs directly in the text as a fallback.
 /// Some API proxies strip `input_schema`, so the model must be able to infer
@@ -84,7 +84,8 @@ pub fn browser_type_tool() -> Tool {
 pub fn browser_screenshot_tool() -> Tool {
     Tool {
         name: "browser_screenshot".to_string(),
-        description: "Capture a screenshot of the current viewport. No parameters needed.".to_string(),
+        description: "Capture a screenshot of the current viewport. No parameters needed."
+            .to_string(),
         input_schema: ToolInputSchema {
             schema_type: "object".to_string(),
             properties: json!({}),
@@ -117,20 +118,29 @@ pub struct ShellToolHandler {
 
 #[async_trait::async_trait]
 impl ToolHandler for ShellToolHandler {
-    fn name(&self) -> &str { "shell" }
-    fn description(&self) -> &str { "Execute a shell command on the local OS" }
-    fn schema(&self) -> Tool { shell_tool() }
+    fn name(&self) -> &str {
+        "shell"
+    }
+    fn description(&self) -> &str {
+        "Execute a shell command on the local OS"
+    }
+    fn schema(&self) -> Tool {
+        shell_tool()
+    }
 
     async fn execute(&self, input: &serde_json::Value) -> ToolOutcome {
         // Lenient parsing: try multiple patterns for the command string.
         // Some models send {"command": "ls"}, others {"cmd": "ls"},
         // others just "ls" as a bare string, or put it in an unexpected key.
-        let cmd = input.get("command").and_then(|v| v.as_str())
+        let cmd = input
+            .get("command")
+            .and_then(|v| v.as_str())
             .or_else(|| input.get("cmd").and_then(|v| v.as_str()))
             .or_else(|| input.as_str())
             .or_else(|| {
                 // Last resort: if the object has exactly one string value, use it
-                input.as_object()
+                input
+                    .as_object()
                     .filter(|obj| obj.len() == 1)
                     .and_then(|obj| obj.values().next())
                     .and_then(|v| v.as_str())
@@ -138,17 +148,19 @@ impl ToolHandler for ShellToolHandler {
 
         let cmd = match cmd {
             Some(c) if !c.is_empty() => c,
-            _ => return ToolOutcome {
-                content: format!(
-                    "ERROR: You called the shell tool but did not provide a command. \
+            _ => {
+                return ToolOutcome {
+                    content: format!(
+                        "ERROR: You called the shell tool but did not provide a command. \
                      You MUST provide input as: {{\"command\": \"<shell command>\"}}. \
                      For example, to list files: {{\"command\": \"ls -la\"}}. \
                      You sent: {}",
-                    input
-                ),
-                is_error: true,
-                error_kind: Some(ToolErrorKind::Permanent),
-            },
+                        input
+                    ),
+                    is_error: true,
+                    error_kind: Some(ToolErrorKind::Permanent),
+                }
+            }
         };
 
         // Safety guard check
@@ -163,7 +175,11 @@ impl ToolHandler for ShellToolHandler {
         }
 
         match self.executor.execute(cmd).await {
-            Ok(out) => ToolOutcome { content: out, is_error: false, error_kind: None },
+            Ok(out) => ToolOutcome {
+                content: out,
+                is_error: false,
+                error_kind: None,
+            },
             Err(e) => {
                 let msg = e.to_string();
                 if msg.contains("timed out") || msg.contains("spawn") {
@@ -193,29 +209,66 @@ pub struct BrowserToolHandler {
 
 impl BrowserToolHandler {
     pub fn goto(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
-        Self { session, tool_name: "browser_goto".into(), tool_schema: browser_goto_tool() }
+        Self {
+            session,
+            tool_name: "browser_goto".into(),
+            tool_schema: browser_goto_tool(),
+        }
     }
     pub fn click(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
-        Self { session, tool_name: "browser_click".into(), tool_schema: browser_click_tool() }
+        Self {
+            session,
+            tool_name: "browser_click".into(),
+            tool_schema: browser_click_tool(),
+        }
     }
-    pub fn type_text(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
-        Self { session, tool_name: "browser_type".into(), tool_schema: browser_type_tool() }
+    pub fn type_text(
+        session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>,
+    ) -> Self {
+        Self {
+            session,
+            tool_name: "browser_type".into(),
+            tool_schema: browser_type_tool(),
+        }
     }
-    pub fn screenshot(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
-        Self { session, tool_name: "browser_screenshot".into(), tool_schema: browser_screenshot_tool() }
+    pub fn screenshot(
+        session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>,
+    ) -> Self {
+        Self {
+            session,
+            tool_name: "browser_screenshot".into(),
+            tool_schema: browser_screenshot_tool(),
+        }
     }
-    pub fn get_html(session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>) -> Self {
-        Self { session, tool_name: "browser_get_html".into(), tool_schema: browser_get_html_tool() }
+    pub fn get_html(
+        session: Arc<tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>>,
+    ) -> Self {
+        Self {
+            session,
+            tool_name: "browser_get_html".into(),
+            tool_schema: browser_get_html_tool(),
+        }
     }
 
-    fn parse_action(&self, input: &serde_json::Value) -> Result<mneme_browser::BrowserAction, String> {
+    fn parse_action(
+        &self,
+        input: &serde_json::Value,
+    ) -> Result<mneme_browser::BrowserAction, String> {
         use mneme_browser::BrowserAction;
         match self.tool_name.as_str() {
-            "browser_goto" => input.get("url").and_then(|u| u.as_str())
-                .map(|url| BrowserAction::Goto { url: url.to_string() })
+            "browser_goto" => input
+                .get("url")
+                .and_then(|u| u.as_str())
+                .map(|url| BrowserAction::Goto {
+                    url: url.to_string(),
+                })
                 .ok_or_else(|| "Missing 'url' parameter".to_string()),
-            "browser_click" => input.get("selector").and_then(|s| s.as_str())
-                .map(|sel| BrowserAction::Click { selector: sel.to_string() })
+            "browser_click" => input
+                .get("selector")
+                .and_then(|s| s.as_str())
+                .map(|sel| BrowserAction::Click {
+                    selector: sel.to_string(),
+                })
                 .ok_or_else(|| "Missing 'selector' parameter".to_string()),
             "browser_type" => {
                 let sel = input.get("selector").and_then(|s| s.as_str());
@@ -237,18 +290,26 @@ impl BrowserToolHandler {
 
 #[async_trait::async_trait]
 impl ToolHandler for BrowserToolHandler {
-    fn name(&self) -> &str { &self.tool_name }
-    fn description(&self) -> &str { "Browser automation tool" }
-    fn schema(&self) -> Tool { self.tool_schema.clone() }
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+    fn description(&self) -> &str {
+        "Browser automation tool"
+    }
+    fn schema(&self) -> Tool {
+        self.tool_schema.clone()
+    }
 
     async fn execute(&self, input: &serde_json::Value) -> ToolOutcome {
         let action = match self.parse_action(input) {
             Ok(a) => a,
-            Err(msg) => return ToolOutcome {
-                content: msg,
-                is_error: true,
-                error_kind: Some(ToolErrorKind::Permanent),
-            },
+            Err(msg) => {
+                return ToolOutcome {
+                    content: msg,
+                    is_error: true,
+                    error_kind: Some(ToolErrorKind::Permanent),
+                }
+            }
         };
 
         let mut session = self.session.lock().await;
@@ -258,7 +319,9 @@ impl ToolHandler for BrowserToolHandler {
             let alive = tokio::task::spawn_blocking(move || {
                 let alive = client.is_alive();
                 (client, alive)
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
             if alive.1 {
                 *session = Some(alive.0);
             }
@@ -267,13 +330,20 @@ impl ToolHandler for BrowserToolHandler {
 
         // Ensure session exists (blocking Browser::new → spawn_blocking)
         if session.is_none() {
-            match tokio::task::spawn_blocking(create_browser_session).await.unwrap() {
-                Ok(c) => { *session = Some(c); }
-                Err(e) => return ToolOutcome {
-                    content: format!("Failed to launch browser: {}", e),
-                    is_error: true,
-                    error_kind: Some(ToolErrorKind::Transient),
-                },
+            match tokio::task::spawn_blocking(create_browser_session)
+                .await
+                .unwrap()
+            {
+                Ok(c) => {
+                    *session = Some(c);
+                }
+                Err(e) => {
+                    return ToolOutcome {
+                        content: format!("Failed to launch browser: {}", e),
+                        is_error: true,
+                        error_kind: Some(ToolErrorKind::Transient),
+                    }
+                }
             }
         }
 
@@ -283,13 +353,17 @@ impl ToolHandler for BrowserToolHandler {
             let (client, result) = tokio::task::spawn_blocking(move || {
                 let r = client.execute_action(act);
                 (client, r)
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
 
             match result {
                 Ok(out) => {
                     *session = Some(client);
                     return ToolOutcome {
-                        content: out, is_error: false, error_kind: None,
+                        content: out,
+                        is_error: false,
+                        error_kind: None,
                     };
                 }
                 Err(e) => {
@@ -304,14 +378,18 @@ impl ToolHandler for BrowserToolHandler {
             let mut client = create_browser_session()?;
             let result = client.execute_action(action);
             Ok::<_, anyhow::Error>((client, result))
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         match recovery {
             Ok((client, result)) => {
                 *session = Some(client);
                 match result {
                     Ok(out) => ToolOutcome {
-                        content: out, is_error: false, error_kind: None,
+                        content: out,
+                        is_error: false,
+                        error_kind: None,
                     },
                     Err(e) => ToolOutcome {
                         content: format!("Browser failed after recovery: {}", e),
@@ -333,4 +411,30 @@ fn create_browser_session() -> anyhow::Result<mneme_browser::BrowserClient> {
     let mut client = mneme_browser::BrowserClient::new(true)?;
     client.launch()?;
     Ok(client)
+}
+
+/// Ping an existing browser session to prevent idle timeout.
+///
+/// Call this periodically (e.g. on each organism tick) to keep Chrome's
+/// DevTools connection alive. No-op if no session exists.
+pub async fn browser_keepalive(session: &tokio::sync::Mutex<Option<mneme_browser::BrowserClient>>) {
+    let mut guard = session.lock().await;
+    if let Some(client) = guard.take() {
+        let (client, alive) = tokio::task::spawn_blocking(move || {
+            let alive = client.keepalive();
+            (client, alive)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            // JoinError — treat as dead
+            // We can't recover the client here, so return a dummy
+            // This shouldn't happen in practice
+            panic!("browser keepalive spawn_blocking panicked");
+        });
+        if alive {
+            *guard = Some(client);
+        } else {
+            tracing::debug!("Browser session died during keepalive, will recreate on next use");
+        }
+    }
 }

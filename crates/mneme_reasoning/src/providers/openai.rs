@@ -1,11 +1,11 @@
-use crate::llm::{LlmClient, CompletionParams};
-use crate::api_types::{Message, Tool, MessagesResponse, ContentBlock, Role, StreamEvent};
+use crate::api_types::{ContentBlock, Message, MessagesResponse, Role, StreamEvent, Tool};
+use crate::llm::{CompletionParams, LlmClient};
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
 use std::time::Duration;
-use futures_util::StreamExt;
 
 #[derive(Debug, Clone)]
 pub struct OpenAiClient {
@@ -48,7 +48,7 @@ impl LlmClient for OpenAiClient {
             tokio::time::sleep(Duration::from_millis(500)).await;
             return Ok(MessagesResponse {
                 content: vec![ContentBlock::Text {
-                    text: "(Mock OpenAI Response) I received your prompt.".to_string()
+                    text: "(Mock OpenAI Response) I received your prompt.".to_string(),
                 }],
                 stop_reason: Some("stop".to_string()),
                 usage: None,
@@ -56,16 +56,19 @@ impl LlmClient for OpenAiClient {
         }
 
         // Convert Tools to OpenAI format
-        let openai_tools: Vec<Value> = tools.iter().map(|t| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.input_schema
-                }
+        let openai_tools: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         // Convert Messages to OpenAI format
         // OpenAI puts System prompt as the first message with role "system"
@@ -79,19 +82,29 @@ impl LlmClient for OpenAiClient {
             match msg.role {
                 Role::User => {
                     // Extract text
-                    let final_text = msg.content.iter().filter_map(|b| {
-                        match b {
-                            ContentBlock::Text { text } => Some(text.clone()),
-                            _ => None // OpenAI user msg is text based mostly (for now)
-                        }
-                    }).collect::<Vec<_>>().join("\n");
-                    
+                    let final_text = msg
+                        .content
+                        .iter()
+                        .filter_map(|b| {
+                            match b {
+                                ContentBlock::Text { text } => Some(text.clone()),
+                                _ => None, // OpenAI user msg is text based mostly (for now)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
                     // Also check for ToolResults (which are role: tool in OpenAI)
                     // NOTE: This logic assumes ToolResults might be mixed in User messages (Mneme internal model).
-                    // In strict OpenAI flow, tool results are standalone messages. 
+                    // In strict OpenAI flow, tool results are standalone messages.
                     // This converter extracts them and ensures they are emitted as distinct named messages.
                     for block in msg.content {
-                        if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            ..
+                        } = block
+                        {
                             openai_messages.push(json!({
                                 "role": "tool",
                                 "tool_call_id": tool_use_id,
@@ -101,12 +114,12 @@ impl LlmClient for OpenAiClient {
                     }
 
                     if !final_text.is_empty() {
-                         openai_messages.push(json!({
+                        openai_messages.push(json!({
                             "role": "user",
                             "content": final_text
                         }));
                     }
-                },
+                }
                 Role::Assistant => {
                     // OpenAI Assistant message can have content AND tool_calls
                     let mut text_parts = Vec::new();
@@ -124,27 +137,27 @@ impl LlmClient for OpenAiClient {
                                         "arguments": input.to_string() // OpenAI expects stringified JSON
                                     }
                                 }));
-                            },
+                            }
                             _ => {}
                         }
                     }
-                    
+
                     let mut msg_obj = json!({"role": "assistant"});
                     if !text_parts.is_empty() {
                         msg_obj["content"] = json!(text_parts.join("\n"));
                     }
                     if !tool_calls.is_empty() {
                         msg_obj["tool_calls"] = json!(tool_calls);
-                         // If tools are present, content can be null in strict strict OpenAI, but usually optional
-                         if text_parts.is_empty() {
-                             msg_obj["content"] = serde_json::Value::Null;
-                         }
+                        // If tools are present, content can be null in strict strict OpenAI, but usually optional
+                        if text_parts.is_empty() {
+                            msg_obj["content"] = serde_json::Value::Null;
+                        }
                     }
                     openai_messages.push(msg_obj);
                 }
             }
         }
-        
+
         // Request payload
         let mut payload = json!({
             "model": self.model,
@@ -152,37 +165,43 @@ impl LlmClient for OpenAiClient {
             "temperature": params.temperature,
             "max_tokens": params.max_tokens,
         });
-        
+
         if !openai_tools.is_empty() {
             payload["tools"] = json!(openai_tools);
         }
 
         let url = format!("{}/chat/completions", self.base_url);
-        
+
         tracing::debug!(
             "LLM params: max_tokens={}, temperature={:.2}",
-            params.max_tokens, params.temperature
+            params.max_tokens,
+            params.temperature
         );
-        
+
         let retry_config = crate::retry::RetryConfig::default();
         let client = &self.client;
         let api_key = &self.api_key;
 
         let response = crate::retry::with_retry(&retry_config, "OpenAI", || async {
-            let resp = client.post(&url)
+            let resp = client
+                .post(&url)
                 .header("Authorization", format!("Bearer {}", api_key))
                 .json(&payload)
                 .send()
                 .await
                 .context("Failed to send request to OpenAI")?;
             Ok(resp)
-        }).await?;
-        
+        })
+        .await?;
+
         // Parse Response — log raw for debugging tool-use issues
         let resp_json: Value = response.json().await?;
         if tracing::enabled!(tracing::Level::DEBUG) {
             let raw = serde_json::to_string(&resp_json).unwrap_or_default();
-            tracing::debug!("OpenAI raw response (first 2000 chars): {}", &raw[..raw.len().min(2000)]);
+            tracing::debug!(
+                "OpenAI raw response (first 2000 chars): {}",
+                &raw[..raw.len().min(2000)]
+            );
         }
         let choice = &resp_json["choices"][0];
         let message = &choice["message"];
@@ -193,7 +212,9 @@ impl LlmClient for OpenAiClient {
         // 1. Text Content
         if let Some(content) = message["content"].as_str() {
             if !content.is_empty() {
-                content_blocks.push(ContentBlock::Text { text: content.to_string() });
+                content_blocks.push(ContentBlock::Text {
+                    text: content.to_string(),
+                });
             }
         }
 
@@ -210,31 +231,39 @@ impl LlmClient for OpenAiClient {
                     // Standard OpenAI: arguments is a JSON-encoded string
                     serde_json::from_str(args_str).unwrap_or_else(|e| {
                         tracing::warn!("Failed to parse tool arguments string: {e}. Raw: {args_str}");
-                        json!({})
+                        // Preserve the raw string so the tool handler can report a meaningful
+                        // error instead of silently executing with no parameters.
+                        json!({"_parse_error": format!("Malformed arguments: {e}"), "_raw": args_str})
                     })
                 } else if func["arguments"].is_object() {
                     // Compatible API: arguments is already a JSON object
                     func["arguments"].clone()
                 } else {
-                    tracing::warn!("Unexpected arguments type for tool '{}': {:?}", name, func["arguments"]);
-                    json!({})
+                    tracing::warn!(
+                        "Unexpected arguments type for tool '{}': {:?}",
+                        name,
+                        func["arguments"]
+                    );
+                    json!({"_parse_error": format!("Unexpected arguments type: {:?}", func["arguments"])})
                 };
 
                 tracing::debug!("Parsed tool_call: name={}, input={}", name, input);
-                content_blocks.push(ContentBlock::ToolUse {
-                    id,
-                    name,
-                    input
-                });
+                content_blocks.push(ContentBlock::ToolUse { id, name, input });
             }
         }
 
         // Extract token usage
         let usage = resp_json.get("usage").and_then(|u| {
             let input = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-            let output = u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let output = u
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             if input > 0 || output > 0 {
-                Some(crate::api_types::TokenUsage { input_tokens: input, output_tokens: output })
+                Some(crate::api_types::TokenUsage {
+                    input_tokens: input,
+                    output_tokens: output,
+                })
             } else {
                 None
             }
@@ -257,27 +286,34 @@ impl LlmClient for OpenAiClient {
         if self.api_key == "mock" {
             let (tx, rx) = tokio::sync::mpsc::channel(32);
             tokio::spawn(async move {
-                let _ = tx.send(StreamEvent::TextDelta(
-                    "(Mock OpenAI Response) I received your prompt.".into(),
-                )).await;
-                let _ = tx.send(StreamEvent::Done {
-                    stop_reason: Some("stop".into()),
-                }).await;
+                let _ = tx
+                    .send(StreamEvent::TextDelta(
+                        "(Mock OpenAI Response) I received your prompt.".into(),
+                    ))
+                    .await;
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        stop_reason: Some("stop".into()),
+                    })
+                    .await;
             });
             return Ok(rx);
         }
 
         // Convert tools to OpenAI format
-        let openai_tools: Vec<Value> = tools.iter().map(|t| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.input_schema
-                }
+        let openai_tools: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         // Convert messages to OpenAI format
         let mut openai_messages = Vec::new();
@@ -286,15 +322,23 @@ impl LlmClient for OpenAiClient {
         for msg in messages {
             match msg.role {
                 Role::User => {
-                    let final_text = msg.content.iter().filter_map(|b| {
-                        match b {
+                    let final_text = msg
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.clone()),
                             _ => None,
-                        }
-                    }).collect::<Vec<_>>().join("\n");
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
 
                     for block in &msg.content {
-                        if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            ..
+                        } = block
+                        {
                             openai_messages.push(json!({
                                 "role": "tool",
                                 "tool_call_id": tool_use_id,
@@ -357,7 +401,9 @@ impl LlmClient for OpenAiClient {
 
         let url = format!("{}/chat/completions", self.base_url);
 
-        let response = self.client.post(&url)
+        let response = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&payload)
             .send()
@@ -394,7 +440,9 @@ pub(crate) async fn parse_openai_sse<S>(
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) -> Result<()>
 where
-    S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send,
+    S: futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>>
+        + Unpin
+        + Send,
 {
     let mut stream = byte_stream;
     let mut buffer = String::new();
@@ -422,7 +470,11 @@ where
             };
 
             if data == "[DONE]" {
-                let _ = tx.send(StreamEvent::Done { stop_reason: stop_reason.take() }).await;
+                let _ = tx
+                    .send(StreamEvent::Done {
+                        stop_reason: stop_reason.take(),
+                    })
+                    .await;
                 return Ok(());
             }
 
@@ -451,7 +503,10 @@ where
                     let index = tc["index"].as_i64().unwrap_or_else(|| {
                         let idx = next_fallback_index;
                         next_fallback_index += 1;
-                        tracing::warn!("OpenAI SSE: tool_call missing 'index', assigning fallback {}", idx);
+                        tracing::warn!(
+                            "OpenAI SSE: tool_call missing 'index', assigning fallback {}",
+                            idx
+                        );
                         idx
                     });
                     let func = &tc["function"];
@@ -460,10 +515,12 @@ where
                     if let Some(id) = tc["id"].as_str() {
                         if seen_tool_ids.insert(index) {
                             let name = func["name"].as_str().unwrap_or("").to_string();
-                            let _ = tx.send(StreamEvent::ToolUseStart {
-                                id: id.to_string(),
-                                name,
-                            }).await;
+                            let _ = tx
+                                .send(StreamEvent::ToolUseStart {
+                                    id: id.to_string(),
+                                    name,
+                                })
+                                .await;
                         }
                     }
 
@@ -489,6 +546,7 @@ mod tests {
     use serde_json::json;
 
     /// Helper: simulate parsing tool_calls from a raw OpenAI-style response JSON.
+    /// Mirrors the production logic in `complete()` — preserves parse errors.
     fn parse_tool_calls_from(resp_json: &Value) -> Vec<ContentBlock> {
         let message = &resp_json["choices"][0]["message"];
         let mut blocks = Vec::new();
@@ -497,11 +555,13 @@ mod tests {
                 let func = &call["function"];
                 let name = func["name"].as_str().unwrap_or_default().to_string();
                 let input: Value = if let Some(args_str) = func["arguments"].as_str() {
-                    serde_json::from_str(args_str).unwrap_or(json!({}))
+                    serde_json::from_str(args_str).unwrap_or_else(|e| {
+                        json!({"_parse_error": format!("Malformed arguments: {e}"), "_raw": args_str})
+                    })
                 } else if func["arguments"].is_object() {
                     func["arguments"].clone()
                 } else {
-                    json!({})
+                    json!({"_parse_error": format!("Unexpected arguments type: {:?}", func["arguments"])})
                 };
                 blocks.push(ContentBlock::ToolUse {
                     id: call["id"].as_str().unwrap_or_default().to_string(),
@@ -557,7 +617,7 @@ mod tests {
 
     #[test]
     fn test_parse_arguments_malformed_string() {
-        // Malformed JSON string → fallback to {}
+        // Malformed JSON string → preserves error info for tool handler
         let resp = json!({
             "choices": [{ "message": {
                 "tool_calls": [{ "id": "tc3", "function": {
@@ -569,7 +629,11 @@ mod tests {
         let blocks = parse_tool_calls_from(&resp);
         assert_eq!(blocks.len(), 1);
         if let ContentBlock::ToolUse { input, .. } = &blocks[0] {
-            assert!(input.as_object().unwrap().is_empty());
+            assert!(
+                input.get("_parse_error").is_some(),
+                "Should contain _parse_error"
+            );
+            assert_eq!(input["_raw"], "{not valid json");
         } else {
             panic!("Expected ToolUse");
         }
@@ -577,7 +641,7 @@ mod tests {
 
     #[test]
     fn test_parse_arguments_null() {
-        // Arguments is null → fallback to {}
+        // Arguments is null → preserves error info for tool handler
         let resp = json!({
             "choices": [{ "message": {
                 "tool_calls": [{ "id": "tc4", "function": {
@@ -589,14 +653,20 @@ mod tests {
         let blocks = parse_tool_calls_from(&resp);
         assert_eq!(blocks.len(), 1);
         if let ContentBlock::ToolUse { input, .. } = &blocks[0] {
-            assert!(input.as_object().unwrap().is_empty());
+            assert!(
+                input.get("_parse_error").is_some(),
+                "Should contain _parse_error"
+            );
         } else {
             panic!("Expected ToolUse");
         }
     }
 
     /// Helper: create a fake byte stream from raw SSE text
-    fn fake_stream(data: &str) -> impl futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send {
+    fn fake_stream(
+        data: &str,
+    ) -> impl futures_util::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin + Send
+    {
         let bytes = bytes::Bytes::from(data.to_string());
         futures_util::stream::iter(vec![Ok(bytes)])
     }
@@ -613,7 +683,9 @@ mod tests {
         while let Some(ev) = rx.recv().await {
             match ev {
                 StreamEvent::TextDelta(t) => texts.push(t),
-                StreamEvent::Done { .. } => { done = true; }
+                StreamEvent::Done { .. } => {
+                    done = true;
+                }
                 _ => {}
             }
         }
@@ -645,7 +717,9 @@ mod tests {
                     got_start = true;
                 }
                 StreamEvent::ToolInputDelta(j) => input_parts.push(j),
-                StreamEvent::Done { stop_reason } => { stop = stop_reason; }
+                StreamEvent::Done { stop_reason } => {
+                    stop = stop_reason;
+                }
                 _ => {}
             }
         }

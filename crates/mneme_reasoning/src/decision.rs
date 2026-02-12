@@ -59,7 +59,11 @@ impl DecisionRouter {
     pub fn route(&self, input: &str) -> DecisionLevel {
         for rule in &self.rules {
             if let Some(level) = rule.evaluate(input) {
-                tracing::debug!("DecisionRouter: rule '{}' matched → {:?}", rule.name(), level);
+                tracing::debug!(
+                    "DecisionRouter: rule '{}' matched → {:?}",
+                    rule.name(),
+                    level
+                );
                 return level;
             }
         }
@@ -83,9 +87,10 @@ impl DecisionRule for EmptyInputRule {
         }
     }
 
-    fn name(&self) -> &str { "empty_input" }
+    fn name(&self) -> &str {
+        "empty_input"
+    }
 }
-
 
 // ============================================================================
 // Tests
@@ -98,8 +103,14 @@ mod tests {
     #[test]
     fn test_empty_input_rule() {
         let rule = EmptyInputRule;
-        assert_eq!(rule.evaluate(""), Some(DecisionLevel::RuleMatch(String::new())));
-        assert_eq!(rule.evaluate("   "), Some(DecisionLevel::RuleMatch(String::new())));
+        assert_eq!(
+            rule.evaluate(""),
+            Some(DecisionLevel::RuleMatch(String::new()))
+        );
+        assert_eq!(
+            rule.evaluate("   "),
+            Some(DecisionLevel::RuleMatch(String::new()))
+        );
         assert_eq!(rule.evaluate("hello"), None);
     }
 
@@ -110,7 +121,10 @@ mod tests {
         assert_eq!(router.route(""), DecisionLevel::RuleMatch(String::new()));
         // Non-empty input falls through to FullReasoning (no greeting shortcut)
         assert_eq!(router.route("你好"), DecisionLevel::FullReasoning);
-        assert_eq!(router.route("请帮我分析这段代码"), DecisionLevel::FullReasoning);
+        assert_eq!(
+            router.route("请帮我分析这段代码"),
+            DecisionLevel::FullReasoning
+        );
     }
 
     #[test]
@@ -120,11 +134,16 @@ mod tests {
             fn evaluate(&self, _input: &str) -> Option<DecisionLevel> {
                 Some(DecisionLevel::QuickResponse)
             }
-            fn name(&self) -> &str { "always_quick" }
+            fn name(&self) -> &str {
+                "always_quick"
+            }
         }
 
         let mut router = DecisionRouter::new();
         router.add_rule(Box::new(AlwaysQuick));
-        assert_eq!(router.route("anything at all"), DecisionLevel::QuickResponse);
+        assert_eq!(
+            router.route("anything at all"),
+            DecisionLevel::QuickResponse
+        );
     }
 }

@@ -72,7 +72,10 @@ pub fn strip_tool_calls(text: &str) -> String {
 
     // Clean up excess whitespace left by stripping
     let multi_newline = Regex::new(r"\n{3,}").unwrap();
-    multi_newline.replace_all(&result, "\n\n").trim().to_string()
+    multi_newline
+        .replace_all(&result, "\n\n")
+        .trim()
+        .to_string()
 }
 
 /// Parse backtick-wrapped shell commands from LLM text.
@@ -121,7 +124,8 @@ fn try_parse_tool_json(json_str: &str) -> Option<ParsedToolCall> {
     let map = obj.as_object()?;
 
     // Extract tool name: "name" or "tool"
-    let name = map.get("name")
+    let name = map
+        .get("name")
         .or_else(|| map.get("tool"))
         .and_then(|v| v.as_str())?
         .to_string();
@@ -131,7 +135,8 @@ fn try_parse_tool_json(json_str: &str) -> Option<ParsedToolCall> {
     }
 
     // Extract input: "input" or "arguments" or "parameters"
-    let input = map.get("input")
+    let input = map
+        .get("input")
         .or_else(|| map.get("arguments"))
         .or_else(|| map.get("parameters"))
         .cloned()
@@ -146,7 +151,8 @@ mod tests {
 
     #[test]
     fn test_parse_tool_call_tag_with_arguments() {
-        let text = r#"我来看看 <tool_call>{"name":"shell","arguments":{"command":"ls -la"}}</tool_call>"#;
+        let text =
+            r#"我来看看 <tool_call>{"name":"shell","arguments":{"command":"ls -la"}}</tool_call>"#;
         let calls = parse_text_tool_calls(text);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "shell");
@@ -182,7 +188,8 @@ mod tests {
 
     #[test]
     fn test_parse_markdown_code_block_fallback() {
-        let text = "我来执行命令：\n```json\n{\"name\":\"shell\",\"arguments\":{\"command\":\"ls\"}}\n```";
+        let text =
+            "我来执行命令：\n```json\n{\"name\":\"shell\",\"arguments\":{\"command\":\"ls\"}}\n```";
         let calls = parse_text_tool_calls(text);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "shell");
@@ -304,7 +311,8 @@ mod tests {
 
     #[test]
     fn test_tool_call_tag_takes_priority_over_backtick() {
-        let text = "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"pwd\"}}</tool_call>\n`ls`";
+        let text =
+            "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"pwd\"}}</tool_call>\n`ls`";
         let calls = parse_text_tool_calls(text);
         // Only the <tool_call> tag, backtick is skipped
         assert_eq!(calls.len(), 1);

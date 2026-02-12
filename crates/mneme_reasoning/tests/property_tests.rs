@@ -3,8 +3,8 @@
 //! Verifies that the output sanitizer is idempotent, never panics on arbitrary
 //! input, and correctly strips markdown/roleplay artifacts.
 
-use proptest::prelude::*;
 use mneme_reasoning::engine::{sanitize_chat_output, ExpressionPreferences};
+use proptest::prelude::*;
 
 /// Default prefs (strip everything) — used by all property tests.
 fn default_prefs() -> ExpressionPreferences {
@@ -114,7 +114,10 @@ fn sanitize_single_asterisk_roleplay() {
 
 #[test]
 fn sanitize_double_asterisk_bold() {
-    assert_eq!(sanitize_chat_output("**重要**的事", &default_prefs()), "重要的事");
+    assert_eq!(
+        sanitize_chat_output("**重要**的事", &default_prefs()),
+        "重要的事"
+    );
 }
 
 #[test]

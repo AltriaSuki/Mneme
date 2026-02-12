@@ -6,10 +6,13 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use mneme_core::{Content, Event, Memory, Modality, Psyche, Reasoning};
-use mneme_reasoning::engine::ReasoningEngine;
 use mneme_reasoning::api_types::{ContentBlock, MessagesResponse};
+use mneme_reasoning::engine::ReasoningEngine;
 use mneme_reasoning::llm::{CompletionParams, LlmClient};
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -102,7 +105,13 @@ impl Memory for MockMemory {
         Ok(String::new())
     }
 
-    async fn store_fact(&self, subject: &str, predicate: &str, object: &str, confidence: f32) -> Result<()> {
+    async fn store_fact(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        confidence: f32,
+    ) -> Result<()> {
         self.stored_facts.lock().await.push((
             subject.to_string(),
             predicate.to_string(),
@@ -123,7 +132,9 @@ struct MockExecutor {
 
 impl MockExecutor {
     fn new(output: &str) -> Self {
-        Self { output: output.to_string() }
+        Self {
+            output: output.to_string(),
+        }
     }
 }
 
@@ -144,7 +155,9 @@ impl mneme_os::Executor for MockExecutor {
 
 fn text_response(text: &str) -> MessagesResponse {
     MessagesResponse {
-        content: vec![ContentBlock::Text { text: text.to_string() }],
+        content: vec![ContentBlock::Text {
+            text: text.to_string(),
+        }],
         stop_reason: Some("end_turn".to_string()),
         usage: None,
     }
@@ -223,7 +236,10 @@ async fn test_silence_tag_produces_empty_response() {
     let engine = build_engine(MockLlmClient::with_text("[SILENCE]"));
     let result = engine.think(user_event("大家好")).await.unwrap();
 
-    assert!(result.content.is_empty(), "SILENCE tag should produce empty content");
+    assert!(
+        result.content.is_empty(),
+        "SILENCE tag should produce empty content"
+    );
 }
 
 // ============================================================================
@@ -235,7 +251,10 @@ async fn test_roleplay_asterisks_stripped() {
     let engine = build_engine(MockLlmClient::with_text("*叹了口气*你说得对"));
     let result = engine.think(user_event("测试")).await.unwrap();
 
-    assert!(!result.content.contains('*'), "Roleplay asterisks should be stripped");
+    assert!(
+        !result.content.contains('*'),
+        "Roleplay asterisks should be stripped"
+    );
     assert!(result.content.contains("你说得对"));
 }
 
@@ -244,7 +263,10 @@ async fn test_markdown_bold_stripped() {
     let engine = build_engine(MockLlmClient::with_text("这是**重要**的事情"));
     let result = engine.think(user_event("测试")).await.unwrap();
 
-    assert!(!result.content.contains("**"), "Bold markdown should be stripped");
+    assert!(
+        !result.content.contains("**"),
+        "Bold markdown should be stripped"
+    );
     assert!(result.content.contains("重要"));
 }
 
@@ -253,7 +275,10 @@ async fn test_markdown_headers_stripped() {
     let engine = build_engine(MockLlmClient::with_text("# 标题\n内容在这里"));
     let result = engine.think(user_event("测试")).await.unwrap();
 
-    assert!(!result.content.starts_with('#'), "Headers should be stripped");
+    assert!(
+        !result.content.starts_with('#'),
+        "Headers should be stripped"
+    );
     assert!(result.content.contains("标题"));
     assert!(result.content.contains("内容在这里"));
 }
@@ -263,7 +288,10 @@ async fn test_markdown_bullets_stripped() {
     let engine = build_engine(MockLlmClient::with_text("- 第一\n- 第二\n- 第三"));
     let result = engine.think(user_event("测试")).await.unwrap();
 
-    assert!(!result.content.contains("- "), "Bullet markers should be stripped");
+    assert!(
+        !result.content.contains("- "),
+        "Bullet markers should be stripped"
+    );
     assert!(result.content.contains("第一"));
 }
 
@@ -273,7 +301,9 @@ async fn test_markdown_bullets_stripped() {
 
 #[tokio::test]
 async fn test_emotion_tag_parsed_and_stripped() {
-    let engine = build_engine(MockLlmClient::with_text("<emotion>Happy</emotion>今天真开心！"));
+    let engine = build_engine(MockLlmClient::with_text(
+        "<emotion>Happy</emotion>今天真开心！",
+    ));
     let result = engine.think(user_event("你好")).await.unwrap();
 
     // Emotion tag should be stripped from content
@@ -384,7 +414,11 @@ async fn test_unknown_tool_returns_error_message() {
 async fn test_tool_use_with_text_in_same_response() {
     // Some LLMs return text + tool_use in the same response
     let client = MockLlmClient::new(vec![
-        text_with_tool_call("我来看看现在几点", "shell", serde_json::json!({"command": "date"})),
+        text_with_tool_call(
+            "我来看看现在几点",
+            "shell",
+            serde_json::json!({"command": "date"}),
+        ),
         text_response("现在是下午三点"),
         text_response(r#"{"facts": []}"#),
     ]);
@@ -421,7 +455,9 @@ async fn test_fact_extraction_stores_results() {
     // Main response + extraction response with actual facts
     let client = MockLlmClient::new(vec![
         text_response("我知道了你喜欢猫"),
-        text_response(r#"{"facts": [{"subject": "用户", "predicate": "喜欢", "object": "猫", "confidence": 0.9}]}"#),
+        text_response(
+            r#"{"facts": [{"subject": "用户", "predicate": "喜欢", "object": "猫", "confidence": 0.9}]}"#,
+        ),
     ]);
 
     let memory = Arc::new(MockMemory::new());
@@ -434,7 +470,7 @@ async fn test_fact_extraction_stores_results() {
     assert_eq!(facts.len(), 1);
     assert_eq!(facts[0].0, "用户"); // subject
     assert_eq!(facts[0].1, "喜欢"); // predicate
-    assert_eq!(facts[0].2, "猫");   // object
+    assert_eq!(facts[0].2, "猫"); // object
 }
 
 // ============================================================================
@@ -445,9 +481,12 @@ async fn test_fact_extraction_stores_results() {
 async fn test_history_accumulates_across_turns() {
     // Use a client with enough responses for 3 conversations
     let client = MockLlmClient::new(vec![
-        text_response("回复1"), text_response(r#"{"facts": []}"#),
-        text_response("回复2"), text_response(r#"{"facts": []}"#),
-        text_response("回复3"), text_response(r#"{"facts": []}"#),
+        text_response("回复1"),
+        text_response(r#"{"facts": []}"#),
+        text_response("回复2"),
+        text_response(r#"{"facts": []}"#),
+        text_response("回复3"),
+        text_response(r#"{"facts": []}"#),
     ]);
 
     let engine = build_engine(client);
@@ -504,9 +543,9 @@ async fn test_proactive_trigger_scheduled() {
 
 #[tokio::test]
 async fn test_proactive_trigger_memory_decay() {
-    let client = MockLlmClient::new(vec![
-        text_response("对了，你之前提到过的旅行计划怎么样了？"),
-    ]);
+    let client = MockLlmClient::new(vec![text_response(
+        "对了，你之前提到过的旅行计划怎么样了？",
+    )]);
 
     let engine = build_engine(client);
 
@@ -627,7 +666,7 @@ async fn test_shell_timeout_returns_is_error_true() {
     ]);
 
     let executor = Arc::new(FailingExecutor::always_fail(
-        "Command execution timed out after 30s"
+        "Command execution timed out after 30s",
     ));
     let memory = Arc::new(MockMemory::new());
     let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
@@ -648,7 +687,7 @@ async fn test_shell_permanent_failure_returns_is_error() {
     ]);
 
     let executor = Arc::new(FailingExecutor::always_fail(
-        "Command failed with status exit code: 127"
+        "Command failed with status exit code: 127",
     ));
     let memory = Arc::new(MockMemory::new());
     let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
@@ -669,7 +708,9 @@ async fn test_shell_transient_retry_succeeds() {
     ]);
 
     let executor = Arc::new(FailingExecutor::fail_then_succeed(
-        1, "Command execution timed out after 30s", "ok\n"
+        1,
+        "Command execution timed out after 30s",
+        "ok\n",
     ));
     let memory = Arc::new(MockMemory::new());
     let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
@@ -752,7 +793,9 @@ async fn test_tool_error_does_not_crash_react_loop() {
 
     // First call fails, second succeeds
     let executor = Arc::new(FailingExecutor::fail_then_succeed(
-        1, "Command failed with status exit code: 1", "ok\n"
+        1,
+        "Command failed with status exit code: 1",
+        "ok\n",
     ));
     let memory = Arc::new(MockMemory::new());
     let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
@@ -773,7 +816,9 @@ async fn test_spawn_failure_is_transient() {
     ]);
 
     let executor = Arc::new(FailingExecutor::fail_then_succeed(
-        1, "Failed to spawn command locally", "ok\n"
+        1,
+        "Failed to spawn command locally",
+        "ok\n",
     ));
     let memory = Arc::new(MockMemory::new());
     let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
@@ -815,7 +860,7 @@ async fn test_text_mode_strips_tool_call_from_content() {
     // The <tool_call> tag should be stripped from the displayed content
     let client = MockLlmClient::new(vec![
         text_response(
-            "好的 <tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"pwd\"}}</tool_call>"
+            "好的 <tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"pwd\"}}</tool_call>",
         ),
         text_response("你在 /home/user 目录"),
         text_response(r#"{"facts": []}"#),
@@ -837,7 +882,7 @@ async fn test_auto_mode_falls_back_to_text_parsing() {
     // engine should fall back to parsing <tool_call> from text.
     let client = MockLlmClient::new(vec![
         text_response(
-            "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"date\"}}</tool_call>"
+            "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"date\"}}</tool_call>",
         ),
         text_response("现在是2026年"),
         text_response(r#"{"facts": []}"#),
@@ -857,7 +902,7 @@ async fn test_text_mode_tool_error_sent_as_text() {
     // When a text-parsed tool fails, the error is sent back as plain text
     let client = MockLlmClient::new(vec![
         text_response(
-            "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"bad_cmd\"}}</tool_call>"
+            "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"bad_cmd\"}}</tool_call>",
         ),
         text_response("命令失败了，换个方式"),
         text_response(r#"{"facts": []}"#),
@@ -865,9 +910,7 @@ async fn test_text_mode_tool_error_sent_as_text() {
 
     let executor = Arc::new(FailingExecutor::always_fail("command not found: bad_cmd"));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(
-        client, memory, executor as Arc<dyn mneme_os::Executor>
-    );
+    let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
 
     let result = engine.think(user_event("执行错误命令")).await.unwrap();
 

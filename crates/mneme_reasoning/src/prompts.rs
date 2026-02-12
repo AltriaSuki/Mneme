@@ -1,6 +1,6 @@
+use crate::api_types::{ContentBlock, Message, Role, Tool};
 use mneme_core::Psyche;
 use mneme_limbic::SomaticMarker;
-use crate::api_types::{Message, Role, ContentBlock, Tool};
 
 /// Context layers for the 6-layer assembly pipeline.
 /// Priority order (1 = highest, never dropped):
@@ -38,30 +38,19 @@ impl ContextAssembler {
         somatic_marker: &SomaticMarker,
         layers: &ContextLayers,
         budget_chars: usize,
-        text_tool_schemas: &[Tool],
+        tool_instructions: &str,
     ) -> String {
         let soma_context = somatic_marker.format_for_prompt();
-        
+
         // Layer 1: Persona (always present, never trimmed)
         let persona = psyche.format_context();
-        
+
         // Fixed sections (always present)
         // B-1: Expression style emerges from experience, not hardcoded rules.
         // We only provide the somatic context as a signal, not prescriptive formatting rules.
-        let style_guide = format!(
-            "== 当前体感状态 ==\n{}",
-            soma_context
-        );
+        let style_guide = format!("== 当前体感状态 ==\n{}", soma_context);
 
-        // Tool instructions logic:
-        // - has_api_tools && text_tool_schemas.is_empty() → pure API mode, no text instructions
-        // - !text_tool_schemas.is_empty() → dynamically generate from Tool schemas (Text/Auto)
-        // - neither → no tools at all
-        let tool_instructions = if !text_tool_schemas.is_empty() {
-            generate_text_tool_instructions(text_tool_schemas)
-        } else {
-            String::new()
-        };
+        let tool_instructions = tool_instructions.to_string();
 
         let fixed_size = persona.len() + style_guide.len() + tool_instructions.len() + 80;
         let remaining = budget_chars.saturating_sub(fixed_size);
@@ -126,14 +115,14 @@ impl ContextAssembler {
             recalled_episodes: recalled_memory.to_string(),
             ..Default::default()
         };
-        Self::build_full_system_prompt(psyche, somatic_marker, &layers, 32_000, &[])
+        Self::build_full_system_prompt(psyche, somatic_marker, &layers, 32_000, "")
     }
 
     /// Legacy: Build system prompt with discrete emotion (backward compatibility)
     pub fn build_system_prompt(
         psyche: &Psyche,
         recalled_memory: &str,
-        current_emotion: &mneme_core::Emotion
+        current_emotion: &mneme_core::Emotion,
     ) -> String {
         format!(
             "{}\n\nYou are currently feeling: {}.\n\n== EMOTIONAL STATE ==\nAlways start your response with an emotional state tag: <emotion>STATE</emotion>, where STATE is one of: Neutral, Happy, Sad, Excited, Calm, Angry, Surprised.\n\nIf the user's message is a casual remark in a group chat not directed at you, or if you have nothing meaningful to add, you may output exactly: [SILENCE]\nThis will cause you to stay silent.\n\n== RECALLED CONTEXT ==\n{}",
@@ -143,19 +132,18 @@ impl ContextAssembler {
         )
     }
 
-    pub fn assemble_history(
-        raw_history: &[Message],
-        user_input: &str
-    ) -> Vec<Message> {
+    pub fn assemble_history(raw_history: &[Message], user_input: &str) -> Vec<Message> {
         let mut messages = raw_history.to_vec();
-        
+
         if !user_input.is_empty() {
             messages.push(Message {
                 role: Role::User,
-                content: vec![ContentBlock::Text { text: user_input.to_string() }]
+                content: vec![ContentBlock::Text {
+                    text: user_input.to_string(),
+                }],
             });
         }
-        
+
         messages
     }
 }
@@ -164,15 +152,15 @@ impl ContextAssembler {
 ///
 /// Produces a system prompt section that describes each tool's name, description,
 /// required parameters, and the expected `<tool_call>` output format.
-fn generate_text_tool_instructions(tools: &[Tool]) -> String {
-    let mut lines = Vec::new();
-    lines.push("== SYSTEM TOOLS ==".to_string());
-    lines.push(
+pub fn generate_text_tool_instructions(tools: &[Tool]) -> String {
+    let mut lines = vec![
+        "== SYSTEM TOOLS ==".to_string(),
         "The following tools are available regardless of current persona or cognitive stage.\n\
-         Tool call format is specified below.".to_string()
-    );
-    lines.push(String::new());
-    lines.push("AVAILABLE TOOLS:".to_string());
+         Tool call format is specified below."
+            .to_string(),
+        String::new(),
+        "AVAILABLE TOOLS:".to_string(),
+    ];
 
     for (i, tool) in tools.iter().enumerate() {
         lines.push(String::new());
@@ -193,7 +181,8 @@ fn generate_text_tool_instructions(tools: &[Tool]) -> String {
          <tool_call>{\"name\": \"tool_name\", \"arguments\": {params}}</tool_call>\n\n\
          Example:\n\
          <tool_call>{\"name\": \"shell\", \"arguments\": {\"command\": \"ls -la\"}}</tool_call>\n\n\
-         Note: tool calls require all specified parameters. Empty arguments {} are invalid.".to_string()
+         Note: tool calls require all specified parameters. Empty arguments {} are invalid."
+            .to_string(),
     );
 
     lines.join("\n")
@@ -204,7 +193,8 @@ fn build_example_input(schema: &crate::api_types::ToolInputSchema) -> String {
     let mut parts = Vec::new();
     if let Some(props) = schema.properties.as_object() {
         for key in &schema.required {
-            let desc = props.get(key)
+            let desc = props
+                .get(key)
                 .and_then(|v| v.get("description"))
                 .and_then(|d| d.as_str())
                 .unwrap_or("...");
