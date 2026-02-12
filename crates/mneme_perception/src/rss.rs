@@ -1,11 +1,11 @@
-use crate::source::{Source, validate_url};
+use crate::source::{validate_url, Source};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use chrono::DateTime;
 use mneme_core::{Content, Modality};
 use rss::Channel;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
-use chrono::DateTime;
 
 const MAX_ITEMS: usize = 3;
 
@@ -42,15 +42,16 @@ impl Source for RssSource {
     }
 
     async fn fetch(&self) -> Result<Vec<Content>> {
-        let content = self.client.get(&self.url)
+        let content = self
+            .client
+            .get(&self.url)
             .send()
             .await
             .context("Failed to fetch RSS feed")?
             .bytes()
             .await?;
 
-        let channel = Channel::read_from(&content[..])
-            .context("Failed to parse RSS feed")?;
+        let channel = Channel::read_from(&content[..]).context("Failed to parse RSS feed")?;
 
         let mut items = Vec::new();
         // Limit items to avoid spamming
@@ -58,7 +59,7 @@ impl Source for RssSource {
             let title = item.title().unwrap_or("No Title");
             let description = item.description().unwrap_or("No Description");
             let link = item.link().unwrap_or("");
-            
+
             let body = format!("Title: {}\nLink: {}\nSummary: {}", title, link, description);
 
             // Use deterministic UUID based on link for deduplication
@@ -69,11 +70,17 @@ impl Source for RssSource {
             };
 
             // Parse timestamp from pub_date if available
-            let timestamp = item.pub_date()
+            let timestamp = item
+                .pub_date()
                 .and_then(|d| DateTime::parse_from_rfc2822(d).ok())
                 .map(|dt| dt.timestamp())
-                .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64);
-            
+                .unwrap_or_else(|| {
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64
+                });
+
             items.push(Content {
                 id,
                 source: format!("rss:{}", self.name),
@@ -91,8 +98,8 @@ impl Source for RssSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method};
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_rss_fetch() {

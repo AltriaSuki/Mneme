@@ -44,10 +44,10 @@ pub trait SpeechToText: Send + Sync {
     /// # Returns
     /// Transcribed text
     async fn transcribe(&self, audio: &[u8], format: AudioFormat) -> Result<String>;
-    
+
     /// Check if this STT engine supports a given language
     fn supports_language(&self, lang: &str) -> bool;
-    
+
     /// Get the name of this STT provider
     fn provider_name(&self) -> &'static str;
 }

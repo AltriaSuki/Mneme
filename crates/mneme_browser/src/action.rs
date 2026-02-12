@@ -17,9 +17,16 @@ mod tests {
     #[test]
     fn test_browser_action_serde_roundtrip() {
         let actions = vec![
-            BrowserAction::Goto { url: "https://example.com".to_string() },
-            BrowserAction::Click { selector: "#btn".to_string() },
-            BrowserAction::Type { selector: "input".to_string(), text: "hello".to_string() },
+            BrowserAction::Goto {
+                url: "https://example.com".to_string(),
+            },
+            BrowserAction::Click {
+                selector: "#btn".to_string(),
+            },
+            BrowserAction::Type {
+                selector: "input".to_string(),
+                text: "hello".to_string(),
+            },
             BrowserAction::Screenshot,
             BrowserAction::GetHtml,
         ];

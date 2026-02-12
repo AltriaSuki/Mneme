@@ -75,7 +75,9 @@ impl SshExecutor {
         let mut addrs = tokio::net::lookup_host(&addr_str)
             .await
             .context("Could not resolve address")?;
-        let addr = addrs.next().ok_or_else(|| anyhow::anyhow!("Could not resolve address"))?;
+        let addr = addrs
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Could not resolve address"))?;
 
         // russh::client::connect handles the TCP connection itself
         let mut session = client::connect(config, addr, handler)

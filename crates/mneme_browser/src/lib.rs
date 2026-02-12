@@ -1,4 +1,4 @@
-pub mod client;
 pub mod action;
-pub use client::{BrowserClient, BrowserConfig};
+pub mod client;
 pub use action::BrowserAction;
+pub use client::{BrowserClient, BrowserConfig};

@@ -1,11 +1,11 @@
-use crate::source::{Source, validate_url};
+use crate::source::{validate_url, Source};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mneme_core::{Content, Modality};
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
-use uuid::Uuid;
 use std::io::Cursor;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
+use uuid::Uuid;
 
 pub struct WebSource {
     url: String,
@@ -16,7 +16,7 @@ pub struct WebSource {
 impl WebSource {
     pub fn new(url: &str) -> Result<Self> {
         validate_url(url)?;
-        
+
         let parsed = Url::parse(url)?;
         // Simple name derivation from domain
         let domain = parsed.host_str().unwrap_or("unknown");
@@ -26,7 +26,7 @@ impl WebSource {
             .timeout(Duration::from_secs(10))
             .build()?;
 
-        Ok(Self { 
+        Ok(Self {
             url: url.to_string(),
             name,
             client,
@@ -39,12 +39,15 @@ impl Source for WebSource {
     fn name(&self) -> &str {
         &self.name
     }
-    
-    fn interval(&self) -> u64 { 0 }
+
+    fn interval(&self) -> u64 {
+        0
+    }
 
     async fn fetch(&self) -> Result<Vec<Content>> {
-
-         let html = self.client.get(&self.url)
+        let html = self
+            .client
+            .get(&self.url)
             .send()
             .await
             .context("Failed to fetch page")?
@@ -55,7 +58,10 @@ impl Source for WebSource {
         let extractor = readability::extractor::extract(&mut cursor, &Url::parse(&self.url)?)
             .context("Failed to extract content")?;
 
-        let body = format!("Title: {}\nLink: {}\nContent: {}", extractor.title, self.url, extractor.text);
+        let body = format!(
+            "Title: {}\nLink: {}\nContent: {}",
+            extractor.title, self.url, extractor.text
+        );
 
         // Deterministic UUID for web pages based on URL
         let id = Uuid::new_v5(&Uuid::NAMESPACE_URL, self.url.as_bytes());
@@ -74,8 +80,8 @@ impl Source for WebSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method};
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_web_fetch() {
@@ -103,17 +109,17 @@ mod tests {
         assert!(content[0].body.contains("Test Page"));
         assert!(content[0].body.contains("test content"));
     }
-    
+
     #[test]
     fn test_web_ssrf_prevention() {
         // Localhost is allowed in tests via validate_url's cfg!(test) check
         assert!(WebSource::new("http://localhost/admin").is_ok());
         assert!(WebSource::new("http://127.0.0.1/admin").is_ok());
-        
+
         // Private networks should be blocked
         assert!(WebSource::new("http://169.254.169.254/meta").is_err());
         assert!(WebSource::new("http://192.168.1.1/router").is_err());
-        
+
         // Public valid
         assert!(WebSource::new("http://google.com").is_ok());
     }

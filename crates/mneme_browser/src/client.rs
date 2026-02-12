@@ -77,13 +77,25 @@ impl BrowserClient {
 
     /// Check whether the browser session is still alive.
     ///
-    /// Attempts a lightweight CDP call (`get_url()`) on the current tab.
+    /// Attempts a lightweight CDP call (`get_target_info()`) on the current tab.
     /// Returns `false` if no tab, or if the call fails (tab/browser crashed).
     pub fn is_alive(&self) -> bool {
         match &self.current_tab {
+            Some(tab) => tab.get_target_info().is_ok(),
+            None => false,
+        }
+    }
+
+    /// Send a lightweight CDP ping to keep the browser session alive.
+    ///
+    /// Call this periodically (e.g. every 30s) to prevent Chrome from
+    /// closing the DevTools connection due to inactivity.
+    /// Returns `true` if the session is still alive after the ping.
+    pub fn keepalive(&self) -> bool {
+        match &self.current_tab {
             Some(tab) => {
-                // get_url() is a local read (no CDP call), so also try get_target_info()
-                // which actually talks to the browser process.
+                // get_target_info() is a cheap CDP round-trip that resets
+                // Chrome's idle timer without side effects.
                 tab.get_target_info().is_ok()
             }
             None => false,
@@ -100,12 +112,8 @@ impl BrowserClient {
     pub fn screenshot(&self) -> Result<Vec<u8>> {
         let tab = self.tab()?;
         use headless_chrome::protocol::cdp::Page;
-        let png_data = tab.capture_screenshot(
-            Page::CaptureScreenshotFormatOption::Png,
-            None,
-            None,
-            true,
-        )?;
+        let png_data =
+            tab.capture_screenshot(Page::CaptureScreenshotFormatOption::Png, None, None, true)?;
         Ok(png_data)
     }
 
@@ -155,11 +163,19 @@ impl BrowserClient {
                 let html = self.get_html()?;
                 // Limit HTML output to prevent overwhelming the LLM context
                 let truncated = if html.len() > 8192 {
-                    format!("{}\n... [truncated, {} total chars]", &html[..8192], html.len())
+                    format!(
+                        "{}\n... [truncated, {} total chars]",
+                        &html[..8192],
+                        html.len()
+                    )
                 } else {
                     html.clone()
                 };
-                Ok(format!("HTML Content ({} chars):\n{}", html.len(), truncated))
+                Ok(format!(
+                    "HTML Content ({} chars):\n{}",
+                    html.len(),
+                    truncated
+                ))
             }
         }
     }

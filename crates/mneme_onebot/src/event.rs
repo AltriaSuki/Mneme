@@ -44,10 +44,7 @@ pub enum MetaEvent {
         interval: i64,
     },
     #[serde(rename = "lifecycle")]
-    Lifecycle {
-        time: i64,
-        sub_type: String,
-    },
+    Lifecycle { time: i64, sub_type: String },
 }
 
 #[derive(Debug, Serialize)]

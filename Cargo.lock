@@ -2561,6 +2561,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "mneme_core",
+ "mneme_limbic",
  "rand 0.8.5",
  "tokio",
  "tracing",

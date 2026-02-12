@@ -1,22 +1,27 @@
 use clap::Parser;
-use mneme_core::{Event, Content, Modality, Reasoning, SeedPersona, Memory};
 use mneme_core::config::MnemeConfig;
-use mneme_memory::{SqliteMemory, OrganismCoordinator, OrganismConfig};
+use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
+use mneme_expression::{
+    ConsciousnessGate, Humanizer, PresenceScheduler, RuminationEvaluator, ScheduledTriggerEvaluator,
+};
 use mneme_limbic::LimbicSystem;
+use mneme_memory::{OrganismConfig, OrganismCoordinator, SqliteMemory};
 use mneme_reasoning::ReasoningEngine;
-use mneme_expression::{ScheduledTriggerEvaluator, PresenceScheduler, Humanizer, RuminationEvaluator};
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{error, info};
 use uuid::Uuid;
 
-use mneme_perception::{SourceManager, rss::RssSource};
+use mneme_perception::{rss::RssSource, SourceManager};
 
 use mneme_core::ReasoningOutput;
 use mneme_onebot::OneBotClient;
-use mneme_reasoning::{llm::LlmClient, providers::{anthropic::AnthropicClient, openai::OpenAiClient}};
+use mneme_reasoning::{
+    llm::LlmClient,
+    providers::{anthropic::AnthropicClient, openai::OpenAiClient},
+};
 
 use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Config, EditMode};
+use rustyline::{Config, DefaultEditor, EditMode};
 
 /// Perform graceful shutdown with a 5-second timeout.
 async fn graceful_shutdown(coordinator: &OrganismCoordinator) {
@@ -35,7 +40,7 @@ async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefi
         // ReasoningOutput has implicit emotion in 'emotion' field, and we treat it as Option for Humanizer
         let delay = humanizer.typing_delay(&part, Some(response.emotion));
         tokio::time::sleep(delay).await;
-        
+
         if let Some(p) = prefix {
             println!("[{}] Mneme: {}", p, part);
         } else {
@@ -44,8 +49,6 @@ async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefi
     }
     println!(); // Spacer
 }
-
-
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -92,16 +95,20 @@ async fn main() -> anyhow::Result<()> {
 
     // Configurable tracing subscriber
     {
-        use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-        let env_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(&args.log_level));
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
 
         if let Some(ref log_path) = args.log_file {
             // File + stderr dual output
             let file_appender = tracing_appender::rolling::daily(
-                std::path::Path::new(log_path).parent().unwrap_or(std::path::Path::new(".")),
-                std::path::Path::new(log_path).file_name().unwrap_or(std::ffi::OsStr::new("mneme.log")),
+                std::path::Path::new(log_path)
+                    .parent()
+                    .unwrap_or(std::path::Path::new(".")),
+                std::path::Path::new(log_path)
+                    .file_name()
+                    .unwrap_or(std::ffi::OsStr::new("mneme.log")),
             );
             let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
             // Leak the guard so it lives for the program's lifetime
@@ -141,7 +148,10 @@ async fn main() -> anyhow::Result<()> {
         config.llm.model = model.clone();
     }
     let db_path = args.db.as_deref().unwrap_or(&config.organism.db_path);
-    let persona_dir = args.persona.as_deref().unwrap_or(&config.organism.persona_dir);
+    let persona_dir = args
+        .persona
+        .as_deref()
+        .unwrap_or(&config.organism.persona_dir);
 
     info!("Initializing Mneme...");
 
@@ -155,7 +165,10 @@ async fn main() -> anyhow::Result<()> {
     if !seed.is_empty() {
         let seeded = memory.seed_self_knowledge(&seed.to_seed_entries()).await?;
         if seeded > 0 {
-            info!("First run: seeded {} self-knowledge entries from persona files", seeded);
+            info!(
+                "First run: seeded {} self-knowledge entries from persona files",
+                seeded
+            );
         }
     }
     let psyche = memory.build_psyche().await?;
@@ -170,7 +183,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 4. Initialize Reasoning
-    info!("Starting Reasoning Engine with model {}...", config.llm.model);
+    info!(
+        "Starting Reasoning Engine with model {}...",
+        config.llm.model
+    );
 
     // Initialize OS Executor (Local for now, potentially SSH based on config later)
     use mneme_os::local::LocalExecutor;
@@ -181,34 +197,46 @@ async fn main() -> anyhow::Result<()> {
         "anthropic" => Box::new(AnthropicClient::new(&config.llm.model)?),
         "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model)?),
         _ => {
-            tracing::warn!("Unknown provider '{}', defaulting to Anthropic", config.llm.provider);
+            tracing::warn!(
+                "Unknown provider '{}', defaulting to Anthropic",
+                config.llm.provider
+            );
             Box::new(AnthropicClient::new(&config.llm.model)?)
-        },
+        }
     };
 
     // Initialize Organism Coordinator with persistence
     let limbic = Arc::new(LimbicSystem::new());
     let organism_config = OrganismConfig::default();
     let coordinator = Arc::new(
-        OrganismCoordinator::with_persistence(limbic, organism_config, memory.clone()).await?
+        OrganismCoordinator::with_persistence(limbic, organism_config, memory.clone()).await?,
     );
-    
-    let mut engine = ReasoningEngine::with_coordinator(psyche, memory.clone(), client, executor, coordinator.clone());
+
+    let mut engine = ReasoningEngine::with_coordinator(
+        psyche,
+        memory.clone(),
+        client,
+        executor,
+        coordinator.clone(),
+    );
 
     // 4a. Wire up Social Graph (SqliteMemory implements SocialGraph)
     engine.set_social_graph(memory.clone());
 
     // 4b. Initialize Safety Guard
-    let guard = Arc::new(mneme_core::safety::CapabilityGuard::new(config.safety.clone()));
+    let guard = Arc::new(mneme_core::safety::CapabilityGuard::new(
+        config.safety.clone(),
+    ));
     engine.set_guard(guard.clone());
 
     // 4c. Initialize Tool Registry
-    {
+    let browser_session_keepalive = {
+        use mneme_reasoning::tools::{BrowserToolHandler, ShellToolHandler};
         use mneme_reasoning::ToolRegistry;
-        use mneme_reasoning::tools::{ShellToolHandler, BrowserToolHandler};
 
         let mut registry = ToolRegistry::with_guard(guard);
         let browser_session = Arc::new(tokio::sync::Mutex::new(None));
+        let keepalive_handle = browser_session.clone();
 
         registry.register(Box::new(ShellToolHandler {
             executor: Arc::new(mneme_os::local::LocalExecutor::default()),
@@ -216,17 +244,23 @@ async fn main() -> anyhow::Result<()> {
         }));
         registry.register(Box::new(BrowserToolHandler::goto(browser_session.clone())));
         registry.register(Box::new(BrowserToolHandler::click(browser_session.clone())));
-        registry.register(Box::new(BrowserToolHandler::type_text(browser_session.clone())));
-        registry.register(Box::new(BrowserToolHandler::screenshot(browser_session.clone())));
+        registry.register(Box::new(BrowserToolHandler::type_text(
+            browser_session.clone(),
+        )));
+        registry.register(Box::new(BrowserToolHandler::screenshot(
+            browser_session.clone(),
+        )));
         registry.register(Box::new(BrowserToolHandler::get_html(browser_session)));
 
         engine.set_registry(Arc::new(registry));
-    }
+        keepalive_handle
+    };
 
     // 4d. Initialize Token Budget
-    let token_budget = Arc::new(
-        mneme_reasoning::token_budget::TokenBudget::new(config.token_budget.clone(), memory.clone())
-    );
+    let token_budget = Arc::new(mneme_reasoning::token_budget::TokenBudget::new(
+        config.token_budget.clone(),
+        memory.clone(),
+    ));
     engine.set_token_budget(token_budget.clone());
 
     // 4e. Set streaming text callback for real-time output
@@ -242,11 +276,15 @@ async fn main() -> anyhow::Result<()> {
     let evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![
         Box::new(ScheduledTriggerEvaluator::new()),
         Box::new(RuminationEvaluator::new(coordinator.state())),
+        Box::new(ConsciousnessGate::new(coordinator.state())),
     ];
 
     // Initialize Presence Scheduler (filters triggers by active hours)
     let presence = PresenceScheduler::default();
-    info!("Presence scheduler active: {:?} - {:?}", presence.active_start, presence.active_end);
+    info!(
+        "Presence scheduler active: {:?} - {:?}",
+        presence.active_start, presence.active_end
+    );
 
     // Initialize Humanizer for expressive output
     let humanizer = Humanizer::new();
@@ -262,7 +300,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Subscribe to lifecycle changes
     let mut lifecycle_rx = coordinator.subscribe_lifecycle();
-    
+
     println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
 
     // --- ONEBOT MODE ---
@@ -277,11 +315,11 @@ async fn main() -> anyhow::Result<()> {
                 let tx_clone = event_tx.clone();
                 tokio::spawn(async move {
                     while let Some(content) = onebot_rx.recv().await {
-                         let _ = tx_clone.send(Event::UserMessage(content)).await;
+                        let _ = tx_clone.send(Event::UserMessage(content)).await;
                     }
                 });
                 Some(Arc::<OneBotClient>::new(client))
-            },
+            }
             Err(e) => {
                 tracing::error!("Failed to init OneBot: {}", e);
                 None
@@ -318,12 +356,16 @@ async fn main() -> anyhow::Result<()> {
             match rl.readline("> ") {
                 Ok(line) => {
                     let trimmed = line.trim();
-                    if trimmed.is_empty() { continue; }
+                    if trimmed.is_empty() {
+                        continue;
+                    }
 
                     if trimmed == "quit" || trimmed == "exit" {
                         println!("Shutting down gracefully...");
                         let _ = rl.save_history(&history_path);
-                        if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                        if let Some(tx) = shutdown_tx.take() {
+                            let _ = tx.send(());
+                        }
                         return;
                     }
 
@@ -353,18 +395,24 @@ async fn main() -> anyhow::Result<()> {
                     // Ctrl-C: signal shutdown
                     println!("\nShutting down...");
                     let _ = rl.save_history(&history_path);
-                    if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                    if let Some(tx) = shutdown_tx.take() {
+                        let _ = tx.send(());
+                    }
                     return;
                 }
                 Err(ReadlineError::Eof) => {
                     // Ctrl-D: signal shutdown
                     let _ = rl.save_history(&history_path);
-                    if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                    if let Some(tx) = shutdown_tx.take() {
+                        let _ = tx.send(());
+                    }
                     return;
                 }
                 Err(err) => {
                     tracing::error!("Readline error: {:?}", err);
-                    if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
+                    if let Some(tx) = shutdown_tx.take() {
+                        let _ = tx.send(());
+                    }
                     return;
                 }
             }
@@ -398,7 +446,8 @@ async fn main() -> anyhow::Result<()> {
                 use mneme_reasoning::agent_loop::AgentAction;
                 match action {
                     AgentAction::StateUpdate => {
-                        // Organism tick completed — no user-visible action needed
+                        // Organism tick completed — ping browser session to prevent idle timeout
+                        mneme_reasoning::tools::browser_keepalive(&browser_session_keepalive).await;
                         continue;
                     }
                     AgentAction::ProactiveTrigger(trigger) => {
@@ -435,12 +484,16 @@ async fn main() -> anyhow::Result<()> {
 
         // Handle specific CLI commands that need main-thread access (like 'sync')
         if let Event::UserMessage(ref content) = event {
-             if content.source == "cli" && content.body.trim() == "sync" {
+            if content.source == "cli" && content.body.trim() == "sync" {
                 info!("Syncing sources...");
                 let items = source_manager.collect_all().await;
                 println!("Fetched {} items.", items.len());
                 for item in &items {
-                    println!("- [{}] {}", item.source, item.body.lines().next().unwrap_or(""));
+                    println!(
+                        "- [{}] {}",
+                        item.source,
+                        item.body.lines().next().unwrap_or("")
+                    );
                     if let Err(e) = memory.memorize(item).await {
                         error!("Failed to memorize item {}: {}", item.id, e);
                     }
@@ -448,7 +501,7 @@ async fn main() -> anyhow::Result<()> {
                 // Update engine's feed digest cache (Layer 3)
                 engine.update_feed_digest(&items).await;
                 continue; // Skip thinking
-             } else if content.source == "cli" && content.body.trim() == "sleep" {
+            } else if content.source == "cli" && content.body.trim() == "sleep" {
                 // Manual sleep/consolidation trigger
                 info!("Triggering sleep consolidation...");
                 match coordinator.trigger_sleep().await {
@@ -462,13 +515,16 @@ async fn main() -> anyhow::Result<()> {
                                 println!("⚠️ Narrative crisis detected during consolidation.");
                             }
                         } else {
-                            println!("Consolidation skipped: {}", result.skip_reason.unwrap_or_default());
+                            println!(
+                                "Consolidation skipped: {}",
+                                result.skip_reason.unwrap_or_default()
+                            );
                         }
                     }
                     Err(e) => error!("Sleep consolidation failed: {}", e),
                 }
                 continue;
-             } else if content.source == "cli" && content.body.trim() == "status" {
+            } else if content.source == "cli" && content.body.trim() == "status" {
                 // Show organism status
                 let state = coordinator.state().read().await.clone();
                 let lifecycle = coordinator.lifecycle_state().await;
@@ -486,10 +542,10 @@ async fn main() -> anyhow::Result<()> {
                 println!("Token usage (month): {}", monthly);
                 println!("=======================");
                 continue;
-             } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
+            } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
                 let cmd = content.body.trim_start_matches("os-exec ").trim();
                 info!("Executing OS command: '{}'", cmd);
-                
+
                 // Temp: use LocalExecutor for now
                 // In Phase 3 integration, this will be selected based on config or intent
                 use mneme_os::Executor;
@@ -499,17 +555,18 @@ async fn main() -> anyhow::Result<()> {
                         println!("--- Output ---");
                         println!("{}", output.trim());
                         println!("--------------");
-                    },
+                    }
                     Err(e) => error!("Execution failed: {:?}", e),
                 }
                 continue;
-             } else if content.source == "cli" && content.body.trim().starts_with("browser-test ") {
+            } else if content.source == "cli" && content.body.trim().starts_with("browser-test ") {
                 let url = content.body.trim_start_matches("browser-test ").trim();
                 info!("Testing Browser Navigation to: '{}'", url);
-                
+
                 // Test Browser Client
                 use mneme_browser::BrowserClient;
-                match BrowserClient::new(true) { // Headless = true
+                match BrowserClient::new(true) {
+                    // Headless = true
                     Ok(mut client) => {
                         if let Err(e) = client.launch() {
                             error!("Failed to launch browser: {}", e);
@@ -524,78 +581,101 @@ async fn main() -> anyhow::Result<()> {
                                 }
                             }
                         }
-                    },
+                    }
                     Err(e) => error!("Failed to init browser client: {}", e),
                 }
                 continue;
-             }
+            }
         }
-        
+
         // Log incoming messages
         if let Event::UserMessage(content) = &event {
             if content.source.starts_with("onebot") {
-                tracing::info!("Received OneBot message ({}) from {}: {}", content.source, content.author, content.body);
+                tracing::info!(
+                    "Received OneBot message ({}) from {}: {}",
+                    content.source,
+                    content.author,
+                    content.body
+                );
             }
         }
-        
+
         match engine.think(event.clone()).await {
-             Ok(response) => {
-                 // Handle Output
-                 if response.content.trim().is_empty() {
-                     tracing::debug!("Mneme decided to stay silent.");
-                     // Signal stdin loop that processing is done
-                     let _ = prompt_ready_tx.send(());
-                     continue;
-                 }
+            Ok(response) => {
+                // Handle Output
+                if response.content.trim().is_empty() {
+                    tracing::debug!("Mneme decided to stay silent.");
+                    // Signal stdin loop that processing is done
+                    let _ = prompt_ready_tx.send(());
+                    continue;
+                }
 
-                 if let Event::UserMessage(input_content) = &event {
-                     if input_content.source.starts_with("onebot") {
-                         // Reply via OneBot
-                         if let Some(client) = &onebot_client {
-                             let parts = humanizer.split_response(&response.content);
-                             for part in parts {
-                                 let delay = humanizer.typing_delay(&part, Some(response.emotion));
-                                 tokio::time::sleep(delay).await;
+                if let Event::UserMessage(input_content) = &event {
+                    if input_content.source.starts_with("onebot") {
+                        // Reply via OneBot
+                        if let Some(client) = &onebot_client {
+                            let parts = humanizer.split_response(&response.content);
+                            for part in parts {
+                                let delay = humanizer.typing_delay(&part, Some(response.emotion));
+                                tokio::time::sleep(delay).await;
 
-                                 // Check routing
-                                 if let Some(group_str) = input_content.source.strip_prefix("onebot:group:") {
-                                     match group_str.parse::<i64>() {
-                                         Ok(group_id) => {
-                                             if let Err(e) = client.send_group_message(group_id, &part).await {
-                                                 error!("Failed to send OneBot Group message: {}", e);
-                                             }
-                                         }
-                                         Err(e) => {
-                                             error!("OneBot: invalid group_id '{}': {}", group_str, e);
-                                         }
-                                     }
-                                 } else {
-                                     match input_content.author.parse::<i64>() {
-                                         Ok(user_id) => {
-                                             if let Err(e) = client.send_private_message(user_id, &part).await {
-                                                 error!("Failed to send OneBot Private message: {}", e);
-                                             }
-                                         }
-                                         Err(e) => {
-                                             error!("OneBot: invalid user_id '{}': {}", input_content.author, e);
-                                         }
-                                     }
-                                 }
-                             }
-                         }
-                     } else {
-                         // Reply via CLI
-                         print_response(&response, &humanizer, None).await;
-                     }
-                     // Signal stdin loop that response is done
-                     let _ = prompt_ready_tx.send(());
+                                // Check routing
+                                if let Some(group_str) =
+                                    input_content.source.strip_prefix("onebot:group:")
+                                {
+                                    match group_str.parse::<i64>() {
+                                        Ok(group_id) => {
+                                            if let Err(e) =
+                                                client.send_group_message(group_id, &part).await
+                                            {
+                                                error!(
+                                                    "Failed to send OneBot Group message: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "OneBot: invalid group_id '{}': {}",
+                                                group_str, e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    match input_content.author.parse::<i64>() {
+                                        Ok(user_id) => {
+                                            if let Err(e) =
+                                                client.send_private_message(user_id, &part).await
+                                            {
+                                                error!(
+                                                    "Failed to send OneBot Private message: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "OneBot: invalid user_id '{}': {}",
+                                                input_content.author, e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Reply via CLI
+                        print_response(&response, &humanizer, None).await;
                     }
-                 }
-             Err(e) => {
-                 tracing::error!("Reasoning error: {}", e);
-                 // Signal stdin loop even on error
-                 let _ = prompt_ready_tx.send(());
-             }
+                    // Signal stdin loop that response is done
+                    let _ = prompt_ready_tx.send(());
+                }
+            }
+            Err(e) => {
+                tracing::error!("Reasoning error: {}", e);
+                // Signal stdin loop even on error
+                let _ = prompt_ready_tx.send(());
+            }
         }
     }
 

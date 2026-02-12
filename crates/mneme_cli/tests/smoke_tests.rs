@@ -11,7 +11,10 @@ fn test_help_flag() {
     let output = cli_bin().arg("--help").output().expect("failed to run");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Usage"), "Expected usage info in --help output");
+    assert!(
+        stdout.contains("Usage"),
+        "Expected usage info in --help output"
+    );
 }
 
 #[test]
@@ -19,7 +22,10 @@ fn test_version_flag() {
     let output = cli_bin().arg("--version").output().expect("failed to run");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("mneme_cli"), "Expected crate name in --version output");
+    assert!(
+        stdout.contains("mneme_cli"),
+        "Expected crate name in --version output"
+    );
 }
 
 #[test]

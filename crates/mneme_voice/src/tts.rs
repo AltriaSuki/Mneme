@@ -26,7 +26,7 @@ pub trait TextToSpeech: Send + Sync {
     /// # Returns
     /// Raw audio bytes in the default format (usually MP3)
     async fn synthesize(&self, text: &str, emotion: Option<Emotion>) -> Result<Vec<u8>>;
-    
+
     /// Synthesize with a specific output format
     ///
     /// Default implementation returns an error. Implementations that support
@@ -43,23 +43,23 @@ pub trait TextToSpeech: Send + Sync {
             self.provider_name()
         )
     }
-    
+
     /// Get the default output format for this provider
     fn default_format(&self) -> OutputFormat {
         OutputFormat::Mp3
     }
-    
+
     /// Get the voice identifier being used
     fn voice_id(&self) -> &str;
-    
+
     /// Get the name of this TTS provider
     fn provider_name(&self) -> &'static str;
-    
+
     /// Check if this TTS engine supports emotional synthesis
     fn supports_emotion(&self) -> bool {
         false
     }
-    
+
     /// Check if this TTS engine supports a specific output format
     fn supports_format(&self, format: OutputFormat) -> bool {
         format == self.default_format()

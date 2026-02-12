@@ -1,13 +1,15 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use mneme_core::{Content, Modality};
-use tokio::net::TcpStream;
-use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
-use url::Url;
-use uuid::Uuid;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use tokio::net::TcpStream;
+use tokio::sync::mpsc;
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
+use url::Url;
+use uuid::Uuid;
 
 use crate::event::{OneBotEvent, SendMessageAction, SendMessageParams};
 
@@ -23,9 +25,17 @@ pub struct PendingMessageQueue {
     inner: Arc<Mutex<VecDeque<String>>>,
 }
 
+impl Default for PendingMessageQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PendingMessageQueue {
     pub fn new() -> Self {
-        Self { inner: Arc::new(Mutex::new(VecDeque::new())) }
+        Self {
+            inner: Arc::new(Mutex::new(VecDeque::new())),
+        }
     }
 
     /// Push a message. If at capacity, drops the oldest message first.
@@ -33,8 +43,11 @@ impl PendingMessageQueue {
         let mut q = self.inner.lock().unwrap();
         if q.len() >= PENDING_QUEUE_CAPACITY {
             let dropped = q.pop_front();
-            tracing::warn!("Pending queue full ({}), dropping oldest message: {:?}",
-                PENDING_QUEUE_CAPACITY, dropped.as_deref().map(|s| &s[..s.len().min(80)]));
+            tracing::warn!(
+                "Pending queue full ({}), dropping oldest message: {:?}",
+                PENDING_QUEUE_CAPACITY,
+                dropped.as_deref().map(|s| &s[..s.len().min(80)])
+            );
         }
         q.push_back(msg);
     }
@@ -64,29 +77,38 @@ pub struct OneBotClient {
 impl OneBotClient {
     pub fn new(url: &str, access_token: Option<&str>) -> Result<(Self, mpsc::Receiver<Content>)> {
         let mut ws_url = Url::parse(url).context("Invalid OneBot WS URL")?;
-        
+
         // Append access token as query parameter if provided
         if let Some(token) = access_token {
             ws_url.query_pairs_mut().append_pair("access_token", token);
         }
-        
+
         let (tx, mut rx) = mpsc::channel::<String>(32);
         let (content_tx, content_rx) = mpsc::channel::<Content>(32);
 
         let pending = PendingMessageQueue::new();
-        let client = Self { _ws_url: ws_url.clone(), tx, pending: pending.clone() };
+        let client = Self {
+            _ws_url: ws_url.clone(),
+            tx,
+            pending: pending.clone(),
+        };
 
         // Spawn the WebSocket handler task
         tokio::spawn(async move {
             let mut retry_count: u32 = 0;
             const MAX_RETRIES: u32 = 10;
             loop {
-                tracing::info!("Connecting to OneBot at {}...", ws_url.as_str().split('?').next().unwrap_or(ws_url.as_str()));
+                tracing::info!(
+                    "Connecting to OneBot at {}...",
+                    ws_url.as_str().split('?').next().unwrap_or(ws_url.as_str())
+                );
                 match connect_async(&ws_url).await {
                     Ok((ws_stream, _)) => {
                         tracing::info!("Connected to OneBot!");
                         retry_count = 0; // Reset on successful connection
-                        if let Err(e) = Self::handle_connection(ws_stream, &mut rx, &content_tx, &pending).await {
+                        if let Err(e) =
+                            Self::handle_connection(ws_stream, &mut rx, &content_tx, &pending).await
+                        {
                             tracing::error!("OneBot connection error: {}", e);
                         }
                         // Connection lost, wait before reconnecting
@@ -104,7 +126,10 @@ impl OneBotClient {
                         let wait_secs = 60u64.min(2u64.pow(retry_count.min(6) + 1)); // 4s, 8s, 16s, 32s, 64→60s
                         tracing::error!(
                             "Failed to connect (attempt {}/{}): {}. Retrying in {}s...",
-                            retry_count, MAX_RETRIES, e, wait_secs
+                            retry_count,
+                            MAX_RETRIES,
+                            e,
+                            wait_secs
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
                     }
@@ -126,7 +151,10 @@ impl OneBotClient {
         // Drain pending messages buffered during disconnect
         let buffered = pending.drain_all();
         if !buffered.is_empty() {
-            tracing::info!("Draining {} pending messages after reconnect", buffered.len());
+            tracing::info!(
+                "Draining {} pending messages after reconnect",
+                buffered.len()
+            );
             for msg in buffered {
                 write.send(Message::Text(msg)).await?;
             }
@@ -158,7 +186,7 @@ impl OneBotClient {
                                      timestamp: msg_event.time,
                                      modality: Modality::Text,
                                  };
-                                 
+
                                  // Send to reasoning engine
                                  let _ = content_tx.send(content).await;
                              } else {
@@ -177,7 +205,7 @@ impl OneBotClient {
                         }
                     }
                 }
-                
+
                 // Outgoing messages to OneBot (from Client::send)
                 Some(json_payload) = rx.recv() => {
                     write.send(Message::Text(json_payload)).await?;
