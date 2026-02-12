@@ -1,9 +1,9 @@
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{Local, Timelike};
 use mneme_core::{Trigger, TriggerEvaluator};
-use anyhow::Result;
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 /// Entry in the schedule
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ impl ScheduleEntry {
         if minute >= 60 {
             anyhow::bail!("Invalid minute: {}", minute);
         }
-        
+
         Ok(Self {
             name: name.to_string(),
             hour,
@@ -35,7 +35,7 @@ impl ScheduleEntry {
             tolerance_minutes: 5, // Default 5 minute window
         })
     }
-    
+
     /// Check if current time matches this entry
     pub fn matches_now(&self) -> bool {
         self.matches_at(&Local::now())
@@ -45,11 +45,11 @@ impl ScheduleEntry {
     pub fn matches_at(&self, time: &impl Timelike) -> bool {
         let current_seconds = time.num_seconds_from_midnight();
         let target_seconds = (self.hour * 3600 + self.minute * 60) as i32;
-        
+
         // Handle wrap-around for midnight boundary if needed (simplified here)
         let diff_seconds = (current_seconds as i32 - target_seconds).abs();
         let tolerance_seconds = (self.tolerance_minutes * 60) as i32;
-        
+
         diff_seconds <= tolerance_seconds
     }
 }
@@ -73,7 +73,7 @@ impl ScheduledTriggerEvaluator {
             last_fired: Mutex::new(HashMap::new()),
         }
     }
-    
+
     /// Create with custom schedules
     pub fn with_schedules(schedules: Vec<ScheduleEntry>) -> Self {
         Self {
@@ -81,17 +81,21 @@ impl ScheduledTriggerEvaluator {
             last_fired: Mutex::new(HashMap::new()),
         }
     }
-    
+
     /// Add a schedule entry
     pub fn add_schedule(&mut self, entry: ScheduleEntry) {
         self.schedules.push(entry);
     }
 
     /// Helper to evaluate at a specific time (for testing)
-    pub fn evaluate_at(&self, now_timestamp: i64, time_struct: impl Timelike) -> Result<Vec<Trigger>> {
+    pub fn evaluate_at(
+        &self,
+        now_timestamp: i64,
+        time_struct: impl Timelike,
+    ) -> Result<Vec<Trigger>> {
         let mut triggers = Vec::new();
         let mut last_fired = self.last_fired.lock().unwrap();
-        
+
         for entry in &self.schedules {
             // Skip if already fired within the last hour
             if let Some(&last) = last_fired.get(&entry.name) {
@@ -99,18 +103,18 @@ impl ScheduledTriggerEvaluator {
                     continue;
                 }
             }
-            
+
             if entry.matches_at(&time_struct) {
                 // Update last_fired to prevent duplicate firing
                 last_fired.insert(entry.name.clone(), now_timestamp);
-                
+
                 triggers.push(Trigger::Scheduled {
                     name: entry.name.clone(),
                     schedule: format!("{}:{:02}", entry.hour, entry.minute),
                 });
             }
         }
-        
+
         Ok(triggers)
     }
 }
@@ -127,7 +131,7 @@ impl TriggerEvaluator for ScheduledTriggerEvaluator {
         let now = Local::now();
         self.evaluate_at(now.timestamp(), now.time())
     }
-    
+
     fn name(&self) -> &'static str {
         "ScheduledTriggerEvaluator"
     }
@@ -137,43 +141,43 @@ impl TriggerEvaluator for ScheduledTriggerEvaluator {
 mod tests {
     use super::*;
     use chrono::NaiveTime;
-    
+
     #[test]
     fn test_schedule_entry_validation() {
         assert!(ScheduleEntry::new("valid", 23, 59).is_ok());
         assert!(ScheduleEntry::new("invalid_hour", 24, 0).is_err());
         assert!(ScheduleEntry::new("invalid_min", 12, 60).is_err());
     }
-    
+
     #[test]
     fn test_matching_logic() {
         let entry = ScheduleEntry::new("test", 9, 0).unwrap();
-        
+
         // Exact match
         assert!(entry.matches_at(&NaiveTime::from_hms_opt(9, 0, 0).unwrap()));
-        
+
         // Within 5 min tolerance
         assert!(entry.matches_at(&NaiveTime::from_hms_opt(9, 4, 59).unwrap()));
-        
+
         // Outside tolerance
         assert!(!entry.matches_at(&NaiveTime::from_hms_opt(9, 6, 0).unwrap()));
     }
-    
+
     #[test]
     fn test_deduplication() {
         let entry = ScheduleEntry::new("test", 9, 0).unwrap();
         let evaluator = ScheduledTriggerEvaluator::with_schedules(vec![entry]);
         let time = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
         let now_ts = 100000;
-        
+
         // First fire
         let triggers = evaluator.evaluate_at(now_ts, time).unwrap();
         assert_eq!(triggers.len(), 1);
-        
+
         // Immediate re-fire (should be deduplicated)
         let triggers_again = evaluator.evaluate_at(now_ts + 60, time).unwrap();
         assert_eq!(triggers_again.len(), 0); // Should be empty
-        
+
         // Fire after 1 hour (should fire again)
         let triggers_later = evaluator.evaluate_at(now_ts + 3700, time).unwrap();
         assert_eq!(triggers_later.len(), 1);

@@ -4,10 +4,10 @@
 //! this evaluator fires `Trigger::Rumination` to initiate
 //! mind-wandering or proactive conversation.
 
+use anyhow::Result;
+use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::Mutex;
-use async_trait::async_trait;
-use anyhow::Result;
 use tokio::sync::RwLock;
 
 use mneme_core::{OrganismState, Trigger, TriggerEvaluator};
@@ -90,7 +90,8 @@ impl TriggerEvaluator for RuminationEvaluator {
         {
             tracing::debug!(
                 "Rumination: boredom={:.2} > threshold={:.2}, triggering mind-wandering",
-                state.fast.boredom, self.config.boredom_threshold
+                state.fast.boredom,
+                self.config.boredom_threshold
             );
             triggers.push(Trigger::Rumination {
                 kind: "mind_wandering".to_string(),
@@ -108,7 +109,8 @@ impl TriggerEvaluator for RuminationEvaluator {
         {
             tracing::debug!(
                 "Rumination: social_need={:.2} > threshold={:.2}, triggering social longing",
-                state.fast.social_need, self.config.social_need_threshold
+                state.fast.social_need,
+                self.config.social_need_threshold
             );
             triggers.push(Trigger::Rumination {
                 kind: "social_longing".to_string(),
@@ -126,7 +128,8 @@ impl TriggerEvaluator for RuminationEvaluator {
         {
             tracing::debug!(
                 "Rumination: curiosity={:.2} > threshold={:.2}, triggering curiosity spike",
-                state.fast.curiosity, self.config.curiosity_threshold
+                state.fast.curiosity,
+                self.config.curiosity_threshold
             );
             triggers.push(Trigger::Rumination {
                 kind: "curiosity_spike".to_string(),

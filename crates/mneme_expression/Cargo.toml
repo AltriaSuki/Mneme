@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 mneme_core = { path = "../mneme_core" }
+mneme_limbic = { path = "../mneme_limbic" }
 rand = "0.8"
 chrono = "0.4"
 async-trait = "0.1"
