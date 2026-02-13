@@ -1072,7 +1072,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] CLI `--config` 参数 + `--model` / `--db` / `--persona` 覆盖 ✅
 - [x] `mneme.example.toml` 示例配置文件 ✅
 - [ ] 配置验证（schema-level）
-- [ ] Hot reload 支持
+- [x] Hot reload 支持 ✅ — `SharedConfig` (arc-swap) + CLI `reload` 命令
 
 ### 19. 🏗️ 测试覆盖率
 - [x] `cosine_similarity` 单元测试 ✅ — 7 个测试覆盖相同/相反/正交/缩放/空/零/长度不匹配
@@ -1736,10 +1736,10 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 > **目标**: ReasoningEngine 拆分，LLM provider 升级，配置热重载。
 
 **ReasoningEngine 拆分（高内聚）**:
-- [ ] `ContextBuilder` 提取 — 系统 prompt 组装、上下文压缩、token 预算管理
-- [ ] `ToolExecutor` 提取 — 工具调用 + 重试 + 超时，统一走 MCP/本地双路径
-- [ ] `ConversationManager` 提取 — 历史管理、裁剪、去重
-- [ ] `FeedbackRecorder` 提取 — 反馈信号收集（当前散落在 engine 各处）
+- [x] `ContextBuilder` 提取 — 系统 prompt 组装、上下文压缩、token 预算管理 ✅
+- [ ] `ToolExecutor` 提取 — 工具调用 + 重试 + 超时，统一走 MCP/本地双路径（体量过小暂缓）
+- [ ] `ConversationManager` 提取 — 历史管理、裁剪、去重（体量过小暂缓）
+- [ ] `FeedbackRecorder` 提取 — 反馈信号收集（体量过小暂缓）
 
 **LLM Provider 升级**:
 - [x] SSE 解析去重 — 提取 `SseBuffer` 到 `providers/sse.rs`，Anthropic/OpenAI 共用 ✅
@@ -1747,7 +1747,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] Provider trait 关联类型 — 区分 provider 特有的 request/response
 
 **配置与运行时**:
-- [ ] `arc-swap` + `notify` 配置热重载 — 不重启即可调整参数
+- [x] `arc-swap` config hot reload — CLI `reload` 命令实时重载 TOML 配置，SharedConfig lock-free 读取 ✅
 - [x] prompt 元指令语言自适应 (#76) — meta-instruction 跟随 persona 语言 ✅
 - [x] `mneme_voice` 退役 — 从 workspace 移除，语音能力通过 STT/TTS MCP server 按需获得 ✅
 - [x] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得 ✅
