@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use mneme_core::{Content, Modality};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -72,6 +73,7 @@ pub struct OneBotClient {
     pub(crate) _ws_url: Url,
     tx: mpsc::Sender<String>,
     pending: PendingMessageQueue,
+    connected: Arc<AtomicBool>,
 }
 
 impl OneBotClient {
@@ -87,10 +89,12 @@ impl OneBotClient {
         let (content_tx, content_rx) = mpsc::channel::<Content>(32);
 
         let pending = PendingMessageQueue::new();
+        let connected = Arc::new(AtomicBool::new(false));
         let client = Self {
             _ws_url: ws_url.clone(),
             tx,
             pending: pending.clone(),
+            connected: connected.clone(),
         };
 
         // Spawn the WebSocket handler task
@@ -105,12 +109,14 @@ impl OneBotClient {
                 match connect_async(&ws_url).await {
                     Ok((ws_stream, _)) => {
                         tracing::info!("Connected to OneBot!");
+                        connected.store(true, Ordering::Relaxed);
                         retry_count = 0; // Reset on successful connection
                         if let Err(e) =
                             Self::handle_connection(ws_stream, &mut rx, &content_tx, &pending).await
                         {
                             tracing::error!("OneBot connection error: {}", e);
                         }
+                        connected.store(false, Ordering::Relaxed);
                         // Connection lost, wait before reconnecting
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     }
@@ -121,6 +127,7 @@ impl OneBotClient {
                                 "OneBot: giving up after {} failed connection attempts. Last error: {}",
                                 MAX_RETRIES, e
                             );
+                            connected.store(false, Ordering::Relaxed);
                             return; // Circuit breaker: stop the task
                         }
                         let wait_secs = 60u64.min(2u64.pow(retry_count.min(6) + 1)); // 4s, 8s, 16s, 32s, 64→60s
@@ -258,6 +265,16 @@ impl OneBotClient {
                 self.pending.push(msg);
             }
         }
+    }
+
+    /// Whether the WebSocket connection is currently active.
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
+    }
+
+    /// Number of messages buffered while disconnected.
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
     }
 }
 

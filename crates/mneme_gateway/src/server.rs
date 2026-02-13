@@ -12,6 +12,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use mneme_core::Event;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tower_http::cors::CorsLayer;
@@ -24,6 +25,8 @@ struct AppState {
     event_tx: mpsc::Sender<Event>,
     /// Pending request→response mappings (UUID-keyed oneshot channels).
     pending: Arc<RwLock<HashMap<Uuid, oneshot::Sender<GatewayResponse>>>>,
+    /// Number of active WebSocket connections.
+    active_ws: Arc<AtomicUsize>,
 }
 
 /// The gateway HTTP + WebSocket server.
@@ -40,6 +43,8 @@ pub struct GatewayServer {
     response_rx: Option<mpsc::Receiver<GatewayResponse>>,
     /// Shared pending map.
     pending: Arc<RwLock<HashMap<Uuid, oneshot::Sender<GatewayResponse>>>>,
+    /// Active WebSocket connection count (shared with handlers).
+    active_ws: Arc<AtomicUsize>,
     /// Event sender (cloned into axum state).
     event_tx: mpsc::Sender<Event>,
     /// Bind address.
@@ -54,10 +59,12 @@ impl GatewayServer {
     pub fn new(event_tx: mpsc::Sender<Event>, host: &str, port: u16) -> Self {
         let (response_tx, response_rx) = mpsc::channel::<GatewayResponse>(256);
         let pending = Arc::new(RwLock::new(HashMap::new()));
+        let active_ws = Arc::new(AtomicUsize::new(0));
         Self {
             response_tx,
             response_rx: Some(response_rx),
             pending,
+            active_ws,
             event_tx,
             host: host.to_string(),
             port,
@@ -72,6 +79,11 @@ impl GatewayServer {
         self.response_tx.clone()
     }
 
+    /// Number of active WebSocket connections.
+    pub fn active_connections(&self) -> Arc<AtomicUsize> {
+        self.active_ws.clone()
+    }
+
     /// Start the server. This spawns a background task and returns the join handle.
     pub fn start(mut self) -> tokio::task::JoinHandle<()> {
         let response_rx = self
@@ -83,6 +95,7 @@ impl GatewayServer {
         let state = AppState {
             event_tx: self.event_tx.clone(),
             pending: pending.clone(),
+            active_ws: self.active_ws.clone(),
         };
 
         let app = Router::new()
@@ -197,6 +210,7 @@ async fn ws_upgrade(
 /// Inbound JSON messages are parsed as GatewayMessage and forwarded.
 /// Outbound responses are sent back as JSON.
 async fn handle_ws(socket: WebSocket, state: AppState) {
+    state.active_ws.fetch_add(1, Ordering::Relaxed);
     let (mut ws_tx, mut ws_rx) = socket.split();
     let pending = state.pending.clone();
 
@@ -256,6 +270,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
             _ => {}
         }
     }
+    state.active_ws.fetch_sub(1, Ordering::Relaxed);
 }
 
 #[cfg(test)]

@@ -507,15 +507,16 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // --- GATEWAY MODE ---
-    let gateway_response_tx = if let Some(ref gw_cfg) = config.gateway {
+    let (gateway_response_tx, gateway_active_ws) = if let Some(ref gw_cfg) = config.gateway {
         let gw_server =
             mneme_gateway::GatewayServer::new(event_tx.clone(), &gw_cfg.host, gw_cfg.port);
         let resp_tx = gw_server.response_sender();
+        let active_ws = gw_server.active_connections();
         gw_server.start();
         info!("Gateway started on {}:{}", gw_cfg.host, gw_cfg.port);
-        Some(resp_tx)
+        (Some(resp_tx), Some(active_ws))
     } else {
-        None
+        (None, None)
     };
 
     // Stdin loop using rustyline (line editing, history, CJK support)
@@ -737,6 +738,19 @@ async fn main() -> anyhow::Result<()> {
                 let monthly = token_budget.get_monthly_usage().await;
                 println!("Token usage (today): {}", daily);
                 println!("Token usage (month): {}", monthly);
+                // Connection status
+                if let Some(ref client) = onebot_client {
+                    let connected = if client.is_connected() { "Connected" } else { "Disconnected" };
+                    let pending = client.pending_count();
+                    if pending > 0 {
+                        println!("OneBot: {} ({} pending)", connected, pending);
+                    } else {
+                        println!("OneBot: {}", connected);
+                    }
+                }
+                if let Some(ref ws_count) = gateway_active_ws {
+                    println!("Gateway: {} active WebSocket(s)", ws_count.load(std::sync::atomic::Ordering::Relaxed));
+                }
                 println!("=======================");
                 continue;
             } else if content.source == "cli" && content.body.trim() == "like" {
