@@ -16,7 +16,7 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
-    pub fn new(model: &str) -> Result<Self> {
+    pub fn new(model: &str, timeout_secs: u64) -> Result<Self> {
         let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| "mock".to_string());
         let base_url = env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string())
@@ -25,7 +25,7 @@ impl OpenAiClient {
 
         Ok(Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(120))
+                .timeout(Duration::from_secs(timeout_secs))
                 .build()?,
             api_key,
             base_url,

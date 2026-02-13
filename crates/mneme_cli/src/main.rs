@@ -22,7 +22,42 @@ use mneme_reasoning::{
 };
 
 use rustyline::error::ReadlineError;
-use rustyline::{Config, DefaultEditor, EditMode};
+use rustyline::{Completer, Config, EditMode, Editor, Helper, Highlighter, Hinter, Validator};
+
+/// Rustyline helper providing tab-completion for CLI commands.
+#[derive(Completer, Helper, Highlighter, Hinter, Validator)]
+struct MnemeHelper {
+    #[rustyline(Completer)]
+    completer: CommandCompleter,
+}
+
+#[derive(Clone)]
+struct CommandCompleter;
+
+impl rustyline::completion::Completer for CommandCompleter {
+    type Candidate = String;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        const COMMANDS: &[&str] = &[
+            "quit", "exit", "status", "sync", "sleep", "like", "dislike",
+        ];
+        let prefix = &line[..pos];
+        if prefix.contains(' ') {
+            return Ok((0, vec![]));
+        }
+        let matches: Vec<String> = COMMANDS
+            .iter()
+            .filter(|cmd| cmd.starts_with(prefix))
+            .map(|cmd| cmd.to_string())
+            .collect();
+        Ok((0, matches))
+    }
+}
 
 /// Perform graceful shutdown with a 5-second timeout.
 async fn graceful_shutdown(coordinator: &OrganismCoordinator) {
@@ -296,15 +331,17 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Initialize LLM Client from config
+    let timeout = config.llm.timeout_secs;
     let client: Box<dyn LlmClient> = match config.llm.provider.as_str() {
-        "anthropic" => Box::new(AnthropicClient::new(&config.llm.model)?),
-        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model)?),
+        "anthropic" => Box::new(AnthropicClient::new(&config.llm.model, timeout)?),
+        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model, timeout)?),
+        "mock" => Box::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
         _ => {
             tracing::warn!(
                 "Unknown provider '{}', defaulting to Anthropic",
                 config.llm.provider
             );
-            Box::new(AnthropicClient::new(&config.llm.model)?)
+            Box::new(AnthropicClient::new(&config.llm.model, timeout)?)
         }
     };
 
@@ -318,9 +355,10 @@ async fn main() -> anyhow::Result<()> {
     // v0.8.0: Wire up LLM Dream Narrator (Phase 2) — second client for dream generation
     {
         let dream_client: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
-            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model)?),
-            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model)?),
-            _ => Arc::new(AnthropicClient::new(&config.llm.model)?),
+            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout)?),
+            "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
+            _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
         };
         let narrator = Arc::new(mneme_reasoning::LlmDreamNarrator::new(dream_client));
         coordinator.set_dream_narrator(narrator).await;
@@ -481,7 +519,11 @@ async fn main() -> anyhow::Result<()> {
             .edit_mode(EditMode::Emacs)
             .auto_add_history(true)
             .build();
-        let mut rl = DefaultEditor::with_config(config).expect("Failed to init rustyline");
+        let helper = MnemeHelper {
+            completer: CommandCompleter,
+        };
+        let mut rl = Editor::with_config(config).expect("Failed to init rustyline");
+        rl.set_helper(Some(helper));
 
         // Load history from ~/.mneme_history
         let history_path = dirs::data_local_dir()

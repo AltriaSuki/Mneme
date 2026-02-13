@@ -2529,15 +2529,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mneme_voice"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "mneme_core",
-]
-
-[[package]]
 name = "monostate"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -246,12 +246,12 @@ impl LlmClient for AnthropicClient {
 }
 
 impl AnthropicClient {
-    pub fn new(model: &str) -> Result<Self> {
+    pub fn new(model: &str, timeout_secs: u64) -> Result<Self> {
         let api_key = env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "mock".to_string());
 
         Ok(Self {
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .build()?,
             api_key,
             model: model.to_string(),
