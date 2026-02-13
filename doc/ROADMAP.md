@@ -961,7 +961,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **未修复**（需要更大改动）:
 - [x] 消息队列：断连期间缓存待发消息，重连后重发（`PendingMessageQueue`） ✅
-- [ ] 连接状态暴露给 CLI `status` 命令
+- [x] 连接状态暴露给 CLI `status` 命令 ✅ — OneBotClient.is_connected() + pending_count(), GatewayServer.active_connections()
 
 ---
 
