@@ -1,6 +1,7 @@
 use crate::{
+    context::ContextBuilder,
     llm::{CompletionParams, LlmClient},
-    prompts::{ContextAssembler, ContextLayers},
+    prompts::ContextAssembler,
 };
 use anyhow::Result;
 use mneme_core::safety::CapabilityGuard;
@@ -322,16 +323,6 @@ impl ReasoningEngine {
             .fast
             .curiosity_vector
             .top_interests(5);
-        let curiosity_context = if top_interests.is_empty() {
-            String::new()
-        } else {
-            top_interests
-                .iter()
-                .map(|(topic, intensity)| format!("- {} ({:.0}%)", topic, intensity * 100.0))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
         // === Compute Modulation Vector (temporally smoothed — emotion inertia) ===
         let modulation = self.limbic.get_modulation_vector().await;
 
@@ -365,81 +356,29 @@ impl ReasoningEngine {
             temperature: (base_temperature + modulation.temperature_delta).clamp(0.0, 2.0),
         };
 
-        // 1. Blended recall: episodes + facts in one call
-        //    B-10: Use reconstructed recall (mood/stress colored) instead of plain recall
-        //    ADR-007: Augment query with top curiosity interests to bias retrieval
-        let stress = somatic_marker.stress;
-        let recall_query = if top_interests.is_empty() {
-            input_text.to_string()
-        } else {
-            // Append top-2 curiosity topics to bias KNN toward current interests
-            let curiosity_suffix: String = top_interests
-                .iter()
-                .take(2)
-                .map(|(t, _)| *t)
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!("{} {}", input_text, curiosity_suffix)
-        };
-        let recalled_episodes = self
-            .memory
-            .recall_reconstructed(&recall_query, modulation.recall_mood_bias, stress)
-            .await?;
-        let facts = self
-            .memory
-            .recall_facts_formatted(input_text)
-            .await
-            .unwrap_or_default();
-
-        // 1b. Social graph: look up person context for the current speaker
-        let social_context = if let Some((source, author)) = speaker {
-            self.lookup_social_context(source, author).await
-        } else {
-            String::new()
-        };
-
-        // 1c. Self-knowledge: inject accumulated self-understanding for internal thoughts
-        //     (#71, #72, #77): ensures Mneme knows herself during metacognition,
-        //     inner monologue, and rumination — not just during user conversations.
-        let self_knowledge = if !is_user_message {
-            self.recall_self_knowledge_for_prompt().await
-        } else {
-            String::new()
-        };
-
-        // 1d. Resource status (#80): let Mneme know her own resource footprint
-        let resource_status = self.build_resource_status().await;
-
-        // 2. Tool definitions — passed via API native tool_use (ADR-014)
-        // No text tool instructions needed in system prompt anymore.
-        let tool_instructions = String::new();
-        let api_tools = if let Some(ref registry) = self.registry {
-            registry.available_tools()
-        } else {
-            vec![]
-        };
-
-        // 3. Assemble 6-layer context with modulated budget
-        let context_budget =
-            (self.context_budget_chars as f32 * modulation.context_budget_factor) as usize;
-
-        let context_layers = ContextLayers {
-            user_facts: facts,
-            recalled_episodes,
-            feed_digest: self.feed_cache.read().await.clone(),
-            social_context,
-            self_knowledge,
-            resource_status,
-            curiosity_context,
-        };
-
-        let system_prompt = ContextAssembler::build_full_system_prompt(
+        // === Assemble context via ContextBuilder ===
+        let ctx_builder = ContextBuilder::new(
             &self.psyche,
-            &somatic_marker,
-            &context_layers,
-            context_budget,
-            &tool_instructions,
+            &self.memory,
+            &self.feed_cache,
+            &self.social_graph,
+            &self.token_budget,
+            &self.registry,
+            self.context_budget_chars,
+            self.start_time,
         );
+        let assembled = ctx_builder
+            .build(
+                input_text,
+                speaker,
+                &somatic_marker,
+                &modulation,
+                &top_interests,
+                is_user_message,
+            )
+            .await?;
+        let system_prompt = assembled.system_prompt;
+        let api_tools = assembled.api_tools;
 
         // Current messages serves as the "Scratchpad" for the ReAct loop
         let mut scratchpad_messages = {
@@ -698,49 +637,6 @@ impl ReasoningEngine {
         ))
     }
 
-    /// Look up social context for the current speaker.
-    ///
-    /// Parses the source string to extract platform info (e.g. "onebot:group:123" → "onebot"),
-    /// then queries the social graph for person context.
-    async fn lookup_social_context(&self, source: &str, author: &str) -> String {
-        let graph = match &self.social_graph {
-            Some(g) => g,
-            None => return String::new(),
-        };
-
-        // Extract platform from source (e.g. "onebot:group:123" → "onebot", "cli" → "cli")
-        let platform = source.split(':').next().unwrap_or(source);
-
-        let person = match graph.find_person(platform, author).await {
-            Ok(Some(p)) => p,
-            Ok(None) => return String::new(),
-            Err(e) => {
-                tracing::debug!("Social graph lookup failed: {}", e);
-                return String::new();
-            }
-        };
-
-        // Fetch rich context
-        let person_id = person.id;
-        match graph.get_person_context(person_id).await {
-            Ok(Some(ctx)) => {
-                let mut parts = vec![format!("说话人: {}", ctx.person.name)];
-                if ctx.interaction_count > 0 {
-                    parts.push(format!("互动次数: {}", ctx.interaction_count));
-                }
-                if !ctx.relationship_notes.is_empty() {
-                    parts.push(format!("关系备注: {}", ctx.relationship_notes));
-                }
-                parts.join("\n")
-            }
-            Ok(None) => String::new(),
-            Err(e) => {
-                tracing::debug!("Failed to get person context: {}", e);
-                String::new()
-            }
-        }
-    }
-
     /// Ensure the speaker exists in the social graph and record the interaction (#53).
     ///
     /// Uses deterministic UUIDs (v5) so the same platform+author always maps to the
@@ -799,77 +695,6 @@ impl ReasoningEngine {
         {
             tracing::debug!("Failed to record interaction: {}", e);
         }
-    }
-
-    /// Recall self-knowledge entries formatted for system prompt injection.
-    ///
-    /// Used during internal thoughts (metacognition, inner monologue, rumination)
-    /// so Mneme retains self-awareness while thinking privately.
-    async fn recall_self_knowledge_for_prompt(&self) -> String {
-        let domains = [
-            "behavior",
-            "emotion",
-            "social",
-            "expression",
-            "body_feeling",
-            "infrastructure",
-        ];
-        let mut lines = Vec::new();
-        for domain in &domains {
-            let entries = self
-                .memory
-                .recall_self_knowledge_by_domain(domain)
-                .await
-                .unwrap_or_default();
-            for (content, confidence) in entries.iter().take(3) {
-                lines.push(format!(
-                    "[{}] {} ({:.0}%)",
-                    domain,
-                    content,
-                    confidence * 100.0
-                ));
-            }
-        }
-        lines.join("\n")
-    }
-
-    /// Build resource status string for prompt injection (#80).
-    ///
-    /// Gives Mneme awareness of her own resource footprint:
-    /// process uptime, memory size, and token budget usage.
-    async fn build_resource_status(&self) -> String {
-        let mut parts = Vec::new();
-
-        // Uptime
-        let uptime = self.start_time.elapsed();
-        let hours = uptime.as_secs() / 3600;
-        let mins = (uptime.as_secs() % 3600) / 60;
-        if hours > 0 {
-            parts.push(format!("运行时间: {}小时{}分钟", hours, mins));
-        } else {
-            parts.push(format!("运行时间: {}分钟", mins));
-        }
-
-        // Episode count
-        if let Ok(count) = self.memory.episode_count().await {
-            parts.push(format!("记忆片段数: {}", count));
-        }
-
-        // Token budget
-        if let Some(ref budget) = self.token_budget {
-            let daily = budget.get_daily_usage().await;
-            let monthly = budget.get_monthly_usage().await;
-            let mut token_line = format!("今日token: {}", daily);
-            if monthly > daily {
-                token_line.push_str(&format!(", 本月: {}", monthly));
-            }
-            if let Some(daily_limit) = budget.config().daily_limit {
-                token_line.push_str(&format!(" / 日限额{}", daily_limit));
-            }
-            parts.push(token_line);
-        }
-
-        parts.join("\n")
     }
 
     /// Handle a metacognition trigger: call LLM with full context pipeline, parse and store insights.

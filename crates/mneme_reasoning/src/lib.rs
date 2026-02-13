@@ -1,5 +1,6 @@
 pub mod agent_loop;
 pub mod api_types;
+pub mod context;
 pub mod decision;
 pub mod engine;
 pub mod extraction;
