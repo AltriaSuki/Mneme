@@ -1732,7 +1732,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] `sqlx migrate!` — 数据库迁移正规化，版本化迁移文件替代裸 ALTER TABLE ✅
 - [x] `tracing-opentelemetry` — Feature-gated OTLP 导出 (`--features otlp`, `--otlp-endpoint`)，`#[instrument]` on memorize/process_interaction/trigger_sleep ✅
 
-### v0.10.0 - 架构重构版本
+### v0.10.0 - 架构重构版本 ✅ 完成
 > **目标**: ReasoningEngine 拆分，LLM provider 升级，配置热重载。
 
 **ReasoningEngine 拆分（高内聚）**:
