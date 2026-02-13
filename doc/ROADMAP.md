@@ -1057,7 +1057,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 ## 🔧 技术债务 (Tech Debt)
 
 ### 17. 🏗️ 代码组织优化
-- [ ] `engine.rs` 过于庞大（~1650 LOC），需拆分为 `ContextAssembler`、`ToolDispatcher`、`ConversationManager`
+- [x] `engine.rs` 拆分：`ContextBuilder` 提取到 `context.rs`（recall/social/self-knowledge/resource/6-layer assembly）✅；ToolExecutor/ConversationManager/FeedbackRecorder 体量过小暂不拆分
 - [ ] 统一错误类型（目前全部使用 `anyhow::Error`，无自定义错误类型；可引入 `thiserror` 定义领域错误）
 - [ ] 减少 `Arc<RwLock<>>` 的过度使用（coordinator 有 8 个 Arc 字段，考虑 actor/mpsc 模式）
 - [ ] 文档注释补全（尤其是 public API；reasoning 和 CLI 模块注释稀疏）
@@ -1750,7 +1750,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] `arc-swap` + `notify` 配置热重载 — 不重启即可调整参数
 - [x] prompt 元指令语言自适应 (#76) — meta-instruction 跟随 persona 语言 ✅
 - [x] `mneme_voice` 退役 — 从 workspace 移除，语音能力通过 STT/TTS MCP server 按需获得 ✅
-- [ ] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得
+- [x] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得 ✅
 
 ### v0.11.0 - 对话体验版本
 > **目标**: 从 request-response 变成有存在感的对话者。
