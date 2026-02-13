@@ -34,6 +34,100 @@ impl OpenAiClient {
     }
 }
 
+/// Convert Mneme Tool definitions to OpenAI function-calling format.
+fn convert_tools_to_openai(tools: &[Tool]) -> Vec<Value> {
+    tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema
+                }
+            })
+        })
+        .collect()
+}
+
+/// Convert Mneme Messages to OpenAI chat format, prepending system prompt.
+fn convert_messages_to_openai(system: &str, messages: Vec<Message>) -> Vec<Value> {
+    let mut openai_messages = Vec::new();
+    openai_messages.push(json!({ "role": "system", "content": system }));
+
+    for msg in messages {
+        match msg.role {
+            Role::User => {
+                let final_text = msg
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                for block in &msg.content {
+                    if let ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        ..
+                    } = block
+                    {
+                        openai_messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": tool_use_id,
+                            "content": content
+                        }));
+                    }
+                }
+
+                if !final_text.is_empty() {
+                    openai_messages.push(json!({
+                        "role": "user",
+                        "content": final_text
+                    }));
+                }
+            }
+            Role::Assistant => {
+                let mut text_parts = Vec::new();
+                let mut tool_calls = Vec::new();
+                for block in &msg.content {
+                    match block {
+                        ContentBlock::Text { text } => text_parts.push(text.clone()),
+                        ContentBlock::ToolUse { id, name, input } => {
+                            tool_calls.push(json!({
+                                "id": id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": input.to_string()
+                                }
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+                let mut msg_obj = json!({"role": "assistant"});
+                if !text_parts.is_empty() {
+                    msg_obj["content"] = json!(text_parts.join("\n"));
+                }
+                if !tool_calls.is_empty() {
+                    msg_obj["tool_calls"] = json!(tool_calls);
+                    if text_parts.is_empty() {
+                        msg_obj["content"] = Value::Null;
+                    }
+                }
+                openai_messages.push(msg_obj);
+            }
+        }
+    }
+
+    openai_messages
+}
+
 #[async_trait::async_trait]
 impl LlmClient for OpenAiClient {
     #[tracing::instrument(skip(self, system, messages, tools, params), fields(model = %self.model))]
@@ -55,110 +149,9 @@ impl LlmClient for OpenAiClient {
             });
         }
 
-        // Convert Tools to OpenAI format
-        let openai_tools: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.input_schema
-                    }
-                })
-            })
-            .collect();
+        let openai_tools = convert_tools_to_openai(&tools);
+        let openai_messages = convert_messages_to_openai(system, messages);
 
-        // Convert Messages to OpenAI format
-        // OpenAI puts System prompt as the first message with role "system"
-        let mut openai_messages = Vec::new();
-        openai_messages.push(json!({
-            "role": "system",
-            "content": system
-        }));
-
-        for msg in messages {
-            match msg.role {
-                Role::User => {
-                    // Extract text
-                    let final_text = msg
-                        .content
-                        .iter()
-                        .filter_map(|b| {
-                            match b {
-                                ContentBlock::Text { text } => Some(text.clone()),
-                                _ => None, // OpenAI user msg is text based mostly (for now)
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-
-                    // Also check for ToolResults (which are role: tool in OpenAI)
-                    // NOTE: This logic assumes ToolResults might be mixed in User messages (Mneme internal model).
-                    // In strict OpenAI flow, tool results are standalone messages.
-                    // This converter extracts them and ensures they are emitted as distinct named messages.
-                    for block in msg.content {
-                        if let ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                            ..
-                        } = block
-                        {
-                            openai_messages.push(json!({
-                                "role": "tool",
-                                "tool_call_id": tool_use_id,
-                                "content": content
-                            }));
-                        }
-                    }
-
-                    if !final_text.is_empty() {
-                        openai_messages.push(json!({
-                            "role": "user",
-                            "content": final_text
-                        }));
-                    }
-                }
-                Role::Assistant => {
-                    // OpenAI Assistant message can have content AND tool_calls
-                    let mut text_parts = Vec::new();
-                    let mut tool_calls = Vec::new();
-
-                    for block in msg.content {
-                        match block {
-                            ContentBlock::Text { text } => text_parts.push(text),
-                            ContentBlock::ToolUse { id, name, input } => {
-                                tool_calls.push(json!({
-                                    "id": id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "arguments": input.to_string() // OpenAI expects stringified JSON
-                                    }
-                                }));
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    let mut msg_obj = json!({"role": "assistant"});
-                    if !text_parts.is_empty() {
-                        msg_obj["content"] = json!(text_parts.join("\n"));
-                    }
-                    if !tool_calls.is_empty() {
-                        msg_obj["tool_calls"] = json!(tool_calls);
-                        // If tools are present, content can be null in strict strict OpenAI, but usually optional
-                        if text_parts.is_empty() {
-                            msg_obj["content"] = serde_json::Value::Null;
-                        }
-                    }
-                    openai_messages.push(msg_obj);
-                }
-            }
-        }
-
-        // Request payload
         let mut payload = json!({
             "model": self.model,
             "messages": openai_messages,
@@ -300,93 +293,8 @@ impl LlmClient for OpenAiClient {
             return Ok(rx);
         }
 
-        // Convert tools to OpenAI format
-        let openai_tools: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.input_schema
-                    }
-                })
-            })
-            .collect();
-
-        // Convert messages to OpenAI format
-        let mut openai_messages = Vec::new();
-        openai_messages.push(json!({ "role": "system", "content": system }));
-
-        for msg in messages {
-            match msg.role {
-                Role::User => {
-                    let final_text = msg
-                        .content
-                        .iter()
-                        .filter_map(|b| match b {
-                            ContentBlock::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-
-                    for block in &msg.content {
-                        if let ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                            ..
-                        } = block
-                        {
-                            openai_messages.push(json!({
-                                "role": "tool",
-                                "tool_call_id": tool_use_id,
-                                "content": content
-                            }));
-                        }
-                    }
-
-                    if !final_text.is_empty() {
-                        openai_messages.push(json!({
-                            "role": "user",
-                            "content": final_text
-                        }));
-                    }
-                }
-                Role::Assistant => {
-                    let mut text_parts = Vec::new();
-                    let mut tool_calls = Vec::new();
-                    for block in &msg.content {
-                        match block {
-                            ContentBlock::Text { text } => text_parts.push(text.clone()),
-                            ContentBlock::ToolUse { id, name, input } => {
-                                tool_calls.push(json!({
-                                    "id": id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "arguments": input.to_string()
-                                    }
-                                }));
-                            }
-                            _ => {}
-                        }
-                    }
-                    let mut msg_obj = json!({"role": "assistant"});
-                    if !text_parts.is_empty() {
-                        msg_obj["content"] = json!(text_parts.join("\n"));
-                    }
-                    if !tool_calls.is_empty() {
-                        msg_obj["tool_calls"] = json!(tool_calls);
-                        if text_parts.is_empty() {
-                            msg_obj["content"] = Value::Null;
-                        }
-                    }
-                    openai_messages.push(msg_obj);
-                }
-            }
-        }
+        let openai_tools = convert_tools_to_openai(&tools);
+        let openai_messages = convert_messages_to_openai(system, messages);
 
         let mut payload = json!({
             "model": self.model,
