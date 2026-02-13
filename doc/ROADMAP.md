@@ -1036,7 +1036,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] Configurable log levels ✅ — `--log-level` CLI flag + `RUST_LOG` env var via `EnvFilter`
 - [x] File logging ✅ — `--log-file` with daily rolling via `tracing-appender`
 - [x] Key method instrumentation ✅ — `#[tracing::instrument]` on process_thought_loop, execute_tool_with_retry, complete (Anthropic/OpenAI), recall/recall_with_bias, consolidate
-- [ ] Distributed tracing (OpenTelemetry)
+- [x] Distributed tracing (OpenTelemetry) ✅ — feature-gated OTLP span export, `--otlp-endpoint` CLI arg
 - [ ] Grafana dashboard 模板
 
 ---
@@ -1729,8 +1729,8 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] `<emotion>` tag 机制移除 (#70) — 删除 `parse_emotion_tags` + `emotion_regex`，情绪统一由 limbic ODE 驱动 ✅
 - [x] 双重工具路径统一 (#75) — 切换到 API native tool_use，删除 `text_tool_parser` 模块 ✅
 - [x] `text_tool_parser.rs` 删除，`tools.rs` 硬编码 fallback 移除 ✅
-- [ ] `sqlx migrate!` — 数据库迁移正规化，版本化迁移文件替代裸 ALTER TABLE
-- [ ] `tracing-opentelemetry` — Level 0-1 全链路 trace，预留 Level 2-3 过滤能力
+- [x] `sqlx migrate!` — 数据库迁移正规化，版本化迁移文件替代裸 ALTER TABLE ✅
+- [x] `tracing-opentelemetry` — Feature-gated OTLP 导出 (`--features otlp`, `--otlp-endpoint`)，`#[instrument]` on memorize/process_interaction/trigger_sleep ✅
 
 ### v0.10.0 - 架构重构版本
 > **目标**: ReasoningEngine 拆分，LLM provider 升级，配置热重载。
@@ -1742,7 +1742,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] `FeedbackRecorder` 提取 — 反馈信号收集（当前散落在 engine 各处）
 
 **LLM Provider 升级**:
-- [ ] SSE 解析去重 — Anthropic/OpenAI 共享解析逻辑（当前 ~300 行重复）
+- [x] SSE 解析去重 — 提取 `SseBuffer` 到 `providers/sse.rs`，Anthropic/OpenAI 共用 ✅
 - [ ] 独立 `MockProvider` — 替代 `api_key == "mock"` 散落判断
 - [ ] Provider trait 关联类型 — 区分 provider 特有的 request/response
 
