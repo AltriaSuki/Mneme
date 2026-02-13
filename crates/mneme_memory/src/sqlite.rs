@@ -1662,7 +1662,8 @@ impl SqliteMemory {
             "SELECT id, domain, content, confidence, source, source_episode_id, \
              is_private, created_at, updated_at \
              FROM self_knowledge WHERE domain = ? AND confidence > 0.1 \
-             ORDER BY confidence DESC",
+             ORDER BY confidence DESC \
+             LIMIT 50",
         )
         .bind(domain)
         .fetch_all(&self.pool)
@@ -1682,7 +1683,8 @@ impl SqliteMemory {
             "SELECT id, domain, content, confidence, source, source_episode_id, \
              is_private, created_at, updated_at \
              FROM self_knowledge WHERE confidence > ? \
-             ORDER BY domain, confidence DESC",
+             ORDER BY domain, confidence DESC \
+             LIMIT 100",
         )
         .bind(min_confidence)
         .fetch_all(&self.pool)
@@ -1754,7 +1756,7 @@ impl SqliteMemory {
         let mut output = String::from("== 自我认知 ==\n");
         for (domain, items) in &by_domain {
             output.push_str(&format!("[{}]\n", domain));
-            for item in items {
+            for item in items.iter().take(5) {
                 output.push_str(&format!(
                     "- {} (确信度: {:.0}%)\n",
                     item.content,

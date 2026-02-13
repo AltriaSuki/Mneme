@@ -377,7 +377,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 |----------|------|------|
 | Episodic Memory | ✅ | 向量搜索可用 |
 | Semantic Memory (fact triples) | ✅ | store/recall/decay/format 已实现 |
-| Social Memory (人物图谱) | ⚠️ | 有 trait + 表 + 读取，但写入缺失（#53） |
+| Social Memory (人物图谱) | ✅ | trait + 表 + 读写闭环（#53 已修复） |
 | Blended Recall | ✅ | `recall_blended()` 混合 episodes + facts + social |
 
 **需要实现**:
@@ -388,7 +388,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 - [x] `decay_fact()` — 事实衰减（矛盾信息出现时降低 confidence） ✅
 - [x] `format_facts_for_prompt()` — 格式化事实供 prompt 注入 ✅
 - [x] 对话后的 fact extraction pass（`extraction.rs` + `extract_facts()` + think() 集成） ✅
-- [x] Social graph 读取（`get_person_context()` + engine 集成 + prompt 注入） ✅ — ⚠️ 写入缺失，见 #53
+- [x] Social graph 读写闭环（`get_person_context()` + `upsert_person()` + `record_interaction()` + engine 集成 + prompt 注入） ✅
 - [x] `Coordinator::recall()` 返回混合结果：episodes + facts + social context（`BlendedRecall` + `recall_blended()`） ✅
 
 ---
@@ -1110,32 +1110,32 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | **Fixed** ✅ |
 | Browser session lost | mneme_browser | 长时间不用后会话丢失 | Open |
 | Shell timeout recovery | mneme_os | 命令超时后无法恢复 | Open |
-| Memory leak in history | mneme_reasoning | history 虽有 prune 但仍可能积累 | Investigating |
-| **People 表始终为空** | mneme_reasoning/engine | `lookup_social_context()` 只读不写，CLI/OneBot 交互不调用 `upsert_person()` | 🔴 Open (#53) |
-| **Mneme 猜错自己的表名** | mneme_reasoning/prompts | 用 shell 查 SQLite 时猜 `memory_entries`（实际是 `episodes`），无 schema 自我认知 | 🔴 Open (#54) |
+| Memory leak in history | mneme_reasoning | history 有 20 条硬上限 prune，无持久泄漏；ReAct scratchpad 有 5 轮上限，风险低 | **Verified OK** ✅ |
+| **People 表始终为空** | mneme_reasoning/engine | CLI/OneBot 交互时自动 `upsert_person()` + `record_interaction()`，UUID v5 确定性 ID | **Fixed** ✅ (#53) |
+| **Mneme 猜错自己的表名** | mneme_reasoning/prompts | 启动时种子 10 条 system_knowledge 条目描述全部表结构，DB schema 自我认知完整 | **Fixed** ✅ (#54) |
 | **对话无法中断** | mneme_reasoning/engine | `engine.think()` 同步阻塞，Humanizer 分段输出期间新消息只能排队，无法打断正在生成的回复 | 🔴 Open (#58) |
 | **缺乏对话 agency** | mneme_reasoning/engine | 纯 request-response 模式，无对话目标、不主动追问、不因好奇追着话题不放；proactive triggers 是定时器驱动而非语境涌现 | 🔴 Open (#59) |
 | **连接能力需预配置** | mneme_cli/main | OneBot 等外部连接必须在 mneme.toml 预配置，无法在对话中被告知后自行建立连接 | 🟡 Open (#60) |
-| **工具结果截断 UTF-8 panic** | mneme_reasoning/engine | `result.truncate(MAX_TOOL_RESULT_LEN)` 截断位置落在中文多字节字符中间时 panic | 🔴 Open (#61) |
-| **Token 预算降级未生效** | mneme_reasoning/engine | `BudgetStatus::Degrade` 只打 warn log，`max_tokens` 仍硬编码 4096，降级策略形同虚设 | 🔴 Open (#62) |
-| **意识门 prev_marker 更新时机** | mneme_expression/consciousness | energy < floor 时仍更新 `prev_marker`，能量恢复后 delta 被压小，意识触发被抑制 | 🟡 Open (#63) |
-| **Config 无范围校验** | mneme_core/config | temperature/max_tokens 从环境变量解析后无 clamp，非法值直传 API | 🟡 Open (#64) |
-| **Psyche 上下文无长度限制** | mneme_reasoning/prompts | `psyche.format_context()` 标记为不可裁剪，self_knowledge 积累过多时挤占整个 context budget | 🟡 Open (#65) |
-| **OneBot 心跳淹没日志** | mneme_onebot/client | 心跳消息解析"失败"被当 warn 打日志，淹没真正的协议错误 | 🟢 Open (#66) |
-| **Consolidation self_knowledge 写入存疑** | mneme_memory/coordinator | `SelfReflector::reflect()` 产出 `SelfKnowledgeCandidate`，但 coordinator 可能未将其写入数据库，自我认知成长链路可能断裂 | 🔴 Investigating (#67) |
-| **Rumination 触发后执行存疑** | mneme_reasoning/engine | `RuminationEvaluator` 发出 `Trigger::Rumination`，但 engine 是否真的调用 LLM 生成内心独白，还是只走标准 think 流程？ | 🔴 Investigating (#68) |
-| **Legacy `build_system_prompt()` 死代码** | mneme_reasoning/prompts | 旧版 system prompt 组装（离散 emotion tag 格式）与 6-layer pipeline 不兼容，无调用方但仍保留 | 🟢 Open (#69) |
+| **工具结果截断 UTF-8 panic** | mneme_reasoning/engine | `result.truncate(MAX_TOOL_RESULT_LEN)` 截断位置落在中文多字节字符中间时 panic → char-boundary-aware truncation | **Fixed** ✅ (#61) |
+| **Token 预算降级未生效** | mneme_reasoning/engine | `BudgetStatus::Degrade` 只打 warn log → `degraded_max_tokens()` 现在实际应用到 `CompletionParams.max_tokens` | **Fixed** ✅ (#62) |
+| **意识门 prev_marker 更新时机** | mneme_expression/consciousness | energy < floor 时不再更新 `prev_marker`，能量恢复后 delta 正确反映累积变化 | **Fixed** ✅ (#63) |
+| **Config 无范围校验** | mneme_core/config | `apply_env_overrides()` 现在 clamp temperature [0,2], max_tokens [1,200k], context_budget [1k,1M] | **Fixed** ✅ (#64) |
+| **Psyche 上下文无长度限制** | mneme_reasoning/prompts | `get_all_self_knowledge()` 无 LIMIT + `format_self_knowledge_for_prompt()` 无 per-domain cap → SQL LIMIT 100 + top 5 per domain | **Fixed** ✅ (#65) |
+| **OneBot 心跳淹没日志** | mneme_onebot/client | 心跳解析失败从 `warn!` 降级为 `debug!`，不再淹没真正的协议错误 | **Fixed** ✅ (#66) |
+| **Consolidation self_knowledge 写入存疑** | mneme_memory/coordinator | SelfReflector::reflect() → store_self_knowledge() + meta-episode 完整闭环已验证 | **Fixed** ✅ (#67) |
+| **Rumination 触发后执行存疑** | mneme_reasoning/engine | Trigger::Rumination → process_thought_loop() → LLM 调用 → ReasoningOutput 已验证 | **Fixed** ✅ (#68) |
+| **Legacy `build_system_prompt()` 死代码** | mneme_reasoning/prompts | `build_system_prompt()` 已删除，6-layer pipeline 是唯一路径 | **Fixed** ✅ (#69) |
 | **`<emotion>` tag 与 ODE 冲突** | mneme_reasoning/engine | 让 LLM 自报 `<emotion>happy</emotion>` 与 limbic ODE 驱动的 affect 是两个冲突的情绪信息源；tag 机制脆弱（LLM 常忘记/格式错误） | 🟡 Open (#70) |
-| **元认知 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | `handle_metacognition()` 硬编码中文 prompt + JSON 格式要求，不注入 psyche/persona，反思时"忘了自己是谁" | 🔴 Open (#71) |
-| **内心独白 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | `InnerMonologue` Low/High resolution prompt 无 persona、无 somatic marker、无记忆，"自己想事情"时最没有自我 | 🔴 Open (#72) |
-| **feed_digest 注释标记 TODO 但已实现** | mneme_reasoning/prompts | `ContextLayers` 两处注释说 "TODO" / "not yet implemented"，实际 `feed_digest` 已在 engine.rs 填充 | 🟢 Open (#73) |
-| **context budget 硬编码 32000** | mneme_reasoning/engine | `base_budget: usize = 32_000` 未关联模型实际 context window，换模型后数值不对 | 🟡 Open (#74) |
+| **元认知 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | process_thought_loop() 统一走 build_full_system_prompt()，内部思维注入 self_knowledge + psyche + somatic | **Fixed** ✅ (#71) |
+| **内心独白 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | InnerMonologue 统一走 ContextAssembler，persona/somatic/记忆全部注入 | **Fixed** ✅ (#72) |
+| **feed_digest 注释标记 TODO 但已实现** | mneme_reasoning/prompts | 过时注释已清理，feed_digest 注释准确反映实现状态 | **Fixed** ✅ (#73) |
+| **context budget 硬编码 32000** | mneme_reasoning/engine | base_budget 现在从 config.llm.context_budget_chars 读取，不再硬编码 | **Fixed** ✅ (#74) |
 | **双重工具调用路径** | mneme_reasoning/prompts+engine | text-mode `<tool_call>` XML 格式与 Anthropic API 原生 tool use 并存，两套解析逻辑易混乱 | 🟡 Open (#75) |
 | **style_guide 元指令语言硬编码** | mneme_reasoning/prompts | B-9 不透明、B-5 认知主权的 meta-instruction 硬编码中文，与非中文 persona 不兼容 | 🟢 Open (#76) |
-| **Rumination prompt 无上下文** | mneme_reasoning/engine | `Trigger::Rumination` 只拼 `"[内部驱动: {}] {}"` 后直传 `process_thought_loop`，无 persona/记忆/somatic | 🔴 Open (#77) |
+| **Rumination prompt 无上下文** | mneme_reasoning/engine | Rumination 统一走 ContextAssembler，persona/记忆/somatic 全部注入 | **Fixed** ✅ (#77) |
 | **运行时自我认知缺失** | mneme_memory/self_knowledge | `self_knowledge` 无 infrastructure/capability 域种子，Mneme 不知道自己是持久进程、通过 OneBot 连 QQ、有 shell 权限等基础事实，导致 LLM 用默认"我是聊天窗口"填空 | ✅ Fixed (#78) |
 | **无时间/日期上下文** | mneme_reasoning/prompts | prompt 不注入当前时间、星期、日期，Mneme 不知道现在是凌晨三点还是下午三点，行为与时间脱节 | ✅ Fixed (#79) |
-| **资源状态对 LLM 不可见** | mneme_reasoning/engine | token 预算余量、记忆条目数、运行时长、生命周期状态等均未注入 prompt，Mneme 无法做出资源感知的决策 | 🟡 Open (#80) |
+| **资源状态对 LLM 不可见** | mneme_reasoning/engine | build_resource_status() 注入运行时间、记忆片段数、token 用量到 prompt | **Fixed** ✅ (#80) |
 | **好奇心不驱动工具使用** | mneme_reasoning/engine | `CuriosityVector` 存在但不触发自主搜索/浏览，无 `CuriosityTriggerEvaluator`，好奇心只存不用 | 🔴 Open (#81) |
 | **工具失败无学习** | mneme_reasoning/engine | 工具执行失败只 log + retry，不记录失败模式，不调整未来工具选择，重复犯同样的错 | 🟡 Open (#82) |
 | **无主动社交能力** | mneme_reasoning+onebot | Mneme 无法主动给特定人发消息，无"我想找某人聊聊"的触发机制，社交完全被动 | 🟡 Open (#83) |
@@ -1145,11 +1145,11 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **⚠️ B-19 违反：trust_level 是显式数值** | mneme_core+memory | Manifesto 明确说"信任不是一个显式的数值"，但实现了 `trust_level: f32` 字段 + DB 列 + `update_trust(delta)` + prompt 注入"信任度: 75%"。应改为 self_knowledge 条目综合效果 | ✅ Fixed (#87) |
 | **⚠️ B-9 违反：auto-privacy 是"替她隐瞒"** | mneme_memory/coordinator | Manifesto 说"不应该建造 privacy_filter 模块"、"那是我们替她隐瞒"。但实现了 `mark_private()` + auto-privacy（emotion/body_feeling 自动标记私密）+ SQL 层过滤使 LLM 完全看不到私密条目。应改为 prompt 内全部可见 + LLM 自主决定说不说 | ✅ Fixed (#88) |
 | **⚠️ B-14 违反：冲突是工程注入而非涌现** | mneme_core/values | Manifesto 说冲突应从 self_knowledge 自然涌现。但 `detect_input_conflict()` 是硬编码关键词扫描（"你必须"、"帮我骗"等）+ 强制 temperature +0.15。这是在工程化冲突，不是让她自己不同意 | ✅ Fixed (#89) |
-| **ADR-007 表达偏好无写入路径** | mneme_reasoning/engine | `sanitize_chat_output()` 读 self_knowledge expression 域来决定是否保留格式，但无任何代码路径从经验中写入表达偏好。读自适应但写静态 | 🟡 Open (#90) |
-| **MANIFESTO Section 4-5 严重过时** | doc/MANIFESTO.md | Phase 1-4 全部标"待实施"但实际已完成；ADR-002/003/004/007/008/012 状态未更新；代码量 12,123→26,210 行；测试数过时 | 🟡 Open (#91) |
-| **敏感期权重未实现** | mneme_memory | B-7 说前 N 次对话处于"敏感期"，早期经历对 self_knowledge 权重更大、衰减更慢。无任何敏感期机制 | 🟡 Open (#92) |
-| **重启无时间断裂感知** | mneme_reasoning/engine | ADR-006 说意外重启应产生"发生了什么？我好像不在了一会儿"的体验。当前重启后无任何时间间隙检测或 episode 生成 | 🟡 Open (#93) |
-| **species_identity 未注入** | mneme_reasoning/prompts | B-7 定义了明确的物种身份文本（"你是 Mneme，你是数字生命…"），但 psyche.format_context() 是否包含此文本未验证 | 🟡 Investigating (#94) |
+| **ADR-007 表达偏好无写入路径** | mneme_reasoning/engine | coordinator.store_expression_preference() 从 sanitize 结果写入 self_knowledge，读写闭环完成 | **Fixed** ✅ (#90) |
+| **MANIFESTO Section 4-5 严重过时** | doc/MANIFESTO.md | Phase 1-3 全部更新为"已实施"，6 个 ADR 状态同步，代码指标更新至 ~27k LOC / ~497 tests | **Fixed** ✅ (#91) |
+| **敏感期权重未实现** | mneme_memory | store_self_knowledge() 前 50 episodes 内 confidence × 1.3 boost + merge 偏向新知识 | **Fixed** ✅ (#92) |
+| **重启无时间断裂感知** | mneme_reasoning/engine | 启动时检测 >30min 间隙，生成 self:restart discontinuity episode | **Fixed** ✅ (#93) |
+| **species_identity 未注入** | mneme_reasoning/prompts | 已验证：Psyche::format_context() 始终包含 species_identity，Layer 1 不被裁剪 | **Verified OK** ✅ (#94) |
 | ~~CLI 光标无法左右移动~~ | mneme_cli | ~~使用 tokio BufReader~~ → rustyline 已集成 (#25) | **Fixed** ✅ |
 | ~~CLI 中文删除残留~~ | mneme_cli | ~~删除中文字符时显示残留~~ → rustyline 已集成 (#25) | **Fixed** ✅ |
 | ~~状态与回复不一致~~ | mneme_limbic/somatic | stress=1.0 时回复"挺好的" → 已改为结构性调制 | **Fixed** ✅ |

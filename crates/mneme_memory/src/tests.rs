@@ -731,6 +731,41 @@ async fn test_format_self_knowledge_for_prompt() {
     assert!(empty.is_empty());
 }
 
+#[tokio::test]
+async fn test_format_self_knowledge_per_domain_cap() {
+    // Create 8 entries in the same domain — only top 5 should appear
+    let entries: Vec<crate::sqlite::SelfKnowledge> = (0..8)
+        .map(|i| crate::sqlite::SelfKnowledge {
+            id: i + 1,
+            domain: "personality".to_string(),
+            content: format!("entry_{}", i),
+            confidence: 0.9 - (i as f32 * 0.05),
+            source: "test".to_string(),
+            source_episode_id: None,
+            is_private: false,
+            created_at: 0,
+            updated_at: 0,
+        })
+        .collect();
+
+    let formatted = SqliteMemory::format_self_knowledge_for_prompt(&entries);
+    // Should contain entries 0-4 but not 5-7
+    for i in 0..5 {
+        assert!(
+            formatted.contains(&format!("entry_{}", i)),
+            "should contain entry_{}",
+            i
+        );
+    }
+    for i in 5..8 {
+        assert!(
+            !formatted.contains(&format!("entry_{}", i)),
+            "should NOT contain entry_{}",
+            i
+        );
+    }
+}
+
 // =============================================================================
 // Episode Strength Tests (B-10 Three-Layer Forgetting Model)
 // =============================================================================

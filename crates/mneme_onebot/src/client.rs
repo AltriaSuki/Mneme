@@ -199,9 +199,10 @@ impl OneBotClient {
                                 tracing::warn!("OneBot Action Failed: {:?}", response);
                             }
                         } else {
-                             // Log parse errors more visibly to debug connection issues
-                             // Heartbeats might flood this if they fail parsing, but valid heartbeats should parse as MetaEvent
-                             tracing::warn!("Failed to parse OneBot message: {}. Raw: {}", text, text);
+                             // Downgrade to debug (#66): heartbeat messages with non-standard
+                             // fields fail to parse as OneBotEvent/OneBotResponse, flooding
+                             // logs with warn-level noise that drowns real protocol errors.
+                             tracing::debug!("Unrecognized OneBot message: {}", text);
                         }
                     }
                 }

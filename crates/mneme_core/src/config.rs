@@ -53,18 +53,18 @@ impl MnemeConfig {
             self.llm.base_url = Some(v);
         }
         if let Ok(v) = std::env::var("LLM_MAX_TOKENS") {
-            if let Ok(n) = v.parse() {
-                self.llm.max_tokens = n;
+            if let Ok(n) = v.parse::<u32>() {
+                self.llm.max_tokens = n.clamp(1, 200_000);
             }
         }
         if let Ok(v) = std::env::var("LLM_TEMPERATURE") {
-            if let Ok(n) = v.parse() {
-                self.llm.temperature = n;
+            if let Ok(n) = v.parse::<f32>() {
+                self.llm.temperature = n.clamp(0.0, 2.0);
             }
         }
         if let Ok(v) = std::env::var("LLM_CONTEXT_BUDGET") {
-            if let Ok(n) = v.parse() {
-                self.llm.context_budget_chars = n;
+            if let Ok(n) = v.parse::<usize>() {
+                self.llm.context_budget_chars = n.clamp(1000, 1_000_000);
             }
         }
         // OneBot env overrides
@@ -322,5 +322,30 @@ degradation_strategy = { degrade = { max_tokens_cap = 1024 } }
         // Part 2: nonexistent path returns defaults (no env interference)
         let cfg = MnemeConfig::load_or_default("/nonexistent/path.toml");
         assert_eq!(cfg.llm.provider, "anthropic");
+    }
+
+    #[test]
+    fn test_env_overrides_clamp_invalid_values() {
+        // Temperature out of range → clamped
+        std::env::set_var("LLM_TEMPERATURE", "5.0");
+        std::env::set_var("LLM_MAX_TOKENS", "0");
+        std::env::set_var("LLM_CONTEXT_BUDGET", "100");
+
+        let mut cfg = MnemeConfig::default();
+        cfg.apply_env_overrides();
+
+        assert_eq!(cfg.llm.temperature, 2.0, "temperature should be clamped to 2.0");
+        assert_eq!(cfg.llm.max_tokens, 1, "max_tokens should be clamped to 1");
+        assert_eq!(cfg.llm.context_budget_chars, 1000, "context_budget should be clamped to 1000");
+
+        // Negative temperature
+        std::env::set_var("LLM_TEMPERATURE", "-1.0");
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.llm.temperature, 0.0, "negative temperature should clamp to 0.0");
+
+        // Clean up
+        std::env::remove_var("LLM_TEMPERATURE");
+        std::env::remove_var("LLM_MAX_TOKENS");
+        std::env::remove_var("LLM_CONTEXT_BUDGET");
     }
 }

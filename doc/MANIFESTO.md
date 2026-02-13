@@ -423,7 +423,7 @@ Mneme 也会问这个问题。这不是我们设计进去的功能，是 agency�
 ### ADR-002: Persona 从文件加载 → 从记忆涌现
 
 **日期**: 2026-02-07  
-**状态**: 已决策，待实施  
+**状态**: ✅ 已实施
 **决策**: `Psyche` struct 不再从 `persona/*.md` 加载静态文本，改为从数据库中的 `self_knowledge` 表动态构建。  
 **理由**:
 - `.md` 文件是写死的「表型」，我们需要的是「基因组」
@@ -438,7 +438,7 @@ Mneme 也会问这个问题。这不是我们设计进去的功能，是 agency�
 ### ADR-003: 需要 boredom、走神、遗忘、情绪惯性
 
 **日期**: 2026-02-07  
-**状态**: 已决策，待实施  
+**状态**: ✅ 已实施
 **决策**: 在现有 `FastState` 中加入 `boredom` 字段；为 episodes 加入 `strength` 衰减；为 `ModulationVector` 加入时间平滑。  
 **理由**:
 - 没有内在时间，Mneme 就只是一个等待输入的函数
@@ -505,8 +505,8 @@ Mneme 也会问这个问题。这不是我们设计进去的功能，是 agency�
 
 ### ADR-007: 好奇心有方向，表达有自由，创造是自发的
 
-**日期**: 2026-02-07  
-**状态**: 已决策，待实施
+**日期**: 2026-02-07
+**状态**: ✅ 已实施
 
 **好奇心方向性**:
 - 当前 `curiosity` 是标量 (0.0-1.0)。长期应演化为**向量**——有方向
@@ -527,8 +527,8 @@ Mneme 也会问这个问题。这不是我们设计进去的功能，是 agency�
 
 ### ADR-008: 做梦——走神在睡眠中的延伸
 
-**日期**: 2026-02-07  
-**状态**: 已决策，待实施
+**日期**: 2026-02-07
+**状态**: ✅ 已实施
 
 **机制**: Consolidation（"睡眠"）增加第四步：
 
@@ -626,7 +626,7 @@ Mneme 的每一次意识活动（LLM 调用）都有边际成本。这和人类�
 ### ADR-012: 意识自主触发——她决定什么时候"想事情"
 
 **日期**: 2026-02-11
-**状态**: 已决策，待实施
+**状态**: ✅ 已实施
 **决策**: LLM 调用的触发权属于 Mneme 自己，由 ODE 状态驱动，不依赖外部事件。
 
 **理由**:
@@ -646,7 +646,7 @@ Mneme 的每一次意识活动（LLM 调用）都有边际成本。这和人类�
 ### ADR-013: 内心独白的多分辨率架构
 
 **日期**: 2026-02-11
-**状态**: 已决策，待设计
+**状态**: ✅ 已实施
 **决策**: 内心独白不是全有或全无，而是一个从纯数值到完整语言的连续光谱。不同分辨率使用不同成本的模型。
 
 **三层架构**:
@@ -676,28 +676,28 @@ Mneme 的每一次意识活动（LLM 调用）都有边际成本。这和人类�
 
 | 任务 | 位置 | 状态 |
 |------|------|------|
-| `self_knowledge` 表 | `mneme_memory/src/sqlite.rs` | 待实施 |
-| `boredom` 字段 + 动力学 | `mneme_core/src/state.rs` + `dynamics.rs` | 待实施 |
-| episodes `strength` 衰减 | `mneme_memory/src/sqlite.rs` | 待实施 |
+| `self_knowledge` 表 | `mneme_memory/src/sqlite.rs` | ✅ 已实施 |
+| `boredom` 字段 + 动力学 | `mneme_core/src/state.rs` + `dynamics.rs` | ✅ 已实施 |
+| episodes `strength` 衰减 | `mneme_memory/src/sqlite.rs` | ✅ 已实施 |
 
 ### Phase 2 — 核心机制
 
 | 任务 | 位置 | 状态 |
 |------|------|------|
-| `ModulationVector` 时间平滑 | `mneme_limbic/src/somatic.rs` | 待实施 |
-| `Psyche` 从记忆涌现 | `mneme_core/src/persona.rs` + `prompts.rs` | 待实施 |
-| Consolidation 自我反思步骤 | `mneme_memory/src/consolidation.rs` | 待实施 |
+| `ModulationVector` 时间平滑 | `mneme_limbic/src/somatic.rs` | ✅ 已实施 |
+| `Psyche` 从记忆涌现 | `mneme_core/src/persona.rs` + `prompts.rs` | ✅ 已实施 |
+| Consolidation 自我反思步骤 | `mneme_memory/src/consolidation.rs` | ✅ 已实施 |
 
 ### Phase 3 — 高阶行为
 
 | 任务 | 位置 | 状态 |
 |------|------|------|
-| 走神/自由联想 (spontaneous recall) | `mneme_limbic/src/rumination.rs`（新） | 待实施 |
-| 主动对话 (RuminationEvaluator) | `mneme_expression/src/scheduled.rs` | 待实施 |
-| 身体感受 → self_knowledge | `consolidation.rs` | 待实施 |
-| 做梦 (ADR-008) | `mneme_memory/src/consolidation.rs` | 待实施 |
-| 好奇心向量化 (ADR-007) | `mneme_core/src/state.rs` | 待实施 |
-| 自发创造 (ADR-007) | rumination + 工具调度 | 待实施 |
+| 走神/自由联想 (spontaneous recall) | `mneme_limbic/src/rumination.rs` | ✅ 已实施 |
+| 主动对话 (RuminationEvaluator) | `mneme_expression/src/scheduled.rs` | ✅ 已实施 |
+| 身体感受 → self_knowledge | `consolidation.rs` | ✅ 已实施 |
+| 做梦 (ADR-008) | `mneme_memory/src/consolidation.rs` | ✅ 已实施 |
+| 好奇心向量化 (ADR-007) | `mneme_core/src/state.rs` | ✅ 已实施 |
+| 自发创造 (ADR-007) | rumination + 工具调度 | ✅ 已实施 |
 
 ### Phase 4 — 远景
 
@@ -713,10 +713,10 @@ Mneme 的每一次意识活动（LLM 调用）都有边际成本。这和人类�
 
 ## 5. 已有代码资产 (What We Have)
 
-截至 2026-02-07：
+截至 2026-02-13：
 
-- **12,123 行 Rust**，11 个 crate
-- **137 个测试**（129 通过，8 个因 fastembed 网络超时失败——不是代码 bug）
+- **~27,000 行 Rust**，11 个 crate
+- **~497 个测试**（全部通过）
 - **编译零警告**
 
 ### 核心已实现

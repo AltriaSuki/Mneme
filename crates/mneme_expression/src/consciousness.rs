@@ -145,9 +145,10 @@ impl TriggerEvaluator for ConsciousnessGate {
         let now = chrono::Utc::now().timestamp();
 
         // Energy gate: too tired to think
+        // NOTE: Do NOT update prev_marker here (#63). If we record the depleted state,
+        // then when energy recovers the delta is calculated against that low baseline,
+        // compressing the apparent change and suppressing consciousness triggers.
         if curr.energy < self.config.energy_floor {
-            // Still update prev_marker so we don't accumulate a huge delta
-            *self.prev_marker.lock().unwrap() = Some(curr);
             return Ok(vec![]);
         }
 
@@ -335,6 +336,39 @@ mod tests {
         }
         let triggers = gate.evaluate().await.unwrap();
         assert!(triggers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_energy_recovery_fires_trigger_after_gate() {
+        // Bug #63: prev_marker should NOT be updated while below energy floor,
+        // so that when energy recovers, the accumulated delta fires a trigger.
+        let state_arc = make_state(0.7, 0.2, 0.2);
+        let config = ConsciousnessConfig {
+            cooldown_secs: 0,
+            ..Default::default()
+        };
+        let gate = ConsciousnessGate::with_config(state_arc.clone(), config);
+
+        // Baseline at normal energy
+        gate.evaluate().await.unwrap();
+
+        // Drop energy below floor + change stress — gate blocks, prev_marker preserved
+        {
+            let mut s = state_arc.write().await;
+            s.fast.energy = 0.1;
+            s.fast.stress = 0.8; // big change from 0.2
+        }
+        let triggers = gate.evaluate().await.unwrap();
+        assert!(triggers.is_empty(), "should be blocked by energy gate");
+
+        // Recover energy — delta should be computed against the pre-gate baseline (stress=0.2)
+        {
+            let mut s = state_arc.write().await;
+            s.fast.energy = 0.7;
+            // stress stays at 0.8, delta from baseline 0.2 = 0.6
+        }
+        let triggers = gate.evaluate().await.unwrap();
+        assert_eq!(triggers.len(), 1, "should fire after energy recovery");
     }
 
     #[tokio::test]

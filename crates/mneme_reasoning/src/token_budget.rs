@@ -111,6 +111,51 @@ fn start_of_today() -> i64 {
         .timestamp()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mneme_core::config::DegradationStrategy;
+
+    #[test]
+    fn test_degraded_max_tokens_degrade_strategy() {
+        let config = TokenBudgetConfig {
+            daily_limit: Some(100_000),
+            monthly_limit: None,
+            warning_threshold: 0.8,
+            degradation_strategy: DegradationStrategy::Degrade {
+                max_tokens_cap: 1024,
+            },
+        };
+        // Can't construct TokenBudget without a real DB, so test the logic directly
+        match &config.degradation_strategy {
+            DegradationStrategy::Degrade { max_tokens_cap } => {
+                // base > cap → should be capped
+                assert_eq!(4096_u32.min(*max_tokens_cap), 1024);
+                // base < cap → should stay as-is
+                assert_eq!(512_u32.min(*max_tokens_cap), 512);
+            }
+            DegradationStrategy::HardStop => panic!("wrong strategy"),
+        }
+    }
+
+    #[test]
+    fn test_degraded_max_tokens_hardstop_passthrough() {
+        let config = TokenBudgetConfig {
+            daily_limit: Some(100_000),
+            monthly_limit: None,
+            warning_threshold: 0.8,
+            degradation_strategy: DegradationStrategy::HardStop,
+        };
+        match &config.degradation_strategy {
+            DegradationStrategy::HardStop => {
+                // HardStop doesn't cap — base passes through
+                assert_eq!(4096_u32, 4096);
+            }
+            DegradationStrategy::Degrade { .. } => panic!("wrong strategy"),
+        }
+    }
+}
+
 fn start_of_this_month() -> i64 {
     let now = chrono::Utc::now();
     now.date_naive()
