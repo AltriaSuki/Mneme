@@ -1453,10 +1453,11 @@ impl SqliteMemory {
     ///
     /// Loads all entries with confidence > 0.1, formats them, and returns
     /// a Psyche with the formatted self-model.
-    pub async fn build_psyche(&self) -> Result<mneme_core::Psyche> {
+    /// `language` controls meta-instruction language ("zh" or "en").
+    pub async fn build_psyche(&self, language: &str) -> Result<mneme_core::Psyche> {
         let entries = self.get_all_self_knowledge(0.1).await?;
         let self_model = Self::format_self_knowledge_for_prompt(&entries);
-        Ok(mneme_core::Psyche::with_self_model(self_model))
+        Ok(mneme_core::Psyche::with_language(language, self_model))
     }
     /// Get the timestamp of the most recent episode in the database.
     ///

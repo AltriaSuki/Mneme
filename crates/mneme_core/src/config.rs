@@ -203,6 +203,10 @@ pub struct OrganismDefaults {
     pub persona_dir: String,
     pub tick_interval_secs: u64,
     pub trigger_interval_secs: u64,
+    /// Language for meta-instructions in system prompts ("zh" or "en").
+    /// Persona content (self_knowledge) is always in its original language;
+    /// this only affects structural headers and meta-instructions.
+    pub language: String,
 }
 
 impl Default for OrganismDefaults {
@@ -212,6 +216,7 @@ impl Default for OrganismDefaults {
             persona_dir: "persona".to_string(),
             tick_interval_secs: 10,
             trigger_interval_secs: 60,
+            language: "zh".to_string(),
         }
     }
 }

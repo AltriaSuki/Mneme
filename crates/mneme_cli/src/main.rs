@@ -325,7 +325,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let psyche = memory.build_psyche().await?;
+    let psyche = memory.build_psyche(&config.organism.language).await?;
 
     // 3. Initialize Source Manager
     let source_manager = Arc::new(SourceManager::new());

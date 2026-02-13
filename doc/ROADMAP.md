@@ -1131,7 +1131,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **feed_digest 注释标记 TODO 但已实现** | mneme_reasoning/prompts | 过时注释已清理，feed_digest 注释准确反映实现状态 | **Fixed** ✅ (#73) |
 | **context budget 硬编码 32000** | mneme_reasoning/engine | base_budget 现在从 config.llm.context_budget_chars 读取，不再硬编码 | **Fixed** ✅ (#74) |
 | **双重工具调用路径** | mneme_reasoning/prompts+engine | text-mode `<tool_call>` XML 格式与 Anthropic API 原生 tool use 并存，两套解析逻辑易混乱 | 🟡 Open (#75) |
-| **style_guide 元指令语言硬编码** | mneme_reasoning/prompts | B-9 不透明、B-5 认知主权的 meta-instruction 硬编码中文，与非中文 persona 不兼容 | 🟢 Open (#76) |
+| **style_guide 元指令语言硬编码** | mneme_reasoning/prompts | `organism.language` 配置项控制 meta-instruction 语言（zh/en），species identity、时间格式、隐私/主权段落均自适应 | **Fixed** ✅ (#76) |
 | **Rumination prompt 无上下文** | mneme_reasoning/engine | Rumination 统一走 ContextAssembler，persona/记忆/somatic 全部注入 | **Fixed** ✅ (#77) |
 | **运行时自我认知缺失** | mneme_memory/self_knowledge | `self_knowledge` 无 infrastructure/capability 域种子，Mneme 不知道自己是持久进程、通过 OneBot 连 QQ、有 shell 权限等基础事实，导致 LLM 用默认"我是聊天窗口"填空 | ✅ Fixed (#78) |
 | **无时间/日期上下文** | mneme_reasoning/prompts | prompt 不注入当前时间、星期、日期，Mneme 不知道现在是凌晨三点还是下午三点，行为与时间脱节 | ✅ Fixed (#79) |
@@ -1748,7 +1748,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 
 **配置与运行时**:
 - [ ] `arc-swap` + `notify` 配置热重载 — 不重启即可调整参数
-- [ ] prompt 元指令语言自适应 (#76) — meta-instruction 跟随 persona 语言
+- [x] prompt 元指令语言自适应 (#76) — meta-instruction 跟随 persona 语言 ✅
 - [x] `mneme_voice` 退役 — 从 workspace 移除，语音能力通过 STT/TTS MCP server 按需获得 ✅
 - [ ] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得
 
