@@ -259,10 +259,6 @@ async fn main() -> anyhow::Result<()> {
         config.llm.model
     );
 
-    // Initialize OS Executor (Local for now, potentially SSH based on config later)
-    use mneme_os::local::LocalExecutor;
-    let executor = Arc::new(LocalExecutor::default());
-
     // Initialize LLM Client from config
     let client: Box<dyn LlmClient> = match config.llm.provider.as_str() {
         "anthropic" => Box::new(AnthropicClient::new(&config.llm.model)?),
@@ -283,11 +279,21 @@ async fn main() -> anyhow::Result<()> {
         OrganismCoordinator::with_persistence(limbic, organism_config, memory.clone()).await?,
     );
 
+    // v0.8.0: Wire up LLM Dream Narrator (Phase 2) — second client for dream generation
+    {
+        let dream_client: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
+            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model)?),
+            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model)?),
+            _ => Arc::new(AnthropicClient::new(&config.llm.model)?),
+        };
+        let narrator = Arc::new(mneme_reasoning::LlmDreamNarrator::new(dream_client));
+        coordinator.set_dream_narrator(narrator).await;
+    }
+
     let mut engine = ReasoningEngine::with_coordinator(
         psyche,
         memory.clone(),
         client,
-        executor,
         coordinator.clone(),
     );
 
@@ -303,32 +309,33 @@ async fn main() -> anyhow::Result<()> {
     ));
     engine.set_guard(guard.clone());
 
-    // 4c. Initialize Tool Registry
-    let browser_session_keepalive = {
-        use mneme_reasoning::tools::{BrowserToolHandler, ShellToolHandler};
+    // 4c. Initialize Tool Registry + MCP tools
+    {
         use mneme_reasoning::ToolRegistry;
-
         let mut registry = ToolRegistry::with_guard(guard);
-        let browser_session = Arc::new(tokio::sync::Mutex::new(None));
-        let keepalive_handle = browser_session.clone();
 
-        registry.register(Box::new(ShellToolHandler {
-            executor: Arc::new(mneme_os::local::LocalExecutor::default()),
-            guard: registry.guard().cloned(),
-        }));
-        registry.register(Box::new(BrowserToolHandler::goto(browser_session.clone())));
-        registry.register(Box::new(BrowserToolHandler::click(browser_session.clone())));
-        registry.register(Box::new(BrowserToolHandler::type_text(
-            browser_session.clone(),
-        )));
-        registry.register(Box::new(BrowserToolHandler::screenshot(
-            browser_session.clone(),
-        )));
-        registry.register(Box::new(BrowserToolHandler::get_html(browser_session)));
+        // 4f. Connect MCP servers and register discovered tools
+        if let Some(ref mcp_config) = config.mcp {
+            let lifecycle_rx = coordinator.subscribe_lifecycle();
+            let mut mcp_manager =
+                mneme_mcp::McpManager::new(mcp_config.servers.clone(), lifecycle_rx);
+            match mcp_manager.connect_all().await {
+                Ok(mcp_tools) => {
+                    info!("MCP: {} tool(s) registered from MCP servers", mcp_tools.len());
+                    for tool in mcp_tools {
+                        registry.register(tool);
+                    }
+                }
+                Err(e) => {
+                    error!("MCP connection failed: {}", e);
+                }
+            }
+            // Spawn lifecycle watcher (disconnects on sleep, etc.)
+            mcp_manager.spawn_lifecycle_watcher();
+        }
 
         engine.set_registry(Arc::new(registry));
-        keepalive_handle
-    };
+    }
 
     // 4d. Initialize Token Budget
     let token_budget = Arc::new(mneme_reasoning::token_budget::TokenBudget::new(
@@ -413,6 +420,18 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // --- GATEWAY MODE ---
+    let gateway_response_tx = if let Some(ref gw_cfg) = config.gateway {
+        let gw_server =
+            mneme_gateway::GatewayServer::new(event_tx.clone(), &gw_cfg.host, gw_cfg.port);
+        let resp_tx = gw_server.response_sender();
+        gw_server.start();
+        info!("Gateway started on {}:{}", gw_cfg.host, gw_cfg.port);
+        Some(resp_tx)
+    } else {
+        None
+    };
+
     // Stdin loop using rustyline (line editing, history, CJK support)
     // Use a sync channel to block the stdin loop until the response is printed,
     // preventing the ">" prompt from appearing before Mneme's reply.
@@ -454,9 +473,7 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Commands that don't need to wait for response
-                    let needs_wait = !["sync", "sleep", "status"].contains(&trimmed)
-                        && !trimmed.starts_with("os-exec ")
-                        && !trimmed.starts_with("browser-test ");
+                    let needs_wait = !["sync", "sleep", "status", "like", "dislike"].contains(&trimmed);
 
                     let content = Content {
                         id: Uuid::new_v4(),
@@ -530,8 +547,6 @@ async fn main() -> anyhow::Result<()> {
                 use mneme_reasoning::agent_loop::AgentAction;
                 match action {
                     AgentAction::StateUpdate => {
-                        // Organism tick completed — ping browser session to prevent idle timeout
-                        mneme_reasoning::tools::browser_keepalive(&browser_session_keepalive).await;
                         // B-17: Decay engagement toward idle between interactions
                         engagement.decay(0.85);
                         continue;
@@ -628,48 +643,27 @@ async fn main() -> anyhow::Result<()> {
                 println!("Token usage (month): {}", monthly);
                 println!("=======================");
                 continue;
-            } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
-                let cmd = content.body.trim_start_matches("os-exec ").trim();
-                info!("Executing OS command: '{}'", cmd);
-
-                // Temp: use LocalExecutor for now
-                // In Phase 3 integration, this will be selected based on config or intent
-                use mneme_os::Executor;
-                let executor = mneme_os::local::LocalExecutor::new();
-                match executor.execute(cmd).await {
-                    Ok(output) => {
-                        println!("--- Output ---");
-                        println!("{}", output.trim());
-                        println!("--------------");
-                    }
-                    Err(e) => error!("Execution failed: {:?}", e),
-                }
+            } else if content.source == "cli" && content.body.trim() == "like" {
+                coordinator
+                    .record_feedback(
+                        mneme_memory::SignalType::UserEmotionalFeedback,
+                        "用户点赞（CLI命令）".to_string(),
+                        0.75,
+                        0.6,
+                    )
+                    .await;
+                println!("👍 已记录");
                 continue;
-            } else if content.source == "cli" && content.body.trim().starts_with("browser-test ") {
-                let url = content.body.trim_start_matches("browser-test ").trim();
-                info!("Testing Browser Navigation to: '{}'", url);
-
-                // Test Browser Client
-                use mneme_browser::BrowserClient;
-                match BrowserClient::new(true) {
-                    // Headless = true
-                    Ok(mut client) => {
-                        if let Err(e) = client.launch() {
-                            error!("Failed to launch browser: {}", e);
-                        } else {
-                            println!("Browser launched. Navigating...");
-                            if let Err(e) = client.goto(url) {
-                                error!("Failed to navigate: {}", e);
-                            } else {
-                                match client.get_title() {
-                                    Ok(title) => println!("Page Title: {}", title),
-                                    Err(e) => error!("Failed to get title: {}", e),
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => error!("Failed to init browser client: {}", e),
-                }
+            } else if content.source == "cli" && content.body.trim() == "dislike" {
+                coordinator
+                    .record_feedback(
+                        mneme_memory::SignalType::UserEmotionalFeedback,
+                        "用户点踩（CLI命令）".to_string(),
+                        0.8,
+                        -0.6,
+                    )
+                    .await;
+                println!("👎 已记录");
                 continue;
             }
         }
@@ -702,7 +696,23 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 if let Event::UserMessage(input_content) = &event {
-                    if input_content.source.starts_with("onebot") {
+                    if input_content.source.contains("|req:") {
+                        // Reply via Gateway — extract request_id from source tag
+                        if let Some(ref gw_tx) = gateway_response_tx {
+                            if let Some(req_str) = input_content.source.split("|req:").last() {
+                                if let Ok(request_id) = req_str.parse::<Uuid>() {
+                                    let gw_resp = mneme_gateway::GatewayResponse {
+                                        request_id,
+                                        content: response.content.clone(),
+                                        emotion: Some(format!("{:?}", response.emotion)),
+                                    };
+                                    if let Err(e) = gw_tx.send(gw_resp).await {
+                                        error!("Failed to send gateway response: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    } else if input_content.source.starts_with("onebot") {
                         // Reply via OneBot
                         if let Some(client) = &onebot_client {
                             let parts = humanizer.split_response(&response.content);

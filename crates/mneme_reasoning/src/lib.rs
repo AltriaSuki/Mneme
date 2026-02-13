@@ -9,14 +9,14 @@ pub mod prompts;
 pub mod providers;
 pub mod retry;
 pub mod scheduler;
-pub mod text_tool_parser;
 pub mod token_budget;
 pub mod tool_registry;
 pub mod tools;
 
 pub use decision::{DecisionLevel, DecisionRouter, DecisionRule};
 pub use engine::ReasoningEngine;
-pub use engine::{is_silence_response, parse_emotion_tags, sanitize_tool_result};
+pub use engine::{is_silence_response, sanitize_tool_result};
 pub use engine::{ToolErrorKind, ToolOutcome};
+pub use engine::LlmDreamNarrator;
 pub use scheduler::PresenceScheduler;
 pub use tool_registry::{ToolHandler, ToolRegistry};

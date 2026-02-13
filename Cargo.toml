@@ -11,5 +11,6 @@ members = [
     "crates/mneme_expression",
     "crates/mneme_onebot",
     "crates/mneme_voice",
-    "crates/mneme_os", "crates/mneme_browser",
+    "crates/mneme_mcp",
+    "crates/mneme_gateway",
 ]

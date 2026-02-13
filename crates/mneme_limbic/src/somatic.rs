@@ -217,12 +217,14 @@ impl SomaticMarker {
     }
 
     /// Format for LLM system prompt injection
-    /// Now uses minimal numeric state as an auxiliary signal — the primary
-    /// mechanism is the ModulationVector which structurally constrains the LLM.
+    /// Combines minimal numeric state with a human-readable affect description
+    /// so the LLM can both "feel" (via ModulationVector) and "know" its emotional state.
     pub fn format_for_prompt(&self) -> String {
+        let affect_desc = self.affect.describe();
         let mut s = format!(
-            "[内部状态: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]",
+            "[内部状态: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]\n[当前情绪: {}]",
             self.energy, self.stress, self.mood_bias, self.affect.valence, self.affect.arousal,
+            affect_desc,
         );
         // ADR-007: Inject curiosity direction
         if !self.curiosity_interests.is_empty() {

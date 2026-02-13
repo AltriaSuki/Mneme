@@ -14,6 +14,8 @@ pub struct MnemeConfig {
     pub token_budget: TokenBudgetConfig,
     pub organism: OrganismDefaults,
     pub onebot: Option<OneBotConfig>,
+    pub mcp: Option<McpConfig>,
+    pub gateway: Option<GatewayConfig>,
 }
 
 impl MnemeConfig {
@@ -209,6 +211,58 @@ impl Default for OrganismDefaults {
 pub struct OneBotConfig {
     pub ws_url: String,
     pub access_token: Option<String>,
+}
+
+// ============================================================================
+// MCP config (ADR-014)
+// ============================================================================
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct McpConfig {
+    pub servers: Vec<McpServerConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: std::collections::HashMap<String, String>,
+    pub auto_connect: bool,
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            command: String::new(),
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            auto_connect: true,
+        }
+    }
+}
+
+// ============================================================================
+// Gateway config (ADR-015)
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct GatewayConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+        }
+    }
 }
 
 // ============================================================================

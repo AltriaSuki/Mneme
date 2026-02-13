@@ -17,9 +17,9 @@ tracing-appender = "0.2"
 anyhow = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 mneme_expression = { path = "../mneme_expression" }
-mneme_os = { path = "../mneme_os" }
 mneme_onebot = { path = "../mneme_onebot" }
-mneme_browser = { path = "../mneme_browser" }
+mneme_mcp = { path = "../mneme_mcp" }
+mneme_gateway = { path = "../mneme_gateway" }
 chrono = "0.4"
 dotenv = "0.15"
 rustyline = { version = "14.0", features = ["derive"] }

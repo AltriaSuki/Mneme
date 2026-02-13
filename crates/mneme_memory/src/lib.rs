@@ -15,7 +15,7 @@ pub use consolidation::{
 pub use coordinator::{
     ActionEvaluation, InteractionResult, LifecycleState, OrganismConfig, OrganismCoordinator,
 };
-pub use dream::{DreamEpisode, DreamGenerator};
+pub use dream::{DreamEpisode, DreamGenerator, DreamNarrator};
 pub use feedback_buffer::{
     ConsolidatedPattern, FeedbackBuffer, FeedbackSignal, SignalType, StateUpdates,
 };

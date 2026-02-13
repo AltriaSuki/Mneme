@@ -125,6 +125,9 @@ pub struct OrganismCoordinator {
     /// Mutex to serialize state-mutating operations (process_interaction, trigger_sleep).
     /// Prevents concurrent mutations from interleaving reads and writes.
     state_mutation_lock: tokio::sync::Mutex<()>,
+
+    /// LLM-based dream narrator (Phase 2, v0.8.0)
+    dream_narrator: tokio::sync::RwLock<Option<Arc<dyn crate::dream::DreamNarrator>>>,
 }
 
 impl OrganismCoordinator {
@@ -165,6 +168,7 @@ impl OrganismCoordinator {
             rule_engine: None,
             goal_manager: None,
             state_mutation_lock: tokio::sync::Mutex::new(()),
+            dream_narrator: tokio::sync::RwLock::new(None),
         }
     }
 
@@ -226,6 +230,11 @@ impl OrganismCoordinator {
     /// Get current lifecycle state
     pub async fn lifecycle_state(&self) -> LifecycleState {
         *self.lifecycle_state.read().await
+    }
+
+    /// Set the LLM-based dream narrator (Phase 2, v0.8.0)
+    pub async fn set_dream_narrator(&self, narrator: Arc<dyn crate::dream::DreamNarrator>) {
+        *self.dream_narrator.write().await = Some(narrator);
     }
 
     /// Get shared state reference
@@ -610,11 +619,40 @@ impl OrganismCoordinator {
         }
 
         // Dream generation (ADR-008): recall random memories and weave a dream
+        // Phase 2 (v0.8.0): Try LLM narrator first, fall back to template generator
         if let Some(ref db) = self.db {
             match db.recall_random_by_strength(3).await {
                 Ok(seeds) if seeds.len() >= 2 => {
                     let current = self.state.read().await.clone();
-                    if let Some(dream) = crate::dream::DreamGenerator::generate(&seeds, &current) {
+
+                    // Try LLM dream narrator first (Phase 2)
+                    let llm_dream = if let Some(narrator) = self.dream_narrator.read().await.as_ref() {
+                        match narrator.narrate_dream(&seeds, &current).await {
+                            Ok(narrative) => {
+                                let tone = crate::dream::DreamGenerator::compute_emotional_tone(
+                                    &seeds,
+                                    current.medium.mood_bias,
+                                );
+                                tracing::info!("LLM dream narrator succeeded, tone={:.2}", tone);
+                                Some(crate::dream::DreamEpisode {
+                                    narrative,
+                                    source_ids: seeds.iter().map(|s| s.id.clone()).collect(),
+                                    emotional_tone: tone,
+                                })
+                            }
+                            Err(e) => {
+                                tracing::warn!("LLM dream narrator failed, falling back to template: {}", e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Fall back to template generator if LLM didn't produce a dream
+                    let dream = llm_dream.or_else(|| crate::dream::DreamGenerator::generate(&seeds, &current));
+
+                    if let Some(dream) = dream {
                         tracing::info!(
                             "Dream generated from {} seeds, tone={:.2}",
                             dream.source_ids.len(),
@@ -630,11 +668,6 @@ impl OrganismCoordinator {
                         };
                         if let Err(e) = db.memorize(&dream_content).await {
                             tracing::warn!("Failed to store dream episode: {}", e);
-                        } else {
-                            // Set dream strength to 0.4 (weaker than real memories)
-                            let _ = db
-                                .update_episode_strength(&dream_content.id.to_string(), 0.4)
-                                .await;
                         }
                         result.dream = Some(dream);
                     }
@@ -809,14 +842,16 @@ impl OrganismCoordinator {
     pub async fn shutdown(&self) {
         self.set_lifecycle_state(LifecycleState::ShuttingDown).await;
 
-        // Perform final consolidation if we have pending data
+        // Skip trigger_sleep() during shutdown — it includes LLM dream narration
+        // which easily exceeds the 5s timeout. Feedback signals are already
+        // persisted to DB in real-time (save_feedback_signal), so nothing is lost.
+        // Consolidation will pick them up on next startup.
         let pending = self.feedback_buffer.read().await.pending_count();
         if pending > 0 {
             tracing::info!(
-                "Performing final consolidation before shutdown ({} pending signals)",
+                "Shutdown with {} pending feedback signals (will consolidate on next wake)",
                 pending
             );
-            let _ = self.trigger_sleep().await;
         }
 
         // Final state save
