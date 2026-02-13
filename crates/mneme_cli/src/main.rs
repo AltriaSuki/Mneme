@@ -68,6 +68,18 @@ async fn graceful_shutdown(coordinator: &OrganismCoordinator) {
     }
 }
 
+/// Format a compact CLI prompt showing organism status.
+fn format_status_prompt(state: &mneme_core::OrganismState) -> String {
+    let mood = if state.fast.affect.valence > 0.3 {
+        "☀"
+    } else if state.fast.affect.valence < -0.3 {
+        "☁"
+    } else {
+        "·"
+    };
+    format!("[{}{:.0}%] > ", mood, state.fast.energy * 100.0)
+}
+
 async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
     println!(); // Spacer
     let parts = humanizer.split_response(&response.content);
@@ -513,6 +525,11 @@ async fn main() -> anyhow::Result<()> {
     let (prompt_ready_tx, prompt_ready_rx) = std::sync::mpsc::channel::<()>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tx_stdin = event_tx.clone();
+
+    // Shared prompt string — updated by main loop with organism status
+    let cli_prompt = Arc::new(std::sync::Mutex::new(String::from("> ")));
+    let cli_prompt_reader = cli_prompt.clone();
+
     tokio::task::spawn_blocking(move || {
         // Set up rustyline with history
         let config = Config::builder()
@@ -534,7 +551,8 @@ async fn main() -> anyhow::Result<()> {
         let mut shutdown_tx = Some(shutdown_tx);
 
         loop {
-            match rl.readline("> ") {
+            let prompt = cli_prompt_reader.lock().unwrap().clone();
+            match rl.readline(&prompt) {
                 Ok(line) => {
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
@@ -768,7 +786,8 @@ async fn main() -> anyhow::Result<()> {
                 // Handle Output
                 if response.content.trim().is_empty() {
                     tracing::debug!("Mneme decided to stay silent.");
-                    // Signal stdin loop that processing is done
+                    // Update prompt with current state, then signal stdin loop
+                    *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                     let _ = prompt_ready_tx.send(());
                     continue;
                 }
@@ -846,13 +865,15 @@ async fn main() -> anyhow::Result<()> {
                         // Reply via CLI
                         print_response(&response, &humanizer, None).await;
                     }
-                    // Signal stdin loop that response is done
+                    // Update prompt with current state, then signal stdin loop
+                    *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                     let _ = prompt_ready_tx.send(());
                 }
             }
             Err(e) => {
                 tracing::error!("Reasoning error: {}", e);
-                // Signal stdin loop even on error
+                // Update prompt and signal stdin loop even on error
+                *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                 let _ = prompt_ready_tx.send(());
             }
         }
