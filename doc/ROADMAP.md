@@ -941,7 +941,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **未修复**（影响较小，保留）:
 - [ ] OpenAI: 参数解析失败时返回错误而非空 `{}`（当前已有 warn 日志，改为硬错误可能破坏兼容 API）
-- [ ] 两个 provider 的超时统一为可配置参数
+- [x] 两个 provider 的超时统一为可配置参数 ✅ — `timeout_secs` in LlmConfig, env `LLM_TIMEOUT_SECS`
 
 ---
 
@@ -1336,7 +1336,7 @@ rustyline = "14.0"
 - [x] 集成 rustyline 替换 BufReader
 - [x] 命令历史持久化（~/.local/share/mneme_history）
 - [ ] 自定义 prompt（显示状态信息）
-- [ ] 基础命令补全（quit, exit, status 等）
+- [x] 基础命令补全（quit, exit, status 等） ✅ — rustyline Completer with tab-completion
 
 ---
 
@@ -1743,13 +1743,13 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 
 **LLM Provider 升级**:
 - [x] SSE 解析去重 — 提取 `SseBuffer` 到 `providers/sse.rs`，Anthropic/OpenAI 共用 ✅
-- [ ] 独立 `MockProvider` — 替代 `api_key == "mock"` 散落判断
+- [x] 独立 `MockProvider` — `providers/mock.rs` 实现 `LlmClient`，`provider = "mock"` 可用 ✅
 - [ ] Provider trait 关联类型 — 区分 provider 特有的 request/response
 
 **配置与运行时**:
 - [ ] `arc-swap` + `notify` 配置热重载 — 不重启即可调整参数
 - [ ] prompt 元指令语言自适应 (#76) — meta-instruction 跟随 persona 语言
-- [ ] `mneme_voice` 退役 — 语音能力通过 STT/TTS MCP server 按需获得
+- [x] `mneme_voice` 退役 — 从 workspace 移除，语音能力通过 STT/TTS MCP server 按需获得 ✅
 - [ ] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得
 
 ### v0.11.0 - 对话体验版本
