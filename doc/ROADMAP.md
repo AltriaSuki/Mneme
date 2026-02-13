@@ -1744,7 +1744,8 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 **LLM Provider 升级**:
 - [x] SSE 解析去重 — 提取 `SseBuffer` 到 `providers/sse.rs`，Anthropic/OpenAI 共用 ✅
 - [x] 独立 `MockProvider` — `providers/mock.rs` 实现 `LlmClient`，`provider = "mock"` 可用 ✅
-- [ ] Provider trait 关联类型 — 区分 provider 特有的 request/response
+- [x] Provider 内部去重 — 提取 convert_tools/convert_messages (OpenAI) + prepare_messages/parse_sse_event_block (Anthropic)，-152 行 ✅
+- [ ] Provider trait 关联类型 — 区分 provider 特有的 request/response（收益不大，暂缓）
 
 **配置与运行时**:
 - [x] `arc-swap` config hot reload — CLI `reload` 命令实时重载 TOML 配置，SharedConfig lock-free 读取 ✅
