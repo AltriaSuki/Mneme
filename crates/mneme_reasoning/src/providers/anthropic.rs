@@ -278,20 +278,18 @@ where
         + Send,
 {
     use crate::api_types::StreamEvent;
+    use super::sse::SseBuffer;
 
     let mut stream = byte_stream;
-    let mut buffer = String::new();
+    let mut buf = SseBuffer::new();
     let mut stop_reason: Option<String> = None;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk: bytes::Bytes = chunk_result.context("Error reading SSE chunk")?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        buf.push_bytes(&chunk);
 
-        // Process complete SSE lines
-        while let Some(pos) = buffer.find("\n\n") {
-            let event_block = buffer[..pos].to_string();
-            buffer = buffer[pos + 2..].to_string();
-
+        // Process complete SSE event blocks
+        for event_block in buf.extract_event_blocks() {
             let mut event_type = String::new();
             let mut event_data = String::new();
 
@@ -380,11 +378,12 @@ where
     }
 
     // Process any remaining content in buffer (last event may lack trailing \n\n)
-    if !buffer.trim().is_empty() {
+    let residue = buf.residue().trim().to_string();
+    if !residue.is_empty() {
         let mut event_type = String::new();
         let mut event_data = String::new();
 
-        for line in buffer.lines() {
+        for line in residue.lines() {
             if let Some(t) = line.strip_prefix("event: ") {
                 event_type = t.trim().to_string();
             } else if let Some(d) = line.strip_prefix("data: ") {

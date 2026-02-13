@@ -85,6 +85,10 @@ struct Args {
     /// Log file path (additional to stderr)
     #[arg(long)]
     log_file: Option<String>,
+
+    /// OTLP endpoint for distributed tracing (requires --features otlp)
+    #[arg(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
 }
 
 #[tokio::main]
@@ -100,6 +104,34 @@ async fn main() -> anyhow::Result<()> {
 
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
+
+        // Optional OpenTelemetry layer (only available with --features otlp)
+        #[cfg(feature = "otlp")]
+        let otel_layer = {
+            if let Some(ref endpoint) = args.otlp_endpoint {
+                use opentelemetry::trace::TracerProvider;
+                use opentelemetry_otlp::WithExportConfig;
+
+                let exporter = opentelemetry_otlp::SpanExporter::builder()
+                    .with_tonic()
+                    .with_endpoint(endpoint)
+                    .build()
+                    .expect("Failed to create OTLP exporter");
+
+                let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                    .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+                    .build();
+
+                let tracer = provider.tracer("mneme");
+                opentelemetry::global::set_tracer_provider(provider);
+
+                Some(tracing_opentelemetry::layer().with_tracer(tracer))
+            } else {
+                None
+            }
+        };
+        #[cfg(not(feature = "otlp"))]
+        let otel_layer: Option<tracing_subscriber::layer::Identity> = None;
 
         if let Some(ref log_path) = args.log_file {
             // File + stderr dual output
@@ -118,12 +150,14 @@ async fn main() -> anyhow::Result<()> {
             if args.log_json {
                 tracing_subscriber::registry()
                     .with(env_filter)
+                    .with(otel_layer)
                     .with(fmt::layer().json().with_writer(std::io::stderr))
                     .with(fmt::layer().json().with_writer(non_blocking))
                     .init();
             } else {
                 tracing_subscriber::registry()
                     .with(env_filter)
+                    .with(otel_layer)
                     .with(fmt::layer().with_writer(std::io::stderr))
                     .with(fmt::layer().with_writer(non_blocking))
                     .init();
@@ -131,11 +165,13 @@ async fn main() -> anyhow::Result<()> {
         } else if args.log_json {
             tracing_subscriber::registry()
                 .with(env_filter)
+                .with(otel_layer)
                 .with(fmt::layer().json())
                 .init();
         } else {
             tracing_subscriber::registry()
                 .with(env_filter)
+                .with(otel_layer)
                 .with(fmt::layer())
                 .init();
         }
@@ -778,6 +814,12 @@ async fn main() -> anyhow::Result<()> {
                 let _ = prompt_ready_tx.send(());
             }
         }
+    }
+
+    // Flush any pending OTLP spans before exit
+    #[cfg(feature = "otlp")]
+    if args.otlp_endpoint.is_some() {
+        opentelemetry::global::shutdown_tracer_provider();
     }
 
     Ok(())

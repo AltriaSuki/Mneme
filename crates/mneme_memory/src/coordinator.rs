@@ -312,6 +312,7 @@ impl OrganismCoordinator {
     ///
     /// This is the main entry point for handling user messages.
     /// It coordinates System 1 and System 2 processing.
+    #[tracing::instrument(skip(self, content), fields(author, response_delay_secs))]
     pub async fn process_interaction(
         &self,
         author: &str,
@@ -538,6 +539,7 @@ impl OrganismCoordinator {
     }
 
     /// Trigger sleep consolidation manually
+    #[tracing::instrument(skip(self))]
     pub async fn trigger_sleep(&self) -> Result<ConsolidationResult> {
         let _guard = self.state_mutation_lock.lock().await;
 

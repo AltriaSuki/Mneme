@@ -444,8 +444,10 @@ where
         + Unpin
         + Send,
 {
+    use super::sse::SseBuffer;
+
     let mut stream = byte_stream;
-    let mut buffer = String::new();
+    let mut buf = SseBuffer::new();
     let mut stop_reason: Option<String> = None;
     // Track which tool call indices we've already sent ToolUseStart for
     let mut seen_tool_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -454,12 +456,9 @@ where
 
     while let Some(chunk_result) = stream.next().await {
         let chunk: bytes::Bytes = chunk_result.context("Error reading OpenAI SSE chunk")?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        buf.push_bytes(&chunk);
 
-        while let Some(pos) = buffer.find('\n') {
-            let line = buffer[..pos].trim().to_string();
-            buffer = buffer[pos + 1..].to_string();
-
+        for line in buf.extract_lines() {
             if line.is_empty() {
                 continue;
             }
