@@ -1101,7 +1101,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | Streaming 回调未生效 | mneme_reasoning/engine | `on_text_chunk` 已设置但 `process_thought_loop` 用 `complete()` 非流式调用 → stream_completion() + fallback | **Fixed** ✅ |
 | AgentLoop 背压丢弃 | mneme_reasoning/agent_loop | `try_send` 失败时静默丢弃 StateUpdate/AutonomousToolUse | **Fixed** ✅ |
 | SSE 最后事件丢失 | mneme_reasoning/anthropic | 流结束时无尾部 `\n\n` 的事件块不会被处理 | **Fixed** ✅ |
-| OpenAI 参数回退空对象 | mneme_reasoning/openai | 工具参数 JSON 解析失败时静默回退到 `{}`，效果同空输入 bug | 🟡 Open |
+| OpenAI 参数回退空对象 | mneme_reasoning/openai | 解析失败时返回 `_parse_error` 对象而非 `{}`，工具 handler 可报告有意义的错误 | **Fixed** ✅ |
 | Consolidation TOCTOU | mneme_memory/consolidation | `is_consolidation_due()` 和 `consolidate()` 之间无原子性，可能重复整合 → AtomicBool compare_exchange 原子抢占 | **Fixed** ✅ |
 | Rules 触发匹配过宽 | mneme_memory/rules | `discriminant()` 只比较枚举变体不比较内部数据 → 完整 pattern matching | **Fixed** ✅ |
 | OneBot 重连无熔断 | mneme_onebot/client | WebSocket 断连后无限重试，无最大次数限制 | **Fixed** ✅ |
@@ -1125,12 +1125,12 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **Consolidation self_knowledge 写入存疑** | mneme_memory/coordinator | SelfReflector::reflect() → store_self_knowledge() + meta-episode 完整闭环已验证 | **Fixed** ✅ (#67) |
 | **Rumination 触发后执行存疑** | mneme_reasoning/engine | Trigger::Rumination → process_thought_loop() → LLM 调用 → ReasoningOutput 已验证 | **Fixed** ✅ (#68) |
 | **Legacy `build_system_prompt()` 死代码** | mneme_reasoning/prompts | `build_system_prompt()` 已删除，6-layer pipeline 是唯一路径 | **Fixed** ✅ (#69) |
-| **`<emotion>` tag 与 ODE 冲突** | mneme_reasoning/engine | 让 LLM 自报 `<emotion>happy</emotion>` 与 limbic ODE 驱动的 affect 是两个冲突的情绪信息源；tag 机制脆弱（LLM 常忘记/格式错误） | 🟡 Open (#70) |
+| **`<emotion>` tag 与 ODE 冲突** | mneme_reasoning/engine | `parse_emotion_tags` + `emotion_regex` 已删除，情绪统一由 limbic ODE 驱动 | **Fixed** ✅ (#70) |
 | **元认知 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | process_thought_loop() 统一走 build_full_system_prompt()，内部思维注入 self_knowledge + psyche + somatic | **Fixed** ✅ (#71) |
 | **内心独白 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | InnerMonologue 统一走 ContextAssembler，persona/somatic/记忆全部注入 | **Fixed** ✅ (#72) |
 | **feed_digest 注释标记 TODO 但已实现** | mneme_reasoning/prompts | 过时注释已清理，feed_digest 注释准确反映实现状态 | **Fixed** ✅ (#73) |
 | **context budget 硬编码 32000** | mneme_reasoning/engine | base_budget 现在从 config.llm.context_budget_chars 读取，不再硬编码 | **Fixed** ✅ (#74) |
-| **双重工具调用路径** | mneme_reasoning/prompts+engine | text-mode `<tool_call>` XML 格式与 Anthropic API 原生 tool use 并存，两套解析逻辑易混乱 | 🟡 Open (#75) |
+| **双重工具调用路径** | mneme_reasoning/prompts+engine | 切换到 API native tool_use，`text_tool_parser` 模块已删除 | **Fixed** ✅ (#75) |
 | **style_guide 元指令语言硬编码** | mneme_reasoning/prompts | `organism.language` 配置项控制 meta-instruction 语言（zh/en），species identity、时间格式、隐私/主权段落均自适应 | **Fixed** ✅ (#76) |
 | **Rumination prompt 无上下文** | mneme_reasoning/engine | Rumination 统一走 ContextAssembler，persona/记忆/somatic 全部注入 | **Fixed** ✅ (#77) |
 | **运行时自我认知缺失** | mneme_memory/self_knowledge | `self_knowledge` 无 infrastructure/capability 域种子，Mneme 不知道自己是持久进程、通过 OneBot 连 QQ、有 shell 权限等基础事实，导致 LLM 用默认"我是聊天窗口"填空 | ✅ Fixed (#78) |
