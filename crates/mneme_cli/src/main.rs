@@ -1,5 +1,5 @@
 use clap::Parser;
-use mneme_core::config::MnemeConfig;
+use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
 use mneme_expression::{
     AttentionGate, ConsciousnessGate, HabitDetector, Humanizer, MetacognitionEvaluator,
@@ -42,7 +42,7 @@ impl rustyline::completion::Completer for CommandCompleter {
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
         const COMMANDS: &[&str] = &[
-            "quit", "exit", "status", "sleep", "like", "dislike",
+            "quit", "exit", "status", "sleep", "like", "dislike", "reload",
         ];
         let prefix = &line[..pos];
         if prefix.contains(' ') {
@@ -230,6 +230,17 @@ async fn main() -> anyhow::Result<()> {
         .persona
         .as_deref()
         .unwrap_or(&config.organism.persona_dir);
+
+    // Wrap config in arc-swap for hot reload
+    let config_path = std::path::Path::new(&args.config);
+    let shared_config = SharedConfig::new(
+        config.clone(),
+        if config_path.exists() {
+            Some(config_path.to_path_buf())
+        } else {
+            None
+        },
+    );
 
     info!("Initializing Mneme...");
 
@@ -555,7 +566,7 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Commands that don't need to wait for response
-                    let needs_wait = !["sleep", "status", "like", "dislike"].contains(&trimmed);
+                    let needs_wait = !["sleep", "status", "like", "dislike", "reload"].contains(&trimmed);
 
                     let content = Content {
                         id: Uuid::new_v4(),
@@ -667,7 +678,21 @@ async fn main() -> anyhow::Result<()> {
 
         // Handle specific CLI commands that need main-thread access
         if let Event::UserMessage(ref content) = event {
-            if content.source == "cli" && content.body.trim() == "sleep" {
+            if content.source == "cli" && content.body.trim() == "reload" {
+                match shared_config.reload() {
+                    Ok(new_cfg) => {
+                        engine.set_context_budget(new_cfg.llm.context_budget_chars);
+                        println!(
+                            "Config reloaded. context_budget={}, temperature={}, max_tokens={}",
+                            new_cfg.llm.context_budget_chars,
+                            new_cfg.llm.temperature,
+                            new_cfg.llm.max_tokens,
+                        );
+                    }
+                    Err(e) => println!("Reload failed: {}", e),
+                }
+                continue;
+            } else if content.source == "cli" && content.body.trim() == "sleep" {
                 // Manual sleep/consolidation trigger
                 info!("Triggering sleep consolidation...");
                 match coordinator.trigger_sleep().await {
