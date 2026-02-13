@@ -216,15 +216,26 @@ impl SomaticMarker {
         }
     }
 
-    /// Format for LLM system prompt injection
+    /// Format for LLM system prompt injection.
     /// Combines minimal numeric state with a human-readable affect description
     /// so the LLM can both "feel" (via ModulationVector) and "know" its emotional state.
+    /// Uses Chinese labels by default; call `format_for_prompt_lang` for other languages.
     pub fn format_for_prompt(&self) -> String {
+        self.format_for_prompt_lang("zh")
+    }
+
+    /// Format for LLM system prompt injection with language selection.
+    pub fn format_for_prompt_lang(&self, lang: &str) -> String {
         let affect_desc = self.affect.describe();
+        let (state_label, emotion_label, curiosity_label) = match lang {
+            "en" => ("Internal State", "Current Emotion", "Current Curiosities"),
+            _ => ("内部状态", "当前情绪", "当前好奇方向"),
+        };
         let mut s = format!(
-            "[内部状态: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]\n[当前情绪: {}]",
+            "[{}: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]\n[{}: {}]",
+            state_label,
             self.energy, self.stress, self.mood_bias, self.affect.valence, self.affect.arousal,
-            affect_desc,
+            emotion_label, affect_desc,
         );
         // ADR-007: Inject curiosity direction
         if !self.curiosity_interests.is_empty() {
@@ -233,7 +244,7 @@ impl SomaticMarker {
                 .iter()
                 .map(|(t, i)| format!("{}({:.0}%)", t, i * 100.0))
                 .collect();
-            s.push_str(&format!("\n[当前好奇方向: {}]", interests.join(", ")));
+            s.push_str(&format!("\n[{}: {}]", curiosity_label, interests.join(", ")));
         }
         s
     }

@@ -46,13 +46,11 @@ impl ContextAssembler {
         budget_chars: usize,
         tool_instructions: &str,
     ) -> String {
-        let soma_context = somatic_marker.format_for_prompt();
+        let lang = psyche.language.as_str();
+        let soma_context = somatic_marker.format_for_prompt_lang(lang);
 
         // Layer 1: Persona (always present, never trimmed)
         let persona = psyche.format_context();
-
-        // Current time context — so she knows when she is
-        let lang = psyche.language.as_str();
         let now = chrono::Local::now();
         let time_line = format_time_line(lang, &now);
 
