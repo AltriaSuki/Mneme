@@ -704,7 +704,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 **待后续补充**:
 - [x] OneBot 事件解析与发送测试 ✅ — 6 个测试覆盖 MessageEvent/Meta/Notice/SendAction/Response
-- [ ] GitHub Actions CI/CD 流水线配置
+- [x] GitHub Actions CI/CD 流水线配置 ✅ — cargo build/test/clippy + OTLP feature check
 
 ---
 
@@ -1084,7 +1084,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] CLI smoke tests ✅ — 3 个测试（--help、--version、无效配置不 panic）
 - [ ] 集成测试补充
 - [ ] Mock 基础设施完善
-- [ ] CI/CD 配置
+- [x] CI/CD 配置 ✅ — GitHub Actions: cargo build/test/clippy + OTLP feature check
 - [ ] 代码覆盖率报告
 
 ---
@@ -1108,8 +1108,8 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | Regex 重复编译 | mneme_reasoning/engine | `sanitize_chat_output`/`is_silence_response` 每次调用都编译新 Regex | **Fixed** ✅ |
 | API 超时硬编码不一致 | mneme_reasoning/providers | Anthropic 120s vs OpenAI 60s，不可配置 | **Fixed** ✅ |
 | Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | **Fixed** ✅ |
-| Browser session lost | mneme_browser | 长时间不用后会话丢失 | Open |
-| Shell timeout recovery | mneme_os | 命令超时后无法恢复 | Open |
+| Browser session lost | mneme_browser | 长时间不用后会话丢失 | **N/A** — crate retired (v0.9.0), 浏览器能力通过 MCP server 提供 |
+| Shell timeout recovery | mneme_os | 命令超时后无法恢复 | **N/A** — crate retired (v0.9.0), shell 能力通过 MCP server 提供 |
 | Memory leak in history | mneme_reasoning | history 有 20 条硬上限 prune，无持久泄漏；ReAct scratchpad 有 5 轮上限，风险低 | **Verified OK** ✅ |
 | **People 表始终为空** | mneme_reasoning/engine | CLI/OneBot 交互时自动 `upsert_person()` + `record_interaction()`，UUID v5 确定性 ID | **Fixed** ✅ (#53) |
 | **Mneme 猜错自己的表名** | mneme_reasoning/prompts | 启动时种子 10 条 system_knowledge 条目描述全部表结构，DB schema 自我认知完整 | **Fixed** ✅ (#54) |
@@ -1777,7 +1777,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] 自我诊断与降级 (#85) — DB/API 故障时自我诊断并降级运行
 - [ ] 运行时参数自修改 (#86) — 根据经验调整自己的 temperature、token 预算等
 - [ ] 运行时自配置 (#60) — 被告知后自行建立外部连接（MCP server / Gateway 适配器）
-- [ ] GitHub Actions CI/CD 流水线
+- [x] GitHub Actions CI/CD 流水线 ✅ — cargo build/test/clippy + OTLP feature check
 
 ### v2.0.0 - 对等版本（远景）
 > **目标**: B-8 Level 2-3，从「父母」到「朋友」。
