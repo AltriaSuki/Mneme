@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use arc_swap::ArcSwap;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 // ============================================================================
 // Top-level config
@@ -276,6 +278,57 @@ impl Default for GatewayConfig {
             host: "127.0.0.1".to_string(),
             port: 3000,
         }
+    }
+}
+
+// ============================================================================
+// Hot-reloadable config wrapper (arc-swap)
+// ============================================================================
+
+/// Thread-safe, lock-free config that can be swapped at runtime.
+///
+/// Subsystems hold `SharedConfig` and call `.get()` to read the current snapshot.
+/// The CLI `reload` command calls `.reload()` to re-read the TOML file and swap.
+#[derive(Clone)]
+pub struct SharedConfig {
+    inner: Arc<ArcSwap<MnemeConfig>>,
+    /// Path to the config file for reload.
+    config_path: Option<PathBuf>,
+}
+
+impl SharedConfig {
+    pub fn new(config: MnemeConfig, path: Option<PathBuf>) -> Self {
+        Self {
+            inner: Arc::new(ArcSwap::new(Arc::new(config))),
+            config_path: path,
+        }
+    }
+
+    /// Get a snapshot of the current config (lock-free read).
+    pub fn get(&self) -> arc_swap::Guard<Arc<MnemeConfig>> {
+        self.inner.load()
+    }
+
+    /// Get a full Arc clone (for passing to subsystems that need owned access).
+    pub fn get_arc(&self) -> Arc<MnemeConfig> {
+        self.inner.load_full()
+    }
+
+    /// Reload config from the original file path.
+    /// Returns the new config on success, or an error if the file is invalid.
+    /// Startup-only fields (db_path, persona_dir, gateway, onebot, mcp) are
+    /// reloaded in the struct but won't affect already-initialized subsystems.
+    pub fn reload(&self) -> Result<Arc<MnemeConfig>> {
+        let path = self
+            .config_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No config file path — using defaults only"))?;
+
+        let new_config = MnemeConfig::load(path)?;
+        let arc = Arc::new(new_config);
+        self.inner.store(arc.clone());
+        tracing::info!("Config reloaded from {}", path.display());
+        Ok(arc)
     }
 }
 

@@ -1,5 +1,5 @@
 use clap::Parser;
-use mneme_core::config::MnemeConfig;
+use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
 use mneme_expression::{
     AttentionGate, ConsciousnessGate, HabitDetector, Humanizer, MetacognitionEvaluator,
@@ -11,8 +11,6 @@ use mneme_reasoning::ReasoningEngine;
 use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
-
-use mneme_perception::{rss::RssSource, SourceManager};
 
 use mneme_core::ReasoningOutput;
 use mneme_onebot::OneBotClient;
@@ -44,7 +42,7 @@ impl rustyline::completion::Completer for CommandCompleter {
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
         const COMMANDS: &[&str] = &[
-            "quit", "exit", "status", "sync", "sleep", "like", "dislike",
+            "quit", "exit", "status", "sleep", "like", "dislike", "reload",
         ];
         let prefix = &line[..pos];
         if prefix.contains(' ') {
@@ -104,10 +102,6 @@ struct Args {
     /// Path to TOML config file
     #[arg(short, long, default_value = "mneme.toml")]
     config: String,
-
-    /// Add RSS feed URLs to monitor (can be used multiple times)
-    #[arg(long)]
-    rss: Vec<String>,
 
     /// Path to the memory database (overrides config file)
     #[arg(long)]
@@ -237,6 +231,17 @@ async fn main() -> anyhow::Result<()> {
         .as_deref()
         .unwrap_or(&config.organism.persona_dir);
 
+    // Wrap config in arc-swap for hot reload
+    let config_path = std::path::Path::new(&args.config);
+    let shared_config = SharedConfig::new(
+        config.clone(),
+        if config_path.exists() {
+            Some(config_path.to_path_buf())
+        } else {
+            None
+        },
+    );
+
     info!("Initializing Mneme...");
 
     // 1. Initialize Memory (before Psyche — Psyche reads from DB)
@@ -327,16 +332,7 @@ async fn main() -> anyhow::Result<()> {
 
     let psyche = memory.build_psyche(&config.organism.language).await?;
 
-    // 3. Initialize Source Manager
-    let source_manager = Arc::new(SourceManager::new());
-    for rss_url in args.rss {
-        info!("Adding RSS source: {}", rss_url);
-        // We use the URL as the name suffix for now to distinguish them
-        let rss_source = Arc::new(RssSource::new(&rss_url, &rss_url)?);
-        source_manager.add_source(rss_source).await;
-    }
-
-    // 4. Initialize Reasoning
+    // 3. Initialize Reasoning
     info!(
         "Starting Reasoning Engine with model {}...",
         config.llm.model
@@ -570,7 +566,7 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Commands that don't need to wait for response
-                    let needs_wait = !["sync", "sleep", "status", "like", "dislike"].contains(&trimmed);
+                    let needs_wait = !["sleep", "status", "like", "dislike", "reload"].contains(&trimmed);
 
                     let content = Content {
                         id: Uuid::new_v4(),
@@ -680,25 +676,22 @@ async fn main() -> anyhow::Result<()> {
             else => break, // Channel closed
         };
 
-        // Handle specific CLI commands that need main-thread access (like 'sync')
+        // Handle specific CLI commands that need main-thread access
         if let Event::UserMessage(ref content) = event {
-            if content.source == "cli" && content.body.trim() == "sync" {
-                info!("Syncing sources...");
-                let items = source_manager.collect_all().await;
-                println!("Fetched {} items.", items.len());
-                for item in &items {
-                    println!(
-                        "- [{}] {}",
-                        item.source,
-                        item.body.lines().next().unwrap_or("")
-                    );
-                    if let Err(e) = memory.memorize(item).await {
-                        error!("Failed to memorize item {}: {}", item.id, e);
+            if content.source == "cli" && content.body.trim() == "reload" {
+                match shared_config.reload() {
+                    Ok(new_cfg) => {
+                        engine.set_context_budget(new_cfg.llm.context_budget_chars);
+                        println!(
+                            "Config reloaded. context_budget={}, temperature={}, max_tokens={}",
+                            new_cfg.llm.context_budget_chars,
+                            new_cfg.llm.temperature,
+                            new_cfg.llm.max_tokens,
+                        );
                     }
+                    Err(e) => println!("Reload failed: {}", e),
                 }
-                // Update engine's feed digest cache (Layer 3)
-                engine.update_feed_digest(&items).await;
-                continue; // Skip thinking
+                continue;
             } else if content.source == "cli" && content.body.trim() == "sleep" {
                 // Manual sleep/consolidation trigger
                 info!("Triggering sleep consolidation...");
