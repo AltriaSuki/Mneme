@@ -1363,8 +1363,8 @@ async fn test_recall_random_by_strength() {
             modality: Modality::Text,
         };
         memory.memorize(&content).await.unwrap();
-        // Set varying strengths: 0.1 * (i+1)
-        let strength = 0.1 * (i as f32 + 1.0);
+        // Set varying strengths: 0.2, 0.3, ..., 1.0, 1.0 (clamped)
+        let strength = (0.1 * (i as f32 + 2.0)).min(1.0);
         memory
             .update_episode_strength(&content.id.to_string(), strength)
             .await
