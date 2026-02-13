@@ -123,29 +123,101 @@ impl Memory for MockMemory {
 }
 
 // ============================================================================
-// Mock Executor
+// Mock Executor → Mock ToolHandler (tools dispatch via registry now)
 // ============================================================================
 
-struct MockExecutor {
+use mneme_reasoning::tool_registry::ToolHandler;
+use mneme_reasoning::{ToolOutcome, ToolRegistry};
+
+/// A mock tool handler that returns a fixed output.
+struct MockToolHandler {
+    tool_name: String,
     output: String,
 }
 
-impl MockExecutor {
-    fn new(output: &str) -> Self {
+impl MockToolHandler {
+    fn shell(output: &str) -> Self {
         Self {
+            tool_name: "shell".to_string(),
             output: output.to_string(),
         }
     }
 }
 
 #[async_trait]
-impl mneme_os::Executor for MockExecutor {
-    async fn execute(&self, _command: &str) -> Result<String> {
-        Ok(self.output.clone())
+impl ToolHandler for MockToolHandler {
+    fn name(&self) -> &str {
+        &self.tool_name
     }
 
+    fn description(&self) -> &str {
+        "Mock tool for testing"
+    }
+
+    fn schema(&self) -> mneme_reasoning::api_types::Tool {
+        mneme_reasoning::tools::shell_tool()
+    }
+
+    async fn execute(&self, _input: &serde_json::Value) -> ToolOutcome {
+        ToolOutcome::ok(self.output.clone())
+    }
+}
+
+/// A mock tool handler that fails a configurable number of times before succeeding.
+struct FailingToolHandler {
+    fail_count: AtomicUsize,
+    error_msg: String,
+    success_output: String,
+    /// If true, failures are transient (retryable). Otherwise permanent.
+    transient: bool,
+}
+
+impl FailingToolHandler {
+    fn always_fail(msg: &str, transient: bool) -> Self {
+        Self {
+            fail_count: AtomicUsize::new(usize::MAX),
+            error_msg: msg.to_string(),
+            success_output: String::new(),
+            transient,
+        }
+    }
+
+    fn fail_then_succeed(n: usize, msg: &str, output: &str, transient: bool) -> Self {
+        Self {
+            fail_count: AtomicUsize::new(n),
+            error_msg: msg.to_string(),
+            success_output: output.to_string(),
+            transient,
+        }
+    }
+}
+
+#[async_trait]
+impl ToolHandler for FailingToolHandler {
     fn name(&self) -> &str {
-        "mock"
+        "shell"
+    }
+
+    fn description(&self) -> &str {
+        "Failing mock tool for testing"
+    }
+
+    fn schema(&self) -> mneme_reasoning::api_types::Tool {
+        mneme_reasoning::tools::shell_tool()
+    }
+
+    async fn execute(&self, _input: &serde_json::Value) -> ToolOutcome {
+        let remaining = self.fail_count.load(Ordering::SeqCst);
+        if remaining > 0 {
+            self.fail_count.fetch_sub(1, Ordering::SeqCst);
+            if self.transient {
+                ToolOutcome::transient_error(self.error_msg.clone())
+            } else {
+                ToolOutcome::permanent_error(self.error_msg.clone())
+            }
+        } else {
+            ToolOutcome::ok(self.success_output.clone())
+        }
     }
 }
 
@@ -163,16 +235,35 @@ fn text_response(text: &str) -> MessagesResponse {
     }
 }
 
-/// Helper: create a text response containing a <tool_call> tag (text-only tool path).
-fn text_tool_call(name: &str, input: serde_json::Value) -> MessagesResponse {
-    let json = serde_json::json!({"name": name, "arguments": input});
-    text_response(&format!("<tool_call>{}</tool_call>", json))
+/// Helper: create a response with a ToolUse content block (API native tool_use).
+fn tool_use_response(name: &str, input: serde_json::Value) -> MessagesResponse {
+    MessagesResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: format!("tool_{}", Uuid::new_v4()),
+            name: name.to_string(),
+            input,
+        }],
+        stop_reason: Some("tool_use".to_string()),
+        usage: None,
+    }
 }
 
-/// Helper: text response with both prose and a <tool_call> tag.
-fn text_with_tool_call(prose: &str, name: &str, input: serde_json::Value) -> MessagesResponse {
-    let json = serde_json::json!({"name": name, "arguments": input});
-    text_response(&format!("{} <tool_call>{}</tool_call>", prose, json))
+/// Helper: response with both prose text and a ToolUse block.
+fn text_with_tool_use(prose: &str, name: &str, input: serde_json::Value) -> MessagesResponse {
+    MessagesResponse {
+        content: vec![
+            ContentBlock::Text {
+                text: prose.to_string(),
+            },
+            ContentBlock::ToolUse {
+                id: format!("tool_{}", Uuid::new_v4()),
+                name: name.to_string(),
+                input,
+            },
+        ],
+        stop_reason: Some("tool_use".to_string()),
+        usage: None,
+    }
 }
 
 fn test_psyche() -> Psyche {
@@ -192,21 +283,24 @@ fn user_event(text: &str) -> Event {
 
 fn build_engine(client: MockLlmClient) -> ReasoningEngine {
     let memory: Arc<dyn Memory> = Arc::new(MockMemory::new());
-    let executor: Arc<dyn mneme_os::Executor> = Arc::new(MockExecutor::new("mock output"));
-    ReasoningEngine::new(test_psyche(), memory, Box::new(client), executor)
+    ReasoningEngine::new(test_psyche(), memory, Box::new(client))
 }
 
-fn build_engine_with_mocks(
+/// Build engine with a mock tool handler registered in the registry.
+fn build_engine_with_tool(
     client: MockLlmClient,
     memory: Arc<MockMemory>,
-    executor: Arc<dyn mneme_os::Executor>,
+    tool_handler: Box<dyn ToolHandler>,
 ) -> ReasoningEngine {
-    ReasoningEngine::new(
+    let mut engine = ReasoningEngine::new(
         test_psyche(),
         memory as Arc<dyn Memory>,
         Box::new(client),
-        executor,
-    )
+    );
+    let mut registry = ToolRegistry::new();
+    registry.register(tool_handler);
+    engine.set_registry(Arc::new(registry));
+    engine
 }
 
 // ============================================================================
@@ -296,33 +390,6 @@ async fn test_markdown_bullets_stripped() {
 }
 
 // ============================================================================
-// Tests: Emotion Parsing
-// ============================================================================
-
-#[tokio::test]
-async fn test_emotion_tag_parsed_and_stripped() {
-    let engine = build_engine(MockLlmClient::with_text(
-        "<emotion>Happy</emotion>今天真开心！",
-    ));
-    let result = engine.think(user_event("你好")).await.unwrap();
-
-    // Emotion tag should be stripped from content
-    assert!(!result.content.contains("<emotion>"));
-    assert!(result.content.contains("今天真开心"));
-    // Emotion should be parsed
-    assert_eq!(result.emotion, mneme_core::Emotion::Happy);
-}
-
-#[tokio::test]
-async fn test_emotion_tag_case_insensitive() {
-    let engine = build_engine(MockLlmClient::with_text("<EMOTION>Sad</EMOTION>呜呜"));
-    let result = engine.think(user_event("你好")).await.unwrap();
-
-    assert!(!result.content.contains("EMOTION"));
-    assert!(result.content.contains("呜呜"));
-}
-
-// ============================================================================
 // Tests: Tool Use (ReAct Loop)
 // ============================================================================
 
@@ -332,14 +399,14 @@ async fn test_single_tool_call() {
     // Turn 2: LLM produces final text after seeing tool result
     // Turn 3: Extraction call
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({"command": "echo hello"})),
+        tool_use_response("shell", serde_json::json!({"command": "echo hello"})),
         text_response("命令执行完毕，结果是 hello"),
         text_response(r#"{"facts": []}"#), // extraction
     ]);
 
-    let executor = Arc::new(MockExecutor::new("hello\n"));
+    let tool = Box::new(MockToolHandler::shell("hello\n"));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("执行 echo hello")).await.unwrap();
 
@@ -353,15 +420,15 @@ async fn test_multi_turn_tool_calls() {
     // Turn 3: Final text response
     // Turn 4: Extraction
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({"command": "ls"})),
-        text_tool_call("shell", serde_json::json!({"command": "cat file.txt"})),
+        tool_use_response("shell", serde_json::json!({"command": "ls"})),
+        tool_use_response("shell", serde_json::json!({"command": "cat file.txt"})),
         text_response("文件内容是 hello world"),
         text_response(r#"{"facts": []}"#),
     ]);
 
-    let executor = Arc::new(MockExecutor::new("result"));
+    let tool = Box::new(MockToolHandler::shell("result"));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory.clone(), executor);
+    let engine = build_engine_with_tool(client, memory.clone(), tool);
 
     let result = engine.think(user_event("读取文件")).await.unwrap();
 
@@ -373,7 +440,7 @@ async fn test_react_loop_max_iterations() {
     // LLM keeps requesting tools forever — should be capped at 5 iterations
     let mut responses = Vec::new();
     for _i in 0..10 {
-        responses.push(text_tool_call(
+        responses.push(tool_use_response(
             "shell",
             serde_json::json!({"command": "loop"}),
         ));
@@ -382,9 +449,9 @@ async fn test_react_loop_max_iterations() {
     responses.push(text_response(r#"{"facts": []}"#));
 
     let client = MockLlmClient::new(responses);
-    let executor = Arc::new(MockExecutor::new("looped"));
+    let tool = Box::new(MockToolHandler::shell("looped"));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("无限循环")).await.unwrap();
 
@@ -398,7 +465,7 @@ async fn test_react_loop_max_iterations() {
 async fn test_unknown_tool_returns_error_message() {
     // LLM requests an unknown tool, then gives a text response
     let client = MockLlmClient::new(vec![
-        text_tool_call("nonexistent_tool", serde_json::json!({})),
+        tool_use_response("nonexistent_tool", serde_json::json!({})),
         text_response("好的我理解了"),
         text_response(r#"{"facts": []}"#),
     ]);
@@ -414,7 +481,7 @@ async fn test_unknown_tool_returns_error_message() {
 async fn test_tool_use_with_text_in_same_response() {
     // Some LLMs return text + tool_use in the same response
     let client = MockLlmClient::new(vec![
-        text_with_tool_call(
+        text_with_tool_use(
             "我来看看现在几点",
             "shell",
             serde_json::json!({"command": "date"}),
@@ -423,9 +490,9 @@ async fn test_tool_use_with_text_in_same_response() {
         text_response(r#"{"facts": []}"#),
     ]);
 
-    let executor = Arc::new(MockExecutor::new("2026-02-06"));
+    let tool = Box::new(MockToolHandler::shell("2026-02-06"));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("几点了")).await.unwrap();
 
@@ -439,10 +506,13 @@ async fn test_tool_use_with_text_in_same_response() {
 #[tokio::test]
 async fn test_user_message_is_memorized() {
     let memory = Arc::new(MockMemory::new());
-    let executor = Arc::new(MockExecutor::new(""));
     let client = MockLlmClient::with_text("收到");
 
-    let engine = build_engine_with_mocks(client, memory.clone(), executor);
+    let engine = ReasoningEngine::new(
+        test_psyche(),
+        memory.clone() as Arc<dyn Memory>,
+        Box::new(client),
+    );
     engine.think(user_event("记住这句话")).await.unwrap();
 
     let memorized = memory.memorized.lock().await;
@@ -461,8 +531,11 @@ async fn test_fact_extraction_stores_results() {
     ]);
 
     let memory = Arc::new(MockMemory::new());
-    let executor = Arc::new(MockExecutor::new(""));
-    let engine = build_engine_with_mocks(client, memory.clone(), executor);
+    let engine = ReasoningEngine::new(
+        test_psyche(),
+        memory.clone() as Arc<dyn Memory>,
+        Box::new(client),
+    );
 
     engine.think(user_event("我很喜欢猫")).await.unwrap();
 
@@ -594,7 +667,7 @@ async fn test_unicode_emoji_handled() {
 async fn test_shell_tool_missing_command_param() {
     // LLM calls shell tool without required "command" param
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({})),
+        tool_use_response("shell", serde_json::json!({})),
         text_response("参数有误"),
         text_response(r#"{"facts": []}"#),
     ]);
@@ -610,66 +683,21 @@ async fn test_shell_tool_missing_command_param() {
 // Tests: Structured Tool Error Handling (#2)
 // ============================================================================
 
-/// A mock executor that can simulate different failure modes.
-struct FailingExecutor {
-    /// How many calls fail before succeeding.
-    fail_count: AtomicUsize,
-    /// Error message to use.
-    error_msg: String,
-    /// Output on success.
-    success_output: String,
-}
-
-impl FailingExecutor {
-    /// Always fails with the given message.
-    fn always_fail(msg: &str) -> Self {
-        Self {
-            fail_count: AtomicUsize::new(usize::MAX),
-            error_msg: msg.to_string(),
-            success_output: String::new(),
-        }
-    }
-
-    /// Fails `n` times, then succeeds with `output`.
-    fn fail_then_succeed(n: usize, msg: &str, output: &str) -> Self {
-        Self {
-            fail_count: AtomicUsize::new(n),
-            error_msg: msg.to_string(),
-            success_output: output.to_string(),
-        }
-    }
-}
-
-#[async_trait]
-impl mneme_os::Executor for FailingExecutor {
-    async fn execute(&self, _command: &str) -> Result<String> {
-        let remaining = self.fail_count.load(Ordering::SeqCst);
-        if remaining > 0 {
-            self.fail_count.fetch_sub(1, Ordering::SeqCst);
-            anyhow::bail!("{}", self.error_msg);
-        }
-        Ok(self.success_output.clone())
-    }
-
-    fn name(&self) -> &str {
-        "failing_mock"
-    }
-}
-
 #[tokio::test]
 async fn test_shell_timeout_returns_is_error_true() {
     // Shell times out → LLM sees is_error=true with descriptive message
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({"command": "sleep 100"})),
+        tool_use_response("shell", serde_json::json!({"command": "sleep 100"})),
         text_response("命令超时了，我换个方式"),
         text_response(r#"{"facts": []}"#),
     ]);
 
-    let executor = Arc::new(FailingExecutor::always_fail(
+    let tool = Box::new(FailingToolHandler::always_fail(
         "Command execution timed out after 30s",
+        true,
     ));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("执行很久的命令")).await.unwrap();
 
@@ -681,16 +709,17 @@ async fn test_shell_timeout_returns_is_error_true() {
 async fn test_shell_permanent_failure_returns_is_error() {
     // Shell command fails with non-zero exit (permanent) — no retry
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({"command": "bad_cmd"})),
+        tool_use_response("shell", serde_json::json!({"command": "bad_cmd"})),
         text_response("命令执行失败了"),
         text_response(r#"{"facts": []}"#),
     ]);
 
-    let executor = Arc::new(FailingExecutor::always_fail(
+    let tool = Box::new(FailingToolHandler::always_fail(
         "Command failed with status exit code: 127",
+        false,
     ));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("执行错误命令")).await.unwrap();
 
@@ -702,18 +731,19 @@ async fn test_shell_permanent_failure_returns_is_error() {
 async fn test_shell_transient_retry_succeeds() {
     // First call times out (transient), retry succeeds
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({"command": "echo ok"})),
+        tool_use_response("shell", serde_json::json!({"command": "echo ok"})),
         text_response("命令执行成功"),
         text_response(r#"{"facts": []}"#),
     ]);
 
-    let executor = Arc::new(FailingExecutor::fail_then_succeed(
+    let tool = Box::new(FailingToolHandler::fail_then_succeed(
         1,
         "Command execution timed out after 30s",
         "ok\n",
+        true,
     ));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("执行命令")).await.unwrap();
 
@@ -724,7 +754,7 @@ async fn test_shell_transient_retry_succeeds() {
 async fn test_unknown_tool_is_permanent_error() {
     // Unknown tool should be permanent (not retried)
     let client = MockLlmClient::new(vec![
-        text_tool_call("flying_car", serde_json::json!({})),
+        tool_use_response("flying_car", serde_json::json!({})),
         text_response("我没有那个工具"),
         text_response(r#"{"facts": []}"#),
     ]);
@@ -739,7 +769,7 @@ async fn test_unknown_tool_is_permanent_error() {
 async fn test_browser_missing_url_is_permanent_error() {
     // browser_goto without url → permanent error, no retry
     let client = MockLlmClient::new(vec![
-        text_tool_call("browser_goto", serde_json::json!({})),
+        tool_use_response("browser_goto", serde_json::json!({})),
         text_response("缺少网址参数"),
         text_response(r#"{"facts": []}"#),
     ]);
@@ -754,7 +784,7 @@ async fn test_browser_missing_url_is_permanent_error() {
 async fn test_browser_missing_selector_is_permanent_error() {
     // browser_click without selector → permanent error
     let client = MockLlmClient::new(vec![
-        text_tool_call("browser_click", serde_json::json!({})),
+        tool_use_response("browser_click", serde_json::json!({})),
         text_response("缺少选择器"),
         text_response(r#"{"facts": []}"#),
     ]);
@@ -769,7 +799,7 @@ async fn test_browser_missing_selector_is_permanent_error() {
 async fn test_browser_type_missing_text_is_permanent_error() {
     // browser_type with selector but no text → permanent error
     let client = MockLlmClient::new(vec![
-        text_tool_call("browser_type", serde_json::json!({"selector": "#input"})),
+        tool_use_response("browser_type", serde_json::json!({"selector": "#input"})),
         text_response("参数不完整"),
         text_response(r#"{"facts": []}"#),
     ]);
@@ -785,20 +815,21 @@ async fn test_tool_error_does_not_crash_react_loop() {
     // Tool fails but the ReAct loop should still continue
     // Turn 1: shell fails, Turn 2: LLM tries again, Turn 3: success, Turn 4: final text
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({"command": "fail"})),
-        text_tool_call("shell", serde_json::json!({"command": "echo ok"})),
+        tool_use_response("shell", serde_json::json!({"command": "fail"})),
+        tool_use_response("shell", serde_json::json!({"command": "echo ok"})),
         text_response("第二次就好了"),
         text_response(r#"{"facts": []}"#),
     ]);
 
     // First call fails, second succeeds
-    let executor = Arc::new(FailingExecutor::fail_then_succeed(
+    let tool = Box::new(FailingToolHandler::fail_then_succeed(
         1,
         "Command failed with status exit code: 1",
         "ok\n",
+        false,
     ));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("尝试命令")).await.unwrap();
 
@@ -810,109 +841,22 @@ async fn test_tool_error_does_not_crash_react_loop() {
 async fn test_spawn_failure_is_transient() {
     // "spawn" in error message → transient, will retry
     let client = MockLlmClient::new(vec![
-        text_tool_call("shell", serde_json::json!({"command": "echo ok"})),
+        tool_use_response("shell", serde_json::json!({"command": "echo ok"})),
         text_response("最终成功了"),
         text_response(r#"{"facts": []}"#),
     ]);
 
-    let executor = Arc::new(FailingExecutor::fail_then_succeed(
+    let tool = Box::new(FailingToolHandler::fail_then_succeed(
         1,
         "Failed to spawn command locally",
         "ok\n",
+        true,
     ));
     let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
+    let engine = build_engine_with_tool(client, memory, tool);
 
     let result = engine.think(user_event("执行")).await.unwrap();
 
     assert!(!result.content.is_empty());
 }
 
-// ============================================================================
-// Tests: Text Tool Call Parsing (always active)
-// ============================================================================
-
-#[tokio::test]
-async fn test_text_mode_parses_tool_call_tag() {
-    // In Text mode, model returns <tool_call> in plain text instead of structured ToolUse.
-    // Turn 1: Model outputs text with <tool_call> tag → engine parses and executes shell
-    // Turn 2: Model sees tool result as plain text, produces final response
-    // Turn 3: Extraction
-    let client = MockLlmClient::new(vec![
-        text_response(
-            "我来看看 <tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"ls -la\"}}</tool_call>"
-        ),
-        text_response("当前目录有这些文件：file1.txt file2.rs"),
-        text_response(r#"{"facts": []}"#),
-    ]);
-
-    let executor = Arc::new(MockExecutor::new("file1.txt\nfile2.rs\n"));
-    let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor);
-
-    let result = engine.think(user_event("看看当前目录")).await.unwrap();
-
-    assert!(result.content.contains("file1.txt") || result.content.contains("文件"));
-}
-
-#[tokio::test]
-async fn test_text_mode_strips_tool_call_from_content() {
-    // The <tool_call> tag should be stripped from the displayed content
-    let client = MockLlmClient::new(vec![
-        text_response(
-            "好的 <tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"pwd\"}}</tool_call>",
-        ),
-        text_response("你在 /home/user 目录"),
-        text_response(r#"{"facts": []}"#),
-    ]);
-
-    let executor = Arc::new(MockExecutor::new("/home/user\n"));
-    let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor);
-
-    let result = engine.think(user_event("我在哪")).await.unwrap();
-
-    // Final content should not contain tool_call tags
-    assert!(!result.content.contains("tool_call"));
-}
-
-#[tokio::test]
-async fn test_auto_mode_falls_back_to_text_parsing() {
-    // In Auto mode, when no structured ToolUse is returned,
-    // engine should fall back to parsing <tool_call> from text.
-    let client = MockLlmClient::new(vec![
-        text_response(
-            "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"date\"}}</tool_call>",
-        ),
-        text_response("现在是2026年"),
-        text_response(r#"{"facts": []}"#),
-    ]);
-
-    let executor = Arc::new(MockExecutor::new("2026-02-11\n"));
-    let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor);
-
-    let result = engine.think(user_event("几点了")).await.unwrap();
-
-    assert!(result.content.contains("2026"));
-}
-
-#[tokio::test]
-async fn test_text_mode_tool_error_sent_as_text() {
-    // When a text-parsed tool fails, the error is sent back as plain text
-    let client = MockLlmClient::new(vec![
-        text_response(
-            "<tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"bad_cmd\"}}</tool_call>",
-        ),
-        text_response("命令失败了，换个方式"),
-        text_response(r#"{"facts": []}"#),
-    ]);
-
-    let executor = Arc::new(FailingExecutor::always_fail("command not found: bad_cmd"));
-    let memory = Arc::new(MockMemory::new());
-    let engine = build_engine_with_mocks(client, memory, executor as Arc<dyn mneme_os::Executor>);
-
-    let result = engine.think(user_event("执行错误命令")).await.unwrap();
-
-    assert!(result.content.contains("失败") || !result.content.is_empty());
-}

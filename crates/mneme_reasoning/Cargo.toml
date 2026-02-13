@@ -17,8 +17,6 @@ tracing = "0.1"
 regex = "1.10"
 futures-util = "0.3"
 bytes = "1"
-mneme_os = { path = "../mneme_os" }
-mneme_browser = { path = "../mneme_browser" }
 chrono = "0.4"
 uuid = { version = "1.0", features = ["v4", "v5"] }
 

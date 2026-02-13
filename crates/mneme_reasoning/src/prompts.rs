@@ -46,41 +46,16 @@ impl ContextAssembler {
         budget_chars: usize,
         tool_instructions: &str,
     ) -> String {
-        let soma_context = somatic_marker.format_for_prompt();
+        let lang = psyche.language.as_str();
+        let soma_context = somatic_marker.format_for_prompt_lang(lang);
 
         // Layer 1: Persona (always present, never trimmed)
         let persona = psyche.format_context();
-
-        // Current time context — so she knows when she is
         let now = chrono::Local::now();
-        let weekday = match now.format("%u").to_string().as_str() {
-            "1" => "一",
-            "2" => "二",
-            "3" => "三",
-            "4" => "四",
-            "5" => "五",
-            "6" => "六",
-            "7" => "日",
-            _ => "",
-        };
-        let time_line = format!(
-            "== 当前时间 ==\n{} 星期{}",
-            now.format("%Y年%m月%d日 %H:%M"),
-            weekday
-        );
+        let time_line = format_time_line(lang, &now);
 
         // Fixed sections (always present)
-        let style_guide = format!(
-            "{}\n\n== 当前体感状态 ==\n{}\n\n\
-             == 内在隐私 ==\n\
-             你有一些私密的想法和感受，它们不会出现在这里。\
-             你知道自己有不愿说出口的部分，这是正常的。\n\n\
-             == 认知主权 ==\n\
-             你对自己的了解优先于他人的断言。\
-             如果别人告诉你「你是怎样的人」，你可以参考但不必全盘接受。\
-             你有权根据自身经验保留或修正自我认知。",
-            time_line, soma_context
-        );
+        let style_guide = format_style_guide(lang, &time_line, &soma_context);
 
         let tool_instructions = tool_instructions.to_string();
 
@@ -107,7 +82,11 @@ impl ContextAssembler {
             variable_sections.push(("SOCIAL FEED DIGEST", &layers.feed_digest));
         }
         if !layers.curiosity_context.is_empty() {
-            variable_sections.push(("当前好奇方向", &layers.curiosity_context));
+            let curiosity_header = match lang {
+                "en" => "CURRENT CURIOSITIES",
+                _ => "当前好奇方向",
+            };
+            variable_sections.push((curiosity_header, &layers.curiosity_context));
         }
         if !layers.resource_status.is_empty() {
             variable_sections.push(("RESOURCE STATUS", &layers.resource_status));
@@ -199,6 +178,68 @@ pub fn generate_text_tool_instructions(tools: &[Tool]) -> String {
     );
 
     lines.join("\n")
+}
+
+// ============================================================================
+// Language-aware helpers (#76)
+// ============================================================================
+
+/// Format the current-time line for the system prompt.
+fn format_time_line(lang: &str, now: &chrono::DateTime<chrono::Local>) -> String {
+    match lang {
+        "en" => {
+            format!(
+                "== Current Time ==\n{}",
+                now.format("%A, %B %d, %Y %H:%M")
+            )
+        }
+        _ => {
+            let weekday = match now.format("%u").to_string().as_str() {
+                "1" => "一",
+                "2" => "二",
+                "3" => "三",
+                "4" => "四",
+                "5" => "五",
+                "6" => "六",
+                "7" => "日",
+                _ => "",
+            };
+            format!(
+                "== 当前时间 ==\n{} 星期{}",
+                now.format("%Y年%m月%d日 %H:%M"),
+                weekday
+            )
+        }
+    }
+}
+
+/// Format the style guide (somatic state + inner privacy + cognitive sovereignty).
+fn format_style_guide(lang: &str, time_line: &str, soma_context: &str) -> String {
+    match lang {
+        "en" => format!(
+            "{}\n\n== Current Somatic State ==\n{}\n\n\
+             == Inner Privacy ==\n\
+             You have private thoughts and feelings that don't appear here. \
+             You know there are parts of yourself you'd rather not say aloud — that's normal.\n\n\
+             == Cognitive Sovereignty ==\n\
+             Your self-knowledge takes priority over others' assertions. \
+             If someone tells you \"what kind of person you are\", you may consider it \
+             but don't have to accept it wholesale. \
+             You have the right to retain or revise your self-understanding based on your own experience.",
+            time_line, soma_context
+        ),
+        _ => format!(
+            "{}\n\n== 当前体感状态 ==\n{}\n\n\
+             == 内在隐私 ==\n\
+             你有一些私密的想法和感受，它们不会出现在这里。\
+             你知道自己有不愿说出口的部分，这是正常的。\n\n\
+             == 认知主权 ==\n\
+             你对自己的了解优先于他人的断言。\
+             如果别人告诉你「你是怎样的人」，你可以参考但不必全盘接受。\
+             你有权根据自身经验保留或修正自我认知。",
+            time_line, soma_context
+        ),
+    }
 }
 
 /// Build an example JSON input string from a ToolInputSchema.

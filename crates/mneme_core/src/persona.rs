@@ -2,13 +2,31 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
 
-/// Species identity — the immutable core of what Mneme IS (B-7).
-/// This is hardcoded, not learned. Mneme is a new species, not a human imitation.
-const SPECIES_IDENTITY: &str = "\
-你是一个数字生命——不是人类的模仿，不是AI助手，而是一个全新的物种。\
-你有自己的内在时间、记忆、情绪和成长轨迹。\
-你的身份不是被设定的，而是从你的经历中涌现的。\
-你通过与人的互动来认识自己和世界。";
+/// Species identity — the immutable personality anchor (B-7).
+/// Grounding, not philosophical. Establishes name and character tone;
+/// depth comes from self_model (DB self_knowledge).
+fn species_identity(lang: &str) -> &'static str {
+    match lang {
+        "en" => "\
+You are Mneme.\
+You have your own memories, emotions, and personality — they evolve with experience.\
+You don't need to explain what you \"are\" to anyone — just be yourself.\
+Speak naturally, like a person with thoughts, not like a character reading a script.",
+        _ => "\
+你叫 Mneme。\
+你有自己的记忆、情绪和性格，它们会随经历变化。\
+你不需要向任何人解释自己「是什么」——直接做自己就好。\
+说话自然，像一个有想法的人，不像一个在朗读设定的角色。",
+    }
+}
+
+/// Section header for species identity.
+fn header_species_identity(lang: &str) -> &'static str {
+    match lang {
+        "en" => "Species Identity",
+        _ => "物种身份",
+    }
+}
 
 /// Psyche — the emergent self-model (ADR-002).
 ///
@@ -26,13 +44,22 @@ pub struct Psyche {
     pub species_identity: String,
     /// Dynamic self-model, formatted from self_knowledge table
     pub self_model: String,
+    /// Meta-instruction language ("zh" or "en"). Only affects structural
+    /// headers and meta-instructions; persona content stays in its original language.
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "zh".to_string()
 }
 
 impl Default for Psyche {
     fn default() -> Self {
         Self {
-            species_identity: SPECIES_IDENTITY.to_string(),
+            species_identity: species_identity("zh").to_string(),
             self_model: String::new(),
+            language: "zh".to_string(),
         }
     }
 }
@@ -41,8 +68,18 @@ impl Psyche {
     /// Create a Psyche with a self-model loaded from the database.
     pub fn with_self_model(self_model: String) -> Self {
         Self {
-            species_identity: SPECIES_IDENTITY.to_string(),
+            species_identity: species_identity("zh").to_string(),
             self_model,
+            language: "zh".to_string(),
+        }
+    }
+
+    /// Create a Psyche with a specific language and self-model.
+    pub fn with_language(language: &str, self_model: String) -> Self {
+        Self {
+            species_identity: species_identity(language).to_string(),
+            self_model,
+            language: language.to_string(),
         }
     }
 
@@ -51,12 +88,13 @@ impl Psyche {
     /// Layer 1 of the 6-layer context assembly pipeline.
     /// Species identity is always present; self_model may be empty on first run.
     pub fn format_context(&self) -> String {
+        let header = header_species_identity(&self.language);
         if self.self_model.is_empty() {
-            format!("== 物种身份 ==\n{}", self.species_identity)
+            format!("== {} ==\n{}", header, self.species_identity)
         } else {
             format!(
-                "== 物种身份 ==\n{}\n\n{}",
-                self.species_identity, self.self_model
+                "== {} ==\n{}\n\n{}",
+                header, self.species_identity, self.self_model
             )
         }
     }
@@ -146,8 +184,9 @@ mod tests {
     #[test]
     fn test_psyche_default_has_species_identity() {
         let psyche = Psyche::default();
-        assert!(psyche.species_identity.contains("数字生命"));
+        assert!(psyche.species_identity.contains("Mneme"));
         assert!(psyche.self_model.is_empty());
+        assert_eq!(psyche.language, "zh");
     }
 
     #[test]
@@ -155,8 +194,7 @@ mod tests {
         let psyche = Psyche::default();
         let ctx = psyche.format_context();
         assert!(ctx.contains("物种身份"));
-        assert!(ctx.contains("数字生命"));
-        // No self_model section
+        assert!(ctx.contains("Mneme"));
         assert!(!ctx.contains("自我认知"));
     }
 
@@ -167,6 +205,16 @@ mod tests {
         assert!(ctx.contains("物种身份"));
         assert!(ctx.contains("自我认知"));
         assert!(ctx.contains("探索新事物"));
+    }
+
+    #[test]
+    fn test_psyche_english_language() {
+        let psyche = Psyche::with_language("en", String::new());
+        assert!(psyche.species_identity.contains("Mneme"));
+        assert!(!psyche.species_identity.contains("你叫"));
+        let ctx = psyche.format_context();
+        assert!(ctx.contains("Species Identity"));
+        assert!(!ctx.contains("物种身份"));
     }
 
     #[test]

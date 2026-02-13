@@ -18,7 +18,7 @@ pub struct OllamaClient {
 }
 
 impl OllamaClient {
-    pub fn new(model: &str) -> Result<Self> {
+    pub fn new(model: &str, timeout_secs: u64) -> Result<Self> {
         let base_url = env::var("OLLAMA_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:11434/v1".to_string())
             .trim_end_matches('/')
@@ -26,7 +26,7 @@ impl OllamaClient {
 
         Ok(Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(120))
+                .timeout(Duration::from_secs(timeout_secs))
                 .build()?,
             base_url,
             model: model.to_string(),
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_ollama_client_creation() {
-        let client = OllamaClient::new("llama3").unwrap();
+        let client = OllamaClient::new("llama3", 120).unwrap();
         assert_eq!(client.model, "llama3");
         assert!(client.base_url.contains("11434"));
     }

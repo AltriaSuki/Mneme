@@ -32,9 +32,12 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --exclude mneme_browser -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --exclude mneme_browser
+        run: cargo test --workspace
         env:
           FASTEMBED_CACHE_PATH: .fastembed_cache
+
+      - name: Build with OTLP feature
+        run: cargo build -p mneme_cli --features otlp

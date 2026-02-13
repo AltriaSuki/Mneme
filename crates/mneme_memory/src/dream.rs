@@ -6,10 +6,18 @@
 //! "我昨晚做了个奇怪的梦……" during conversation.
 //!
 //! Phase 1: Rule-based template stitching (no LLM dependency).
-//! Phase 2 (future): LLM-generated dream narratives.
+//! Phase 2: LLM-generated dream narratives via DreamNarrator trait.
 
+use anyhow::Result;
+use async_trait::async_trait;
 use crate::sqlite::DreamSeed;
 use mneme_core::OrganismState;
+
+/// Trait for LLM-based dream narrative generation (Phase 2).
+#[async_trait]
+pub trait DreamNarrator: Send + Sync {
+    async fn narrate_dream(&self, seeds: &[DreamSeed], state: &OrganismState) -> Result<String>;
+}
 
 /// A generated dream episode ready for storage.
 #[derive(Debug, Clone)]
@@ -133,7 +141,7 @@ impl DreamGenerator {
     ///
     /// Uses seed strength as a proxy for emotional intensity (stronger memories
     /// tend to be more emotionally charged). The mood_bias shifts the tone.
-    fn compute_emotional_tone(seeds: &[DreamSeed], mood_bias: f32) -> f32 {
+    pub fn compute_emotional_tone(seeds: &[DreamSeed], mood_bias: f32) -> f32 {
         if seeds.is_empty() {
             return mood_bias.clamp(-1.0, 1.0);
         }
@@ -260,5 +268,17 @@ mod tests {
         let long = "这是一段很长的文本，".repeat(10);
         let frag = DreamGenerator::extract_fragment(&long);
         assert!(frag.chars().count() <= 81); // 80 + possible trailing punctuation
+    }
+
+    #[test]
+    fn test_compute_emotional_tone_pub() {
+        // Verify public accessor works
+        let seeds = vec![
+            make_seed("a", "记忆一", 0.9),
+            make_seed("b", "记忆二", 0.8),
+        ];
+        let tone = DreamGenerator::compute_emotional_tone(&seeds, 0.5);
+        assert!(tone > 0.0);
+        assert!(tone <= 1.0);
     }
 }

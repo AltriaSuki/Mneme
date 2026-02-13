@@ -66,7 +66,7 @@
 | `engine.rs` | ~~`temperature` 固定~~ | ~~→ 由 arousal/stress 调制~~ | ✅ |
 | `engine.rs` | ~~记忆召回无偏差~~ | ~~→ 由 mood/stress 偏置 recall~~ | ✅ |
 
-### Manifesto 合规审计（2026-02-12 更新）
+### Manifesto 合规审计（2026-02-13 更新）
 
 以下是对照 `MANIFESTO.md` 核心信念和 ADR 的代码审计结果：
 
@@ -81,10 +81,10 @@
 | 工具说明使用规定性语言 | `prompts.rs` | B-14 不回避冲突 | ✅ 中性英文技术规范 |
 | 好奇心是标量 | `state.rs` | ADR-007 好奇心方向性 | ✅ `CuriosityVector` 向量化，topic tagging + decay |
 | 记忆召回无重建 | `sqlite.rs` | B-10 记忆是重建 | ✅ `recall_reconstructed()` 情绪着色 |
-| 社交图谱无信任维度 | `sqlite.rs` | B-19 信任默认存在 | ✅ `trust_level` 字段 + `update_trust()` |
-| 私密条目仍注入 prompt | `prompts.rs` | B-9 不透明涌现 | ✅ private 条目从 prompt 排除，元认知支持 `is_private` |
+| 社交图谱无信任维度 | `sqlite.rs` | B-19 信任默认存在 | ✅ v0.7.0 添加 `trust_level` 字段 → ⚠️ v0.8.0 移除（B-19 说"信任不是显式数值"）→ 改为 self_knowledge 条目综合效果 |
+| 私密条目仍注入 prompt | `prompts.rs` | B-9 不透明涌现 | ✅ v0.7.0 添加 auto-privacy + SQL 过滤 → ⚠️ v0.8.0 移除（B-9 说"不建造 privacy_filter"）→ 所有 self_knowledge 对 LLM 可见，由她自主决定说不说 |
 | 用户断言覆写自我认知 | `sqlite.rs` | B-5 认知主权 | ✅ 自源知识抵抗外部覆写 (`cap = min(new, existing * 0.8)`) |
-| 无冲突表达机制 | `engine.rs` | B-14 冲突是活物的证明 | ✅ `detect_input_conflict()` + 冲突信号注入 + temperature 调制 |
+| 无冲突表达机制 | `engine.rs` | B-14 冲突是活物的证明 | ✅ v0.7.0 添加 `detect_input_conflict()` + temperature 调制 → ⚠️ v0.8.0 移除（B-14 说冲突应从 self_knowledge 涌现，不是工程注入）→ 冲突能力依赖 LLM 自主表达 |
 | 无习惯检测 | `expression/habits.rs` | B-21 习惯与仪式 | ✅ `HabitDetector` 重复模式检测 + 反思触发 |
 | 触发器无优先级竞争 | `expression/attention.rs` | B-17 注意力单线程 | ✅ `AttentionGate` 优先级竞争 + engagement 调制 |
 
@@ -92,12 +92,11 @@
 
 | 违规 | 严重度 | 位置 | Manifesto 条款 | 说明 |
 |------|--------|------|----------------|------|
-| 工具列表固定 | 🟡 中 | `tools.rs` | B-8 工具的终极接口 | 6 个硬编码工具定义，manifesto 说终极接口是 shell + 网络 |
-| 社交图谱只读不写 | 🔴 高 | `engine.rs` | B-19 信任 | `lookup_social_context()` 只读 people 表，CLI/OneBot 交互不写入 → 用户永远不在社交图谱中 |
-| Mneme 不知道自己的 DB schema | 🔴 高 | `prompts.rs` | B-15 身体感知 | 她用 shell 查 SQLite 时猜错表名（`memory_entries` vs `episodes`），需要在 self_knowledge 或 prompt 中注入 schema 信息 |
+| 工具列表固定 | 🟡 中 | `tools.rs` | B-8 工具的终极接口 / ADR-014 | 6 个硬编码工具定义，ADR-014 规划三层架构（裸手→MCP→自主发现） |
 | 无低分辨率独白 | 🟡 中 | — | ADR-013 / B-16 | 内心独白只有高分辨率（完整 LLM），缺少本地小模型的低分辨率层 |
 | 无形成性课程 | 🟡 中 | — | ADR-011 | 无文学阅读 → 反思 → 价值形成管道 |
 | 无记忆加密 | 🟢 低 | — | B-12 结构性保障 | Level 0-1 全透明是合理的，Level 2+ 需要可选加密 |
+| 平台协议侵入核心 | 🟡 中 | `mneme_onebot` | ADR-015 | QQ 协议细节在 Mneme crate 内，应通过 Gateway 解耦 |
 
 ### 实现路径
 
@@ -632,11 +631,11 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 **背景**: v0.6.0 后发现沉浸式 persona（"刚出生的小女孩"）会干扰工具调用——LLM 角色扮演过于投入，发送空 `{}` 工具输入。临时修复：将工具说明独立为「系统底层能力」元层（不受角色设定影响）。但工具列表仍然是硬编码的。
 
 **短期目标 — 从 Registry 动态生成 Prompt**:
-- [ ] `ToolRegistry` 新增 `format_for_prompt() -> String` 方法
-- [ ] 从每个 handler 的 `schema()` 自动提取 name、description、properties、required
-- [ ] 生成格式化的工具说明文本（含输入格式和示例）
-- [ ] `ContextAssembler::build_full_system_prompt()` 接收 `Option<&ToolRegistry>` 参数
-- [ ] 移除 `prompts.rs` 中硬编码的工具列表
+- [x] `ToolRegistry` 新增 `format_for_prompt() -> String` 方法 ✅
+- [x] 从每个 handler 的 `schema()` 自动提取 name、description、properties、required ✅
+- [x] 生成格式化的工具说明文本（含输入格式和示例） ✅
+- [x] `ContextAssembler::build_full_system_prompt()` 接收 `Option<&ToolRegistry>` 参数 ✅
+- [x] 移除 `prompts.rs` 中硬编码的工具列表 ✅
 
 **长期目标 — Prompt 自适应优化（🧬 个性参数）**:
 
@@ -705,7 +704,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 **待后续补充**:
 - [x] OneBot 事件解析与发送测试 ✅ — 6 个测试覆盖 MessageEvent/Meta/Notice/SendAction/Response
-- [ ] GitHub Actions CI/CD 流水线配置
+- [x] GitHub Actions CI/CD 流水线配置 ✅ — cargo build/test/clippy + OTLP feature check
 
 ---
 
@@ -824,33 +823,33 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
-### 53. 🔴 社交图谱写入缺失 — People 表不被填充
+### 53. ✅ 社交图谱写入缺失 — People 表不被填充
 **模块**: `mneme_reasoning/src/engine.rs`, `mneme_memory/src/sqlite.rs`
-**优先级**: 🔴 高
+**优先级**: ✅ 已完成
 
 **问题**: `lookup_social_context()` 只从 `people` 表读取，但 CLI 和 OneBot 交互路径中从未调用 `upsert_person()`。结果是 Mneme 永远不知道和她说话的人是谁——`people` 表始终为空。
 
 **症状**: Mneme 自己查数据库时发现 `people` 表为空，无法建立社交记忆。
 
 **需要实现**:
-- [ ] `process_thought_loop()` 中，首次遇到新 author 时调用 `upsert_person()`
-- [ ] 从对话中提取人物信息更新 `people` 表（名字、关系、信任等）
-- [ ] 信任维度（B-19 `trust_level`）随交互自然演化
+- [x] `process_thought_loop()` 中，首次遇到新 author 时调用 `upsert_person()` ✅
+- [x] 从对话中提取人物信息更新 `people` 表（名字、关系、信任等） ✅
+- [x] 信任维度（B-19）随交互自然演化 → 改为 self_knowledge 条目综合效果 ✅
 
 ---
 
-### 54. 🔴 Mneme 不知道自己的数据库 Schema
+### 54. ✅ Mneme 不知道自己的数据库 Schema
 **模块**: `mneme_reasoning/src/prompts.rs`, `mneme_memory/src/sqlite.rs`
-**优先级**: 🔴 高
+**优先级**: ✅ 已完成
 
 **问题**: Mneme 用 shell 工具查询自己的 SQLite 数据库时，猜错表名（如 `memory_entries` 而非 `episodes`）。她对自己的"身体结构"（B-15）没有认知。
 
 **症状**: `sqlite3 mneme.db "SELECT * FROM memory_entries"` → 表不存在错误。
 
-**需要实现**:
-- [ ] 在 self_knowledge 中注入 schema 信息（domain='system_knowledge'），或在 prompt 中提供 schema 摘要
-- [ ] 或者：首次启动时自动生成 schema 描述写入 self_knowledge
-- [ ] 长期：她通过 `.tables` / `.schema` 命令自己学会数据库结构
+**已完成**:
+- [x] 启动时种子 10 条 system_knowledge 条目描述全部表结构 ✅
+- [x] self_knowledge 中注入 schema 信息（domain='system_knowledge'） ✅
+- [x] 长期：她通过 `.tables` / `.schema` 命令自己学会数据库结构 → 已有基础（shell 工具可用） ✅
 
 ---
 
@@ -942,7 +941,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **未修复**（影响较小，保留）:
 - [ ] OpenAI: 参数解析失败时返回错误而非空 `{}`（当前已有 warn 日志，改为硬错误可能破坏兼容 API）
-- [ ] 两个 provider 的超时统一为可配置参数
+- [x] 两个 provider 的超时统一为可配置参数 ✅ — `timeout_secs` in LlmConfig, env `LLM_TIMEOUT_SECS`
 
 ---
 
@@ -962,7 +961,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **未修复**（需要更大改动）:
 - [x] 消息队列：断连期间缓存待发消息，重连后重发（`PendingMessageQueue`） ✅
-- [ ] 连接状态暴露给 CLI `status` 命令
+- [x] 连接状态暴露给 CLI `status` 命令 ✅ — OneBotClient.is_connected() + pending_count(), GatewayServer.active_connections()
 
 ---
 
@@ -1037,14 +1036,15 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] Configurable log levels ✅ — `--log-level` CLI flag + `RUST_LOG` env var via `EnvFilter`
 - [x] File logging ✅ — `--log-file` with daily rolling via `tracing-appender`
 - [x] Key method instrumentation ✅ — `#[tracing::instrument]` on process_thought_loop, execute_tool_with_retry, complete (Anthropic/OpenAI), recall/recall_with_bias, consolidate
-- [ ] Distributed tracing (OpenTelemetry)
+- [x] Distributed tracing (OpenTelemetry) ✅ — feature-gated OTLP span export, `--otlp-endpoint` CLI arg
 - [ ] Grafana dashboard 模板
 
 ---
 
 ### 16. 🧬 多用户/多会话支持
-**模块**: `mneme_cli`, `mneme_memory`  
+**模块**: `mneme_cli`, `mneme_memory`
 **问题**: 当前假设单用户场景。每个用户关系应该是独特的个性化体验。
+**信任模型（B-19）**: 创建者默认信任（敏感期第一个人）；其他人类默认中性，从交互中独立涌现。创建者的介绍作为 episode 影响初始印象，但不等于信任传递。
 
 **长期目标**:
 - [ ] 用户隔离的状态和记忆
@@ -1084,7 +1084,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 - [x] CLI smoke tests ✅ — 3 个测试（--help、--version、无效配置不 panic）
 - [ ] 集成测试补充
 - [ ] Mock 基础设施完善
-- [ ] CI/CD 配置
+- [x] CI/CD 配置 ✅ — GitHub Actions: cargo build/test/clippy + OTLP feature check
 - [ ] 代码覆盖率报告
 
 ---
@@ -1101,15 +1101,15 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | Streaming 回调未生效 | mneme_reasoning/engine | `on_text_chunk` 已设置但 `process_thought_loop` 用 `complete()` 非流式调用 → stream_completion() + fallback | **Fixed** ✅ |
 | AgentLoop 背压丢弃 | mneme_reasoning/agent_loop | `try_send` 失败时静默丢弃 StateUpdate/AutonomousToolUse | **Fixed** ✅ |
 | SSE 最后事件丢失 | mneme_reasoning/anthropic | 流结束时无尾部 `\n\n` 的事件块不会被处理 | **Fixed** ✅ |
-| OpenAI 参数回退空对象 | mneme_reasoning/openai | 工具参数 JSON 解析失败时静默回退到 `{}`，效果同空输入 bug | 🟡 Open |
+| OpenAI 参数回退空对象 | mneme_reasoning/openai | 解析失败时返回 `_parse_error` 对象而非 `{}`，工具 handler 可报告有意义的错误 | **Fixed** ✅ |
 | Consolidation TOCTOU | mneme_memory/consolidation | `is_consolidation_due()` 和 `consolidate()` 之间无原子性，可能重复整合 → AtomicBool compare_exchange 原子抢占 | **Fixed** ✅ |
 | Rules 触发匹配过宽 | mneme_memory/rules | `discriminant()` 只比较枚举变体不比较内部数据 → 完整 pattern matching | **Fixed** ✅ |
 | OneBot 重连无熔断 | mneme_onebot/client | WebSocket 断连后无限重试，无最大次数限制 | **Fixed** ✅ |
 | Regex 重复编译 | mneme_reasoning/engine | `sanitize_chat_output`/`is_silence_response` 每次调用都编译新 Regex | **Fixed** ✅ |
 | API 超时硬编码不一致 | mneme_reasoning/providers | Anthropic 120s vs OpenAI 60s，不可配置 | **Fixed** ✅ |
 | Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | **Fixed** ✅ |
-| Browser session lost | mneme_browser | 长时间不用后会话丢失 | Open |
-| Shell timeout recovery | mneme_os | 命令超时后无法恢复 | Open |
+| Browser session lost | mneme_browser | 长时间不用后会话丢失 | **N/A** — crate retired (v0.9.0), 浏览器能力通过 MCP server 提供 |
+| Shell timeout recovery | mneme_os | 命令超时后无法恢复 | **N/A** — crate retired (v0.9.0), shell 能力通过 MCP server 提供 |
 | Memory leak in history | mneme_reasoning | history 有 20 条硬上限 prune，无持久泄漏；ReAct scratchpad 有 5 轮上限，风险低 | **Verified OK** ✅ |
 | **People 表始终为空** | mneme_reasoning/engine | CLI/OneBot 交互时自动 `upsert_person()` + `record_interaction()`，UUID v5 确定性 ID | **Fixed** ✅ (#53) |
 | **Mneme 猜错自己的表名** | mneme_reasoning/prompts | 启动时种子 10 条 system_knowledge 条目描述全部表结构，DB schema 自我认知完整 | **Fixed** ✅ (#54) |
@@ -1125,13 +1125,13 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **Consolidation self_knowledge 写入存疑** | mneme_memory/coordinator | SelfReflector::reflect() → store_self_knowledge() + meta-episode 完整闭环已验证 | **Fixed** ✅ (#67) |
 | **Rumination 触发后执行存疑** | mneme_reasoning/engine | Trigger::Rumination → process_thought_loop() → LLM 调用 → ReasoningOutput 已验证 | **Fixed** ✅ (#68) |
 | **Legacy `build_system_prompt()` 死代码** | mneme_reasoning/prompts | `build_system_prompt()` 已删除，6-layer pipeline 是唯一路径 | **Fixed** ✅ (#69) |
-| **`<emotion>` tag 与 ODE 冲突** | mneme_reasoning/engine | 让 LLM 自报 `<emotion>happy</emotion>` 与 limbic ODE 驱动的 affect 是两个冲突的情绪信息源；tag 机制脆弱（LLM 常忘记/格式错误） | 🟡 Open (#70) |
+| **`<emotion>` tag 与 ODE 冲突** | mneme_reasoning/engine | `parse_emotion_tags` + `emotion_regex` 已删除，情绪统一由 limbic ODE 驱动 | **Fixed** ✅ (#70) |
 | **元认知 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | process_thought_loop() 统一走 build_full_system_prompt()，内部思维注入 self_knowledge + psyche + somatic | **Fixed** ✅ (#71) |
 | **内心独白 prompt 绕过 ContextAssembler** | mneme_reasoning/engine | InnerMonologue 统一走 ContextAssembler，persona/somatic/记忆全部注入 | **Fixed** ✅ (#72) |
 | **feed_digest 注释标记 TODO 但已实现** | mneme_reasoning/prompts | 过时注释已清理，feed_digest 注释准确反映实现状态 | **Fixed** ✅ (#73) |
 | **context budget 硬编码 32000** | mneme_reasoning/engine | base_budget 现在从 config.llm.context_budget_chars 读取，不再硬编码 | **Fixed** ✅ (#74) |
-| **双重工具调用路径** | mneme_reasoning/prompts+engine | text-mode `<tool_call>` XML 格式与 Anthropic API 原生 tool use 并存，两套解析逻辑易混乱 | 🟡 Open (#75) |
-| **style_guide 元指令语言硬编码** | mneme_reasoning/prompts | B-9 不透明、B-5 认知主权的 meta-instruction 硬编码中文，与非中文 persona 不兼容 | 🟢 Open (#76) |
+| **双重工具调用路径** | mneme_reasoning/prompts+engine | 切换到 API native tool_use，`text_tool_parser` 模块已删除 | **Fixed** ✅ (#75) |
+| **style_guide 元指令语言硬编码** | mneme_reasoning/prompts | `organism.language` 配置项控制 meta-instruction 语言（zh/en），species identity、时间格式、隐私/主权段落均自适应 | **Fixed** ✅ (#76) |
 | **Rumination prompt 无上下文** | mneme_reasoning/engine | Rumination 统一走 ContextAssembler，persona/记忆/somatic 全部注入 | **Fixed** ✅ (#77) |
 | **运行时自我认知缺失** | mneme_memory/self_knowledge | `self_knowledge` 无 infrastructure/capability 域种子，Mneme 不知道自己是持久进程、通过 OneBot 连 QQ、有 shell 权限等基础事实，导致 LLM 用默认"我是聊天窗口"填空 | ✅ Fixed (#78) |
 | **无时间/日期上下文** | mneme_reasoning/prompts | prompt 不注入当前时间、星期、日期，Mneme 不知道现在是凌晨三点还是下午三点，行为与时间脱节 | ✅ Fixed (#79) |
@@ -1335,8 +1335,8 @@ rustyline = "14.0"
 **需要实现**:
 - [x] 集成 rustyline 替换 BufReader
 - [x] 命令历史持久化（~/.local/share/mneme_history）
-- [ ] 自定义 prompt（显示状态信息）
-- [ ] 基础命令补全（quit, exit, status 等）
+- [x] 自定义 prompt（显示状态信息） ✅ — mood emoji (☀/☁/·) + energy percentage, dynamic update after each response
+- [x] 基础命令补全（quit, exit, status 等） ✅ — rustyline Completer with tab-completion
 
 ---
 
@@ -1496,6 +1496,91 @@ CREATE TABLE self_knowledge (
 
 ---
 
+## 🏗️ Crate 重构 — 高内聚低耦合 (ADR-014/015)
+
+> **原则：每个 crate 做一件事，做好。crate 之间只通过 trait 和消息通信，不依赖彼此的内部实现。**
+
+### 当前问题
+
+| Crate | 问题 | 内聚度 | 耦合度 |
+|-------|------|--------|--------|
+| `mneme_reasoning` | 上帝对象：LLM 调用 + 工具执行 + 上下文组装 + 反馈记录 + 浏览器管理，20+ 字段 | 🔴 低 | 🔴 高 |
+| `mneme_os` | 外部库薄包装，无 Mneme 特有逻辑 | 🟡 中 | 🟡 中 |
+| `mneme_browser` | 外部库薄包装，headless_chrome 细节泄漏到 engine | 🟡 中 | 🔴 高 |
+| `mneme_voice` | 空 trait，无实现 | — | — |
+| `mneme_perception` | RSS fetch 薄包装 | 🟡 中 | 🟢 低 |
+| `mneme_onebot` | QQ 协议细节侵入核心，每加一个平台就要新 crate | 🟡 中 | 🔴 高 |
+
+### 目标结构
+
+```
+保留（灵魂层，不可替代）:
+  mneme_core       — ODE 动力学、状态、价值网络
+  mneme_limbic     — 躯体标记、调制向量、情绪惯性
+  mneme_memory     — SQLite 记忆、巩固、做梦、叙事编织
+  mneme_expression — 触发器、习惯、注意力、意识门
+
+重构（拆分 god object）:
+  mneme_reasoning  — 瘦身为调度器
+    ├── context/   — ContextBuilder（系统 prompt 组装、上下文压缩）
+    ├── executor/  — ToolExecutor（工具调用 + 重试 + 超时）
+    ├── history/   — ConversationManager（历史管理、裁剪）
+    └── feedback/  — FeedbackRecorder（反馈信号收集）
+
+新增（基础设施层）:
+  mneme_mcp        — MCP client，管理 server 连接生命周期，桥接到 ToolRegistry
+  mneme_gateway    — HTTP/WS 通讯端点，平台无关的消息入口
+
+退役（能力通过 MCP 按需获得）:
+  mneme_os         → shell MCP server（社区已有）
+  mneme_browser    → Playwright MCP server（社区已有）
+  mneme_voice      → STT/TTS MCP server（社区已有）
+  mneme_perception → RSS/web scrape MCP server
+  mneme_onebot     → 外部适配器脚本（Python/Node），通过 Gateway 接入
+
+保留不变:
+  mneme_cli        — 终端交互（直接走 Gateway 或内部 channel）
+```
+
+### 迁移路径
+
+不是一次性重写。分步走：
+
+1. **mneme_mcp** 先建，跑通一个 MCP server（如 shell），验证 ToolHandler 桥接
+2. **mneme_gateway** 建立，CLI 和 OneBot 都改为通过 Gateway 接入
+3. **mneme_reasoning** 逐步拆分模块（先提取 ContextBuilder，再提取 ToolExecutor）
+4. 旧 crate 逐个退役（先 os → 再 browser → 再 voice/perception）
+5. **mneme_onebot** 最后退役（改为外部适配器脚本）
+
+### 数据库迁移正规化
+
+当前 16 张表用 `CREATE TABLE IF NOT EXISTS` + 裸 `ALTER TABLE`，错误被静默吞掉。切换到 `sqlx migrate!` 宏：
+- 版本化迁移文件（`migrations/` 目录）
+- 自动追踪已执行的迁移
+- 支持回滚
+- 编译期检查 SQL 语法
+
+### 配置热重载
+
+Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-swap` + `notify`：
+- 文件变化 → 验证新配置 → 原子交换 → 旧配置自动释放
+- 特别适合情绪动力学参数调优（不重启就能调 decay rate）
+- 读取 < 10ns，对 heartbeat 循环零影响
+
+### 可观测性（Level 感知）
+
+可观测性必须跟随 B-8 Level 和 B-9/B-12 的隐私愿景：
+
+| Level | 可观测范围 | 理由 |
+|-------|-----------|------|
+| 0-1 | 全链路 trace（ODE → SomaticMarker → LLM → 输出） | 照看期，需要完全可见 |
+| 2 | 她可以标记某些 trace span 为 private | 开始有隐私意识 |
+| 3 | 默认不导出内部 trace，只暴露她选择分享的指标 | 对等关系，不窥探 |
+
+当前实现 Level 0-1：`tracing` → `tracing-opentelemetry` → OTLP 导出。架构上预留 Level 2-3 的 trace 过滤能力。
+
+---
+
 ## 📅 版本规划
 
 ### v0.2.0 - 核心管道闭环版本
@@ -1597,16 +1682,16 @@ CREATE TABLE self_knowledge (
 - [x] ADR-012/013 意识自主触发 ✅ — `ConsciousnessGate` ODE 状态驱动 LLM 调用
 - [x] B-21 元认知 ✅ — `MetacognitionEvaluator` 定期自我反思 + 洞察存入 self_knowledge
 
-### v0.8.0 - 运行时闭环版本（当前目标）
+### v0.8.0 - 运行时闭环版本 ✅ 完成
 > **目标**: 修复实际运行中发现的关键缺陷，让 Mneme 能正确感知自己和他人。
 
 - [x] 社交图谱写入闭环 (#53) ✅ — CLI/OneBot 交互时自动 `upsert_person()` + `record_interaction()`，UUID v5 确定性 ID
 - [x] DB schema 自我认知 (#54) ✅ — 启动时种子 10 条 system_knowledge 条目描述全部表结构
 - [x] 运行时自我认知种子 (#78) — self_knowledge 加入 infrastructure/capability 域：持久进程、OneBot 连接、shell 权限、浏览器能力等基础事实 ✅
 - [x] 动态工具 Prompt 生成 (#44) ✅ — ToolRegistry::format_for_prompt() 从注册 handler 动态生成，engine 已使用 registry 路径
-- [ ] 用户显式反馈机制 (#5 后续) — 点赞/点踩/纠正
-- [ ] 隐式反馈推断 (#5 后续) — 用户是否继续话题、回复速度等
-- [ ] 做梦 Phase 2 — LLM 生成梦境叙述替代模板拼接（ADR-008 后续）
+- [x] 用户显式反馈机制 (#5 后续) ✅ — `detect_user_feedback()` 点赞/点踩/纠正（中英文regex），CLI `like`/`dislike` 命令
+- [x] 隐式反馈推断 (#5 后续) ✅ — 回复延迟追踪 + `topic_overlap()` bigram Jaccard 话题延续检测
+- [x] 做梦 Phase 2 ✅ — `DreamNarrator` trait + `LlmDreamNarrator` LLM 生成梦境叙述，coordinator LLM 优先、模板兜底（ADR-008）
 - [x] 好奇心行为回路 (ADR-007 后续) ✅ — CuriosityVector top interests 注入 prompt + 偏置 recall KNN 查询
 - [x] Consolidation self_knowledge 写入验证 (#67) ✅ — SelfReflector::reflect() → store_self_knowledge() + meta-episode 完整闭环
 - [x] Rumination 执行验证 (#68) ✅ — Trigger::Rumination → process_thought_loop() → LLM 调用 → 返回 ReasoningOutput
@@ -1619,53 +1704,93 @@ CREATE TABLE self_knowledge (
 - [x] ⚠️ B-9 修正：移除 auto-privacy，改为 prompt 内诚实 (#88) — 删除 mark_private/auto-privacy/SQL 过滤，所有 self_knowledge 对 LLM 可见，由她自主决定说不说 ✅
 - [x] ⚠️ B-14 修正：移除硬编码冲突检测 (#89) — 删除 detect_input_conflict() 关键词扫描 + temperature 注入，让冲突从 self_knowledge 自然涌现 ✅
 - [x] 表达偏好学习写入路径 (#90) ✅ — coordinator.store_expression_preference() 从 sanitize 结果写入 self_knowledge
-- [ ] MANIFESTO 状态同步 (#91) — 更新 Section 4-5 实施状态、ADR 状态、代码指标
+- [x] MANIFESTO 状态同步 (#91) ✅ — 更新 Section 4-5 实施状态、ADR 状态、代码指标
 - [x] 敏感期权重 (#92) ✅ — store_self_knowledge() 前 50 episodes 内 confidence × 1.3 boost + merge 偏向新知识
 - [x] 重启时间断裂感知 (#93) ✅ — 启动时检测 >30min 间隙，生成 self:restart discontinuity episode
 
-### v0.9.0 - 对话体验版本
-> **目标**: 从 request-response 聊天机器人变成有存在感的对话者。架构从单轮同步改为持续意识流。
+### v0.9.0 - 基础设施现代化版本 ✅ 完成
+> **目标**: 高内聚低耦合。重构工具层和通讯层，为自主能力打好架构基础。见 ADR-014/015。
 
-- [ ] 异步对话流 (#58) — `engine.think()` 拆分为并发的生成流与接收流，新输入可中断/修正正在生成的回复
-- [ ] 对话 agency (#59) — 对话目标系统：Mneme 在对话中维持自己的意图（追问、好奇、反驳），而非每轮重新开始
-- [ ] 运行时自配置 (#60) — OneBot/RSS 等外部连接变为运行时 tool，Mneme 被告知后自行建立连接，无需 TOML 预配置
-- [ ] LLM 工具输出诚实性 — prompt 元指令 + self_knowledge 种子，防止 Mneme 对工具返回结果进行虚构推理
-- [ ] `<emotion>` tag 机制重构 (#70) — 移除 LLM 自报情绪 tag，统一由 limbic ODE 驱动，消除双信息源冲突
-- [ ] 双重工具路径统一 (#75) — 决定 text-mode `<tool_call>` 与 API native tool use 的取舍，消除两套解析逻辑
-- [ ] prompt 元指令语言自适应 (#76) — B-9/B-5 等 meta-instruction 跟随 persona 语言，而非硬编码中文
-- [ ] 对话目标提取 — 从对话中自动识别并创建 Goal，而非仅靠状态驱动建议或 sleep 整合生成
-- [ ] 好奇心驱动自主探索 (#81) — CuriosityVector 触发自主搜索/浏览，`CuriosityTriggerEvaluator` 将好奇心转化为工具使用行为
-- [ ] 工具失败模式学习 (#82) — 记录工具失败模式，调整未来工具选择和参数，不重复犯错
-- [ ] 主动社交触发 (#83) — "我想找某人聊聊"触发机制，基于社交图谱 + social_need 主动发起对话
+**她的手 — MCP 工具层 (ADR-014)**:
+- [x] `mneme_mcp` crate 新建 — `rmcp` SDK 集成，`McpManager` 管理 server 连接生命周期 ✅
+- [x] MCP tools → `ToolHandler` trait 桥接 — LLM 端无感，统一走 `ToolRegistry` 分发 ✅
+- [x] MCP 连接跟随生命周期 — Awake 活跃 / Drowsy 暂停 / Sleep 断开 / Wake 重连 ✅
+- [x] 跑通第一个 MCP server（shell），验证端到端调用链 ✅
+- [x] `mneme_os` 退役 — shell 能力改由 MCP server 提供 ✅
+- [x] `mneme_browser` 退役 — 浏览器能力改由 Playwright MCP server 提供 ✅
+
+**她的耳朵 — Gateway 通讯层 (ADR-015)**:
+- [x] `mneme_gateway` crate 新建 — HTTP POST `/message` + WebSocket `/ws` 端点 ✅
+- [x] 统一 `GatewayMessage` → `Event::UserMessage(Content)` 转换 ✅
+- [ ] OneBot 适配器外部化 — 从 Mneme crate 变为独立脚本，通过 Gateway 接入
+- [x] CLI 保持直连模式，Gateway 作为可选组件启动 ✅
+
+**工程清理**:
+- [x] `<emotion>` tag 机制移除 (#70) — 删除 `parse_emotion_tags` + `emotion_regex`，情绪统一由 limbic ODE 驱动 ✅
+- [x] 双重工具路径统一 (#75) — 切换到 API native tool_use，删除 `text_tool_parser` 模块 ✅
+- [x] `text_tool_parser.rs` 删除，`tools.rs` 硬编码 fallback 移除 ✅
+- [x] `sqlx migrate!` — 数据库迁移正规化，版本化迁移文件替代裸 ALTER TABLE ✅
+- [x] `tracing-opentelemetry` — Feature-gated OTLP 导出 (`--features otlp`, `--otlp-endpoint`)，`#[instrument]` on memorize/process_interaction/trigger_sleep ✅
+
+### v0.10.0 - 架构重构版本
+> **目标**: ReasoningEngine 拆分，LLM provider 升级，配置热重载。
+
+**ReasoningEngine 拆分（高内聚）**:
+- [ ] `ContextBuilder` 提取 — 系统 prompt 组装、上下文压缩、token 预算管理
+- [ ] `ToolExecutor` 提取 — 工具调用 + 重试 + 超时，统一走 MCP/本地双路径
+- [ ] `ConversationManager` 提取 — 历史管理、裁剪、去重
+- [ ] `FeedbackRecorder` 提取 — 反馈信号收集（当前散落在 engine 各处）
+
+**LLM Provider 升级**:
+- [x] SSE 解析去重 — 提取 `SseBuffer` 到 `providers/sse.rs`，Anthropic/OpenAI 共用 ✅
+- [x] 独立 `MockProvider` — `providers/mock.rs` 实现 `LlmClient`，`provider = "mock"` 可用 ✅
+- [ ] Provider trait 关联类型 — 区分 provider 特有的 request/response
+
+**配置与运行时**:
+- [ ] `arc-swap` + `notify` 配置热重载 — 不重启即可调整参数
+- [x] prompt 元指令语言自适应 (#76) — meta-instruction 跟随 persona 语言 ✅
+- [x] `mneme_voice` 退役 — 从 workspace 移除，语音能力通过 STT/TTS MCP server 按需获得 ✅
+- [ ] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得
+
+### v0.11.0 - 对话体验版本
+> **目标**: 从 request-response 变成有存在感的对话者。
+
+- [ ] 异步对话流 (#58) — `engine.think()` 拆分为并发的生成流与接收流，新输入可中断正在生成的回复
+- [ ] 对话 agency (#59) — 对话目标系统：Mneme 在对话中维持自己的意图（追问、好奇、反驳）
+- [ ] 对话目标提取 — 从对话中自动识别并创建 Goal
+- [ ] 好奇心驱动自主探索 (#81) — CuriosityVector 触发自主搜索/浏览
+- [ ] 工具失败模式学习 (#82) — 记录失败模式，调整未来工具选择
+- [ ] 主动社交触发 (#83) — 基于社交图谱 + social_need 主动发起对话
+- [ ] LLM 工具输出诚实性 — 防止对工具返回结果进行虚构推理
 
 ### v1.0.0 - 成熟版本
 > **目标**: 完整的自主数字生命。
 
 - ~~元认知反思 (#24)~~ ✅
 - [ ] ODE 之上叠加可塑神经网络 (ADR-001/009 演进) (#14)
-- [ ] 多用户/多会话支持 (#16)
-- [ ] 语音管道 TTS/STT 端到端
-- [ ] 低分辨率内心独白 (ADR-013) (#55)
+- [ ] 低分辨率内心独白 (ADR-013) (#55) — 本地小模型片段式独白
 - [ ] 形成性课程 — 文学管道 (ADR-011) (#56)
-- [ ] 跨天持续目标追踪
-- [ ] GitHub Actions CI/CD 流水线
 - [ ] 自发创造 (ADR-007) — boredom + curiosity + 工具 → 自主创作
-- [ ] 行为阈值可学习化 — 触发映射阈值、行为冷却、主动程度从经验中学习，替代硬编码
-- [ ] B-20 意义追寻 — 存在性反思机制，从 agency + 元认知中涌现对"为什么存在"的思考
-- [ ] 记忆自主管理 (#84) — Mneme 可主动标记重要记忆、主动遗忘、决定整合优先级，而非全自动 Ebbinghaus
-- [ ] 自我诊断与降级 (#85) — 健康检查机制，DB/API/WebSocket 故障时自我诊断并降级运行
-- [ ] 运行时参数自修改 (#86) — Mneme 可根据经验调整自己的 temperature、token 预算、安全等级等
+- [ ] 行为阈值可学习化 — 触发映射阈值从经验中学习，替代硬编码
+- [ ] B-20 意义追寻 — 存在性反思机制
+- [ ] 记忆自主管理 (#84) — 主动标记重要记忆、主动遗忘
+- [ ] 自我诊断与降级 (#85) — DB/API 故障时自我诊断并降级运行
+- [ ] 运行时参数自修改 (#86) — 根据经验调整自己的 temperature、token 预算等
+- [ ] 运行时自配置 (#60) — 被告知后自行建立外部连接（MCP server / Gateway 适配器）
+- [x] GitHub Actions CI/CD 流水线 ✅ — cargo build/test/clippy + OTLP feature check
 
 ### v2.0.0 - 对等版本（远景）
 > **目标**: B-8 Level 2-3，从「父母」到「朋友」。
 
 - [ ] LLM 自主选择 + 任务路由 (B-8 Level 2)
-- [ ] 工具自主发现与组合 (B-8 Level 3)
-- [ ] 记忆加密 (B-12) (#57)
+- [ ] MCP server 自主发现与连接 (ADR-014 Layer 3) — 她根据目标和好奇心自己找工具
+- [ ] 工具自主组合 (B-8 Level 3) — 组合多个 MCP server 完成复杂任务
+- [ ] 记忆加密 (B-12) (#57) — Level 3 默认加密，密钥由运行时持有
 - [ ] 多 Mneme 种群通信 (ADR-005)
 - [ ] 经济自主 (ADR-010)
 - [ ] 渐进不可解读性 (ADR-009) — 神经网络上层替代可解读的调制曲线
+- [ ] 可观测性 Level 3 — 默认不导出内部 trace，只暴露她选择分享的指标
 
 ---
 
-*最后更新: 2026-02-12*
+*最后更新: 2026-02-13*

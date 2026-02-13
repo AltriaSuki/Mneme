@@ -16,7 +16,7 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
-    pub fn new(model: &str) -> Result<Self> {
+    pub fn new(model: &str, timeout_secs: u64) -> Result<Self> {
         let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| "mock".to_string());
         let base_url = env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string())
@@ -25,7 +25,7 @@ impl OpenAiClient {
 
         Ok(Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(120))
+                .timeout(Duration::from_secs(timeout_secs))
                 .build()?,
             api_key,
             base_url,
@@ -444,8 +444,10 @@ where
         + Unpin
         + Send,
 {
+    use super::sse::SseBuffer;
+
     let mut stream = byte_stream;
-    let mut buffer = String::new();
+    let mut buf = SseBuffer::new();
     let mut stop_reason: Option<String> = None;
     // Track which tool call indices we've already sent ToolUseStart for
     let mut seen_tool_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -454,12 +456,9 @@ where
 
     while let Some(chunk_result) = stream.next().await {
         let chunk: bytes::Bytes = chunk_result.context("Error reading OpenAI SSE chunk")?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        buf.push_bytes(&chunk);
 
-        while let Some(pos) = buffer.find('\n') {
-            let line = buffer[..pos].trim().to_string();
-            buffer = buffer[pos + 1..].to_string();
-
+        for line in buf.extract_lines() {
             if line.is_empty() {
                 continue;
             }

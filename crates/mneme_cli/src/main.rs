@@ -22,7 +22,42 @@ use mneme_reasoning::{
 };
 
 use rustyline::error::ReadlineError;
-use rustyline::{Config, DefaultEditor, EditMode};
+use rustyline::{Completer, Config, EditMode, Editor, Helper, Highlighter, Hinter, Validator};
+
+/// Rustyline helper providing tab-completion for CLI commands.
+#[derive(Completer, Helper, Highlighter, Hinter, Validator)]
+struct MnemeHelper {
+    #[rustyline(Completer)]
+    completer: CommandCompleter,
+}
+
+#[derive(Clone)]
+struct CommandCompleter;
+
+impl rustyline::completion::Completer for CommandCompleter {
+    type Candidate = String;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        const COMMANDS: &[&str] = &[
+            "quit", "exit", "status", "sync", "sleep", "like", "dislike",
+        ];
+        let prefix = &line[..pos];
+        if prefix.contains(' ') {
+            return Ok((0, vec![]));
+        }
+        let matches: Vec<String> = COMMANDS
+            .iter()
+            .filter(|cmd| cmd.starts_with(prefix))
+            .map(|cmd| cmd.to_string())
+            .collect();
+        Ok((0, matches))
+    }
+}
 
 /// Perform graceful shutdown with a 5-second timeout.
 async fn graceful_shutdown(coordinator: &OrganismCoordinator) {
@@ -31,6 +66,18 @@ async fn graceful_shutdown(coordinator: &OrganismCoordinator) {
         Ok(()) => tracing::info!("Graceful shutdown completed"),
         Err(_) => tracing::warn!("Shutdown timed out after 5s, forcing exit"),
     }
+}
+
+/// Format a compact CLI prompt showing organism status.
+fn format_status_prompt(state: &mneme_core::OrganismState) -> String {
+    let mood = if state.fast.affect.valence > 0.3 {
+        "☀"
+    } else if state.fast.affect.valence < -0.3 {
+        "☁"
+    } else {
+        "·"
+    };
+    format!("[{}{:.0}%] > ", mood, state.fast.energy * 100.0)
 }
 
 async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefix: Option<&str>) {
@@ -85,6 +132,10 @@ struct Args {
     /// Log file path (additional to stderr)
     #[arg(long)]
     log_file: Option<String>,
+
+    /// OTLP endpoint for distributed tracing (requires --features otlp)
+    #[arg(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
 }
 
 #[tokio::main]
@@ -100,6 +151,34 @@ async fn main() -> anyhow::Result<()> {
 
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
+
+        // Optional OpenTelemetry layer (only available with --features otlp)
+        #[cfg(feature = "otlp")]
+        let otel_layer = {
+            if let Some(ref endpoint) = args.otlp_endpoint {
+                use opentelemetry::trace::TracerProvider;
+                use opentelemetry_otlp::WithExportConfig;
+
+                let exporter = opentelemetry_otlp::SpanExporter::builder()
+                    .with_tonic()
+                    .with_endpoint(endpoint)
+                    .build()
+                    .expect("Failed to create OTLP exporter");
+
+                let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                    .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+                    .build();
+
+                let tracer = provider.tracer("mneme");
+                opentelemetry::global::set_tracer_provider(provider);
+
+                Some(tracing_opentelemetry::layer().with_tracer(tracer))
+            } else {
+                None
+            }
+        };
+        #[cfg(not(feature = "otlp"))]
+        let otel_layer: Option<tracing_subscriber::layer::Identity> = None;
 
         if let Some(ref log_path) = args.log_file {
             // File + stderr dual output
@@ -118,12 +197,14 @@ async fn main() -> anyhow::Result<()> {
             if args.log_json {
                 tracing_subscriber::registry()
                     .with(env_filter)
+                    .with(otel_layer)
                     .with(fmt::layer().json().with_writer(std::io::stderr))
                     .with(fmt::layer().json().with_writer(non_blocking))
                     .init();
             } else {
                 tracing_subscriber::registry()
                     .with(env_filter)
+                    .with(otel_layer)
                     .with(fmt::layer().with_writer(std::io::stderr))
                     .with(fmt::layer().with_writer(non_blocking))
                     .init();
@@ -131,11 +212,13 @@ async fn main() -> anyhow::Result<()> {
         } else if args.log_json {
             tracing_subscriber::registry()
                 .with(env_filter)
+                .with(otel_layer)
                 .with(fmt::layer().json())
                 .init();
         } else {
             tracing_subscriber::registry()
                 .with(env_filter)
+                .with(otel_layer)
                 .with(fmt::layer())
                 .init();
         }
@@ -242,7 +325,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let psyche = memory.build_psyche().await?;
+    let psyche = memory.build_psyche(&config.organism.language).await?;
 
     // 3. Initialize Source Manager
     let source_manager = Arc::new(SourceManager::new());
@@ -259,20 +342,18 @@ async fn main() -> anyhow::Result<()> {
         config.llm.model
     );
 
-    // Initialize OS Executor (Local for now, potentially SSH based on config later)
-    use mneme_os::local::LocalExecutor;
-    let executor = Arc::new(LocalExecutor::default());
-
     // Initialize LLM Client from config
+    let timeout = config.llm.timeout_secs;
     let client: Box<dyn LlmClient> = match config.llm.provider.as_str() {
-        "anthropic" => Box::new(AnthropicClient::new(&config.llm.model)?),
-        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model)?),
+        "anthropic" => Box::new(AnthropicClient::new(&config.llm.model, timeout)?),
+        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model, timeout)?),
+        "mock" => Box::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
         _ => {
             tracing::warn!(
                 "Unknown provider '{}', defaulting to Anthropic",
                 config.llm.provider
             );
-            Box::new(AnthropicClient::new(&config.llm.model)?)
+            Box::new(AnthropicClient::new(&config.llm.model, timeout)?)
         }
     };
 
@@ -283,11 +364,22 @@ async fn main() -> anyhow::Result<()> {
         OrganismCoordinator::with_persistence(limbic, organism_config, memory.clone()).await?,
     );
 
+    // v0.8.0: Wire up LLM Dream Narrator (Phase 2) — second client for dream generation
+    {
+        let dream_client: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
+            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout)?),
+            "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
+            _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+        };
+        let narrator = Arc::new(mneme_reasoning::LlmDreamNarrator::new(dream_client));
+        coordinator.set_dream_narrator(narrator).await;
+    }
+
     let mut engine = ReasoningEngine::with_coordinator(
         psyche,
         memory.clone(),
         client,
-        executor,
         coordinator.clone(),
     );
 
@@ -303,32 +395,33 @@ async fn main() -> anyhow::Result<()> {
     ));
     engine.set_guard(guard.clone());
 
-    // 4c. Initialize Tool Registry
-    let browser_session_keepalive = {
-        use mneme_reasoning::tools::{BrowserToolHandler, ShellToolHandler};
+    // 4c. Initialize Tool Registry + MCP tools
+    {
         use mneme_reasoning::ToolRegistry;
-
         let mut registry = ToolRegistry::with_guard(guard);
-        let browser_session = Arc::new(tokio::sync::Mutex::new(None));
-        let keepalive_handle = browser_session.clone();
 
-        registry.register(Box::new(ShellToolHandler {
-            executor: Arc::new(mneme_os::local::LocalExecutor::default()),
-            guard: registry.guard().cloned(),
-        }));
-        registry.register(Box::new(BrowserToolHandler::goto(browser_session.clone())));
-        registry.register(Box::new(BrowserToolHandler::click(browser_session.clone())));
-        registry.register(Box::new(BrowserToolHandler::type_text(
-            browser_session.clone(),
-        )));
-        registry.register(Box::new(BrowserToolHandler::screenshot(
-            browser_session.clone(),
-        )));
-        registry.register(Box::new(BrowserToolHandler::get_html(browser_session)));
+        // 4f. Connect MCP servers and register discovered tools
+        if let Some(ref mcp_config) = config.mcp {
+            let lifecycle_rx = coordinator.subscribe_lifecycle();
+            let mut mcp_manager =
+                mneme_mcp::McpManager::new(mcp_config.servers.clone(), lifecycle_rx);
+            match mcp_manager.connect_all().await {
+                Ok(mcp_tools) => {
+                    info!("MCP: {} tool(s) registered from MCP servers", mcp_tools.len());
+                    for tool in mcp_tools {
+                        registry.register(tool);
+                    }
+                }
+                Err(e) => {
+                    error!("MCP connection failed: {}", e);
+                }
+            }
+            // Spawn lifecycle watcher (disconnects on sleep, etc.)
+            mcp_manager.spawn_lifecycle_watcher();
+        }
 
         engine.set_registry(Arc::new(registry));
-        keepalive_handle
-    };
+    }
 
     // 4d. Initialize Token Budget
     let token_budget = Arc::new(mneme_reasoning::token_budget::TokenBudget::new(
@@ -413,6 +506,19 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // --- GATEWAY MODE ---
+    let (gateway_response_tx, gateway_active_ws) = if let Some(ref gw_cfg) = config.gateway {
+        let gw_server =
+            mneme_gateway::GatewayServer::new(event_tx.clone(), &gw_cfg.host, gw_cfg.port);
+        let resp_tx = gw_server.response_sender();
+        let active_ws = gw_server.active_connections();
+        gw_server.start();
+        info!("Gateway started on {}:{}", gw_cfg.host, gw_cfg.port);
+        (Some(resp_tx), Some(active_ws))
+    } else {
+        (None, None)
+    };
+
     // Stdin loop using rustyline (line editing, history, CJK support)
     // Use a sync channel to block the stdin loop until the response is printed,
     // preventing the ">" prompt from appearing before Mneme's reply.
@@ -420,13 +526,22 @@ async fn main() -> anyhow::Result<()> {
     let (prompt_ready_tx, prompt_ready_rx) = std::sync::mpsc::channel::<()>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tx_stdin = event_tx.clone();
+
+    // Shared prompt string — updated by main loop with organism status
+    let cli_prompt = Arc::new(std::sync::Mutex::new(String::from("> ")));
+    let cli_prompt_reader = cli_prompt.clone();
+
     tokio::task::spawn_blocking(move || {
         // Set up rustyline with history
         let config = Config::builder()
             .edit_mode(EditMode::Emacs)
             .auto_add_history(true)
             .build();
-        let mut rl = DefaultEditor::with_config(config).expect("Failed to init rustyline");
+        let helper = MnemeHelper {
+            completer: CommandCompleter,
+        };
+        let mut rl = Editor::with_config(config).expect("Failed to init rustyline");
+        rl.set_helper(Some(helper));
 
         // Load history from ~/.mneme_history
         let history_path = dirs::data_local_dir()
@@ -437,7 +552,8 @@ async fn main() -> anyhow::Result<()> {
         let mut shutdown_tx = Some(shutdown_tx);
 
         loop {
-            match rl.readline("> ") {
+            let prompt = cli_prompt_reader.lock().unwrap().clone();
+            match rl.readline(&prompt) {
                 Ok(line) => {
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
@@ -454,9 +570,7 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Commands that don't need to wait for response
-                    let needs_wait = !["sync", "sleep", "status"].contains(&trimmed)
-                        && !trimmed.starts_with("os-exec ")
-                        && !trimmed.starts_with("browser-test ");
+                    let needs_wait = !["sync", "sleep", "status", "like", "dislike"].contains(&trimmed);
 
                     let content = Content {
                         id: Uuid::new_v4(),
@@ -530,8 +644,6 @@ async fn main() -> anyhow::Result<()> {
                 use mneme_reasoning::agent_loop::AgentAction;
                 match action {
                     AgentAction::StateUpdate => {
-                        // Organism tick completed — ping browser session to prevent idle timeout
-                        mneme_reasoning::tools::browser_keepalive(&browser_session_keepalive).await;
                         // B-17: Decay engagement toward idle between interactions
                         engagement.decay(0.85);
                         continue;
@@ -626,50 +738,42 @@ async fn main() -> anyhow::Result<()> {
                 let monthly = token_budget.get_monthly_usage().await;
                 println!("Token usage (today): {}", daily);
                 println!("Token usage (month): {}", monthly);
+                // Connection status
+                if let Some(ref client) = onebot_client {
+                    let connected = if client.is_connected() { "Connected" } else { "Disconnected" };
+                    let pending = client.pending_count();
+                    if pending > 0 {
+                        println!("OneBot: {} ({} pending)", connected, pending);
+                    } else {
+                        println!("OneBot: {}", connected);
+                    }
+                }
+                if let Some(ref ws_count) = gateway_active_ws {
+                    println!("Gateway: {} active WebSocket(s)", ws_count.load(std::sync::atomic::Ordering::Relaxed));
+                }
                 println!("=======================");
                 continue;
-            } else if content.source == "cli" && content.body.trim().starts_with("os-exec ") {
-                let cmd = content.body.trim_start_matches("os-exec ").trim();
-                info!("Executing OS command: '{}'", cmd);
-
-                // Temp: use LocalExecutor for now
-                // In Phase 3 integration, this will be selected based on config or intent
-                use mneme_os::Executor;
-                let executor = mneme_os::local::LocalExecutor::new();
-                match executor.execute(cmd).await {
-                    Ok(output) => {
-                        println!("--- Output ---");
-                        println!("{}", output.trim());
-                        println!("--------------");
-                    }
-                    Err(e) => error!("Execution failed: {:?}", e),
-                }
+            } else if content.source == "cli" && content.body.trim() == "like" {
+                coordinator
+                    .record_feedback(
+                        mneme_memory::SignalType::UserEmotionalFeedback,
+                        "用户点赞（CLI命令）".to_string(),
+                        0.75,
+                        0.6,
+                    )
+                    .await;
+                println!("👍 已记录");
                 continue;
-            } else if content.source == "cli" && content.body.trim().starts_with("browser-test ") {
-                let url = content.body.trim_start_matches("browser-test ").trim();
-                info!("Testing Browser Navigation to: '{}'", url);
-
-                // Test Browser Client
-                use mneme_browser::BrowserClient;
-                match BrowserClient::new(true) {
-                    // Headless = true
-                    Ok(mut client) => {
-                        if let Err(e) = client.launch() {
-                            error!("Failed to launch browser: {}", e);
-                        } else {
-                            println!("Browser launched. Navigating...");
-                            if let Err(e) = client.goto(url) {
-                                error!("Failed to navigate: {}", e);
-                            } else {
-                                match client.get_title() {
-                                    Ok(title) => println!("Page Title: {}", title),
-                                    Err(e) => error!("Failed to get title: {}", e),
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => error!("Failed to init browser client: {}", e),
-                }
+            } else if content.source == "cli" && content.body.trim() == "dislike" {
+                coordinator
+                    .record_feedback(
+                        mneme_memory::SignalType::UserEmotionalFeedback,
+                        "用户点踩（CLI命令）".to_string(),
+                        0.8,
+                        -0.6,
+                    )
+                    .await;
+                println!("👎 已记录");
                 continue;
             }
         }
@@ -696,13 +800,30 @@ async fn main() -> anyhow::Result<()> {
                 // Handle Output
                 if response.content.trim().is_empty() {
                     tracing::debug!("Mneme decided to stay silent.");
-                    // Signal stdin loop that processing is done
+                    // Update prompt with current state, then signal stdin loop
+                    *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                     let _ = prompt_ready_tx.send(());
                     continue;
                 }
 
                 if let Event::UserMessage(input_content) = &event {
-                    if input_content.source.starts_with("onebot") {
+                    if input_content.source.contains("|req:") {
+                        // Reply via Gateway — extract request_id from source tag
+                        if let Some(ref gw_tx) = gateway_response_tx {
+                            if let Some(req_str) = input_content.source.split("|req:").last() {
+                                if let Ok(request_id) = req_str.parse::<Uuid>() {
+                                    let gw_resp = mneme_gateway::GatewayResponse {
+                                        request_id,
+                                        content: response.content.clone(),
+                                        emotion: Some(format!("{:?}", response.emotion)),
+                                    };
+                                    if let Err(e) = gw_tx.send(gw_resp).await {
+                                        error!("Failed to send gateway response: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    } else if input_content.source.starts_with("onebot") {
                         // Reply via OneBot
                         if let Some(client) = &onebot_client {
                             let parts = humanizer.split_response(&response.content);
@@ -758,16 +879,24 @@ async fn main() -> anyhow::Result<()> {
                         // Reply via CLI
                         print_response(&response, &humanizer, None).await;
                     }
-                    // Signal stdin loop that response is done
+                    // Update prompt with current state, then signal stdin loop
+                    *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                     let _ = prompt_ready_tx.send(());
                 }
             }
             Err(e) => {
                 tracing::error!("Reasoning error: {}", e);
-                // Signal stdin loop even on error
+                // Update prompt and signal stdin loop even on error
+                *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                 let _ = prompt_ready_tx.send(());
             }
         }
+    }
+
+    // Flush any pending OTLP spans before exit
+    #[cfg(feature = "otlp")]
+    if args.otlp_endpoint.is_some() {
+        opentelemetry::global::shutdown_tracer_provider();
     }
 
     Ok(())

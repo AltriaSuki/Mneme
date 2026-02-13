@@ -14,6 +14,8 @@ pub struct MnemeConfig {
     pub token_budget: TokenBudgetConfig,
     pub organism: OrganismDefaults,
     pub onebot: Option<OneBotConfig>,
+    pub mcp: Option<McpConfig>,
+    pub gateway: Option<GatewayConfig>,
 }
 
 impl MnemeConfig {
@@ -67,6 +69,11 @@ impl MnemeConfig {
                 self.llm.context_budget_chars = n.clamp(1000, 1_000_000);
             }
         }
+        if let Ok(v) = std::env::var("LLM_TIMEOUT_SECS") {
+            if let Ok(n) = v.parse::<u64>() {
+                self.llm.timeout_secs = n.clamp(10, 600);
+            }
+        }
         // OneBot env overrides
         if let Ok(url) = std::env::var("ONEBOT_WS_URL") {
             let token = std::env::var("ONEBOT_ACCESS_TOKEN").ok();
@@ -94,6 +101,9 @@ pub struct LlmConfig {
     /// Should roughly match the model's context window (~4 chars per token).
     /// Default: 32000 (~8k tokens).
     pub context_budget_chars: usize,
+    /// HTTP request timeout in seconds for LLM API calls.
+    /// Default: 120.
+    pub timeout_secs: u64,
 }
 
 impl Default for LlmConfig {
@@ -105,6 +115,7 @@ impl Default for LlmConfig {
             max_tokens: 4096,
             temperature: 0.7,
             context_budget_chars: 32_000,
+            timeout_secs: 120,
         }
     }
 }
@@ -192,6 +203,10 @@ pub struct OrganismDefaults {
     pub persona_dir: String,
     pub tick_interval_secs: u64,
     pub trigger_interval_secs: u64,
+    /// Language for meta-instructions in system prompts ("zh" or "en").
+    /// Persona content (self_knowledge) is always in its original language;
+    /// this only affects structural headers and meta-instructions.
+    pub language: String,
 }
 
 impl Default for OrganismDefaults {
@@ -201,6 +216,7 @@ impl Default for OrganismDefaults {
             persona_dir: "persona".to_string(),
             tick_interval_secs: 10,
             trigger_interval_secs: 60,
+            language: "zh".to_string(),
         }
     }
 }
@@ -209,6 +225,58 @@ impl Default for OrganismDefaults {
 pub struct OneBotConfig {
     pub ws_url: String,
     pub access_token: Option<String>,
+}
+
+// ============================================================================
+// MCP config (ADR-014)
+// ============================================================================
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct McpConfig {
+    pub servers: Vec<McpServerConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: std::collections::HashMap<String, String>,
+    pub auto_connect: bool,
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            command: String::new(),
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            auto_connect: true,
+        }
+    }
+}
+
+// ============================================================================
+// Gateway config (ADR-015)
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct GatewayConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+        }
+    }
 }
 
 // ============================================================================
