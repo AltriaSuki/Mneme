@@ -1,0 +1,8 @@
+[package]
+name = "mneme_bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mneme_core = { path = "../mneme_core" }
+mneme_limbic = { path = "../mneme_limbic" }
