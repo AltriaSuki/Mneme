@@ -51,6 +51,10 @@ pub enum SignalType {
     SelfReflection,
     /// Prediction error (surprise) signal
     PredictionError,
+    /// User explicitly corrected agent's output
+    UserCorrection,
+    /// Implicit engagement signal inferred from behavior
+    ImplicitEngagement,
 }
 
 /// Aggregated pattern from multiple similar signals
@@ -260,6 +264,22 @@ impl ConsolidationProcessor {
                     // Affects narrative bias
                     updates.narrative_bias_delta +=
                         pattern.avg_valence * 0.01 * pattern.avg_confidence;
+                }
+                SignalType::UserCorrection => {
+                    // Corrections increase openness (willingness to adjust)
+                    updates.openness_delta += 0.02 * pattern.avg_confidence;
+                    // Negative valence corrections increase attachment anxiety slightly
+                    if pattern.avg_valence < -0.3 {
+                        updates.attachment_anxiety_delta += 0.01 * pattern.avg_confidence;
+                    }
+                }
+                SignalType::ImplicitEngagement => {
+                    // Positive engagement (fast replies, long messages) reduces anxiety
+                    if pattern.avg_valence > 0.2 {
+                        updates.attachment_anxiety_delta -= 0.01 * pattern.avg_confidence;
+                    } else if pattern.avg_valence < -0.2 {
+                        updates.attachment_anxiety_delta += 0.01 * pattern.avg_confidence;
+                    }
                 }
             }
         }

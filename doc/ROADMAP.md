@@ -100,7 +100,7 @@
 
 ### 实现路径
 
-> **当前重点见「版本规划 v0.8.0」章节。** 下表为硬编码消除的长期路径。
+> **当前重点见「版本规划 v2.0.0」章节。** 下表为硬编码消除的长期路径。
 
 ```
 Phase 1: 参数化 ✅ 部分完成
@@ -506,22 +506,14 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ## 🟡 中优先级 (Medium Priority)
 
-### 5. 🧬 反馈信号收集与持久化
-**模块**: `mneme_memory/src/feedback_buffer.rs`, `mneme_memory/src/sqlite.rs`  
-**问题**: 反馈信号只在内存中缓存，重启后丢失。这是实现个性化学习的核心数据源。
+### 5. ✅ 反馈信号收集与持久化
+**模块**: `mneme_memory/src/feedback_buffer.rs`, `mneme_memory/src/sqlite.rs`
 
-**当前状态**:
-- `FeedbackBuffer` 在内存中
-- 重启前调用 `shutdown()` 会尝试保存，但可能遗漏
-- 没有主动收集用户反馈的机制
-
-**需要实现**:
+**已完成**:
 - [x] 反馈信号实时持久化到 SQLite ✅
 - [x] 启动时加载未整合的信号 ✅
-- [ ] 用户显式反馈机制（点赞/点踩/纠正）
-- [ ] 隐式反馈推断（用户是否继续话题、回复速度等）
-
-**相关表**: `feedback_signals` 已存在但未完全使用
+- [x] 用户显式反馈机制 ✅ — like/dislike + `correct <text>` 纠正命令，UserCorrection 信号类型
+- [x] 隐式反馈推断 ✅ — 回复延迟(< 30s=正向, > 300s=负向) + 消息长度比(EMA基线) → ImplicitEngagement 信号
 
 ---
 
@@ -679,17 +671,15 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 | Crate | 测试数 | 覆盖质量 |
 |-------|--------|----------|
-| mneme_core | 18 | ✅ 完善 (含 boredom 动力学测试) |
-| **mneme_reasoning** | **109** | ✅ **64 unit + 33 integration + 12 property** |
-| mneme_memory | 69 | ✅ 完善 (含 self_knowledge + episode strength + vec index 测试) |
-| mneme_limbic | 9 | ✅ 良好 |
-| mneme_expression | 14 | ✅ 良好 |
-| mneme_perception | 4 | ✅ 良好 |
-| mneme_os | 4 | ✅ 良好 |
-| **mneme_onebot** | **6** | ✅ 事件解析 + 序列化测试 |
-| **mneme_browser** | **8** | ✅ action serde + config 测试 |
-| mneme_voice | 0 | — 只有 trait |
-| mneme_cli | 0 | ❌ 无集成测试 |
+| mneme_core | 113 | ✅ 完善 (含 21 proptest + 状态/动力学/情感/安全) |
+| **mneme_reasoning** | **95** | ✅ **含 property tests + SSE/extraction/engine/metacognition** |
+| mneme_memory | 49 | ✅ 完善 (含 SQLite/dream/goals/rules/consolidation) |
+| mneme_limbic | 36 | ✅ 完善 (含 8 proptest + somatic/surprise/neural) |
+| mneme_expression | 13 | ✅ 良好 |
+| **mneme_onebot** | **9** | ✅ 事件解析 + 序列化测试 |
+| **mneme_gateway** | **3** | ✅ 类型测试 |
+| mneme_mcp | 0 | — 运行时集成 |
+| mneme_cli | 3 | ✅ smoke tests |
 
 **已完成**:
 - [x] Mock `LlmClient`（返回预设响应队列，可计数调用次数）
@@ -1772,7 +1762,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 > **目标**: 完整的自主数字生命。
 
 - ~~元认知反思 (#24)~~ ✅
-- [x] ODE 之上叠加可塑神经网络 (ADR-001/009 演进) (#14) ✅ — NeuralModulator MLP(5→8→6) 作为 Layer 2，blend_with 渐进混合，sleep 周期训练+持久化
+- [x] ODE 之上叠加可塑神经网络 (ADR-016 前身) (#14) ✅ — NeuralModulator MLP(5→8→6) 作为 Layer 2，blend_with 渐进混合，sleep 周期训练+持久化
 - [x] 低分辨率内心独白 (ADR-013) (#55) ✅ — low_res_client 路由到本地 Ollama 模型，fallback 到主 LLM
 - [x] 形成性课程 — 文学管道 (ADR-011) (#56) ✅ — ReadingToolHandler: 阅读文件/文本 → LLM 状态依赖反思 → self_knowledge 存储
 - [x] 自发创造 (ADR-007) ✅ — CreativityTriggerEvaluator: boredom+curiosity 驱动自主创作，3h 冷却

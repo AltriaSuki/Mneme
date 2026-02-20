@@ -814,7 +814,7 @@ Web UI       ──┘
 | 任务 | 位置 | 状态 |
 |------|------|------|
 | `ModulationVector` 时间平滑 | `mneme_limbic/src/somatic.rs` | ✅ 已实施 |
-| `Psyche` 从记忆涌现 | `mneme_core/src/persona.rs` + `prompts.rs` | ✅ 已实施 |
+| Psyche 从记忆涌现 | `mneme_core/src/persona.rs` + `mneme_reasoning/src/prompts.rs` | ✅ 已实施 |
 | Consolidation 自我反思步骤 | `mneme_memory/src/consolidation.rs` | ✅ 已实施 |
 
 ### Phase 3 — 高阶行为
@@ -861,10 +861,10 @@ Web UI       ──┘
 
 ## 5. 已有代码资产 (What We Have)
 
-截至 2026-02-13：
+截至 2026-02-20：
 
-- **~27,000 行 Rust**，11 个 crate
-- **~497 个测试**（全部通过）
+- **~21,500 行 Rust**，9 个 crate（voice/perception/browser/os 已退役，能力通过 MCP 按需获取）
+- **~321 个测试函数**（全部通过）
 - **编译零警告**
 
 ### 核心已实现
@@ -991,4 +991,5 @@ Web UI       ──┘
 
 *初稿于 2026-02-07。*
 *2026-02-11：扩展 B-0、B-15–B-21、修订 B-11、新增 ADR-012–013、扩展 ADR-010、新增开放问题 #12。*
+*2026-02-20：新增 ADR-016（液体时间常数网络）、ADR-017（赫布可塑性）、ADR-018（躯体解码器），新增 Phase 5 液体神经架构路线，更新代码资产统计。*
 *每一次重大决策后应更新此文档。*

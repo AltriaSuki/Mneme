@@ -196,6 +196,11 @@ pub struct OrganismCoordinator {
 
     /// #85: Health monitor for self-diagnosis and graceful degradation
     health: Arc<RwLock<HealthMonitor>>,
+
+    /// #5: Implicit feedback — timestamp of last Mneme response (for reply latency)
+    last_response_ts: Arc<RwLock<Option<i64>>>,
+    /// #5: Implicit feedback — running average message length for baseline
+    avg_message_len: Arc<RwLock<f32>>,
 }
 
 impl OrganismCoordinator {
@@ -238,6 +243,8 @@ impl OrganismCoordinator {
             state_mutation_lock: tokio::sync::Mutex::new(()),
             dream_narrator: tokio::sync::RwLock::new(None),
             health: Arc::new(RwLock::new(HealthMonitor::default())),
+            last_response_ts: Arc::new(RwLock::new(None)),
+            avg_message_len: Arc::new(RwLock::new(50.0)),
         }
     }
 
@@ -455,6 +462,9 @@ impl OrganismCoordinator {
             *count += 1;
         }
 
+        // 5b. Infer implicit feedback from user behavior (#5)
+        self.infer_implicit_feedback(content).await;
+
         // 6. Record state history snapshot (after state update)
         self.save_state_with_trigger("interaction").await;
 
@@ -595,6 +605,68 @@ impl OrganismCoordinator {
             };
             if let Err(e) = db.save_feedback_signal(&signal).await {
                 tracing::warn!("Failed to persist feedback signal: {}", e);
+            }
+        }
+    }
+
+    /// #5: Record when Mneme sends a response (for reply latency tracking).
+    pub async fn record_response_timestamp(&self) {
+        *self.last_response_ts.write().await = Some(chrono::Utc::now().timestamp());
+    }
+
+    /// #5: Infer implicit feedback from user behavior.
+    ///
+    /// Signals: reply latency (fast = engaged), message length vs baseline.
+    pub async fn infer_implicit_feedback(&self, message: &str) {
+        let now = chrono::Utc::now().timestamp();
+        let msg_len = message.chars().count() as f32;
+
+        // Update running average (exponential moving average, α=0.1)
+        {
+            let mut avg = self.avg_message_len.write().await;
+            *avg = *avg * 0.9 + msg_len * 0.1;
+        }
+
+        // Reply latency signal
+        if let Some(last_ts) = *self.last_response_ts.read().await {
+            let latency = now - last_ts;
+            // Fast reply (< 30s) = positive engagement; slow (> 300s) = disengagement
+            let (valence, confidence) = if latency < 30 {
+                (0.4, 0.6)
+            } else if latency > 300 {
+                (-0.3, 0.6)
+            } else {
+                return; // neutral, don't record
+            };
+            self.record_feedback(
+                SignalType::ImplicitEngagement,
+                format!("reply_latency:{}s", latency),
+                confidence,
+                valence,
+            )
+            .await;
+        }
+
+        // Message length signal: significantly longer than average = engaged
+        let avg = *self.avg_message_len.read().await;
+        if avg > 10.0 {
+            let ratio = msg_len / avg;
+            if ratio > 2.0 {
+                self.record_feedback(
+                    SignalType::ImplicitEngagement,
+                    format!("long_message:ratio={:.1}", ratio),
+                    0.65,
+                    0.3,
+                )
+                .await;
+            } else if ratio < 0.3 && msg_len < 10.0 {
+                self.record_feedback(
+                    SignalType::ImplicitEngagement,
+                    format!("short_message:ratio={:.1}", ratio),
+                    0.65,
+                    -0.3,
+                )
+                .await;
             }
         }
     }

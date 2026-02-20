@@ -46,7 +46,7 @@ impl rustyline::completion::Completer for CommandCompleter {
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
         const COMMANDS: &[&str] = &[
-            "quit", "exit", "status", "sleep", "like", "dislike", "reload",
+            "quit", "exit", "status", "sleep", "like", "dislike", "correct", "reload",
         ];
         let prefix = &line[..pos];
         if prefix.contains(' ') {
@@ -597,7 +597,8 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Commands that don't need to wait for response
-                    let needs_wait = !["sleep", "status", "like", "dislike", "reload"].contains(&trimmed);
+                    let needs_wait = !["sleep", "status", "like", "dislike", "correct", "reload"].contains(&trimmed)
+                        && !trimmed.starts_with("correct ");
 
                     let content = Content {
                         id: Uuid::new_v4(),
@@ -865,6 +866,22 @@ async fn main() -> anyhow::Result<()> {
                     .await;
                 println!("👎 已记录");
                 continue;
+            } else if content.source == "cli" && content.body.trim().starts_with("correct ") {
+                let correction = content.body.trim().strip_prefix("correct ").unwrap_or("").trim();
+                if !correction.is_empty() {
+                    coordinator
+                        .record_feedback(
+                            mneme_memory::SignalType::UserCorrection,
+                            format!("用户纠正：{}", correction),
+                            0.9,
+                            -0.3,
+                        )
+                        .await;
+                    println!("✏️  纠正已记录");
+                } else {
+                    println!("用法: correct <纠正内容>");
+                }
+                continue;
             }
         }
 
@@ -957,6 +974,8 @@ async fn main() -> anyhow::Result<()> {
                         // Reply via CLI (default)
                         print_response(&response, &humanizer, None).await;
                     }
+                    // #5: Record response timestamp for implicit feedback latency tracking
+                    coordinator.record_response_timestamp().await;
                     // Update prompt with current state, then signal stdin loop
                     *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                     let _ = prompt_ready_tx.send(());
