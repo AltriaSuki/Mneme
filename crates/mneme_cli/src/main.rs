@@ -1,4 +1,5 @@
 use clap::Parser;
+mod schedule_tool;
 use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
 use mneme_expression::{
@@ -412,6 +413,13 @@ async fn main() -> anyhow::Result<()> {
     info!("Initializing proactive triggers...");
     let scheduled_eval = ScheduledTriggerEvaluator::from_config(&config.organism.schedules);
     let schedule_handle = scheduled_eval.schedule_handle();
+
+    // Register schedule self-editing tool
+    {
+        let mut reg = registry.write().await;
+        reg.register(Box::new(schedule_tool::ScheduleToolHandler::new(schedule_handle.clone())));
+    }
+
     let inner_evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![
         Box::new(scheduled_eval),
         Box::new(RuminationEvaluator::new(coordinator.state())),

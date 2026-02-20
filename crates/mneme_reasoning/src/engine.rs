@@ -121,6 +121,9 @@ pub struct ReasoningEngine {
     // Implicit feedback tracking (v0.8.0)
     last_response_ts: tokio::sync::Mutex<Option<std::time::Instant>>,
     last_user_topic: tokio::sync::Mutex<Option<String>>,
+
+    // Last active message source for smart proactive routing
+    last_active_source: tokio::sync::Mutex<Option<String>>,
 }
 
 impl ReasoningEngine {
@@ -151,6 +154,7 @@ impl ReasoningEngine {
             start_time: std::time::Instant::now(),
             last_response_ts: tokio::sync::Mutex::new(None),
             last_user_topic: tokio::sync::Mutex::new(None),
+            last_active_source: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -181,6 +185,7 @@ impl ReasoningEngine {
             start_time: std::time::Instant::now(),
             last_response_ts: tokio::sync::Mutex::new(None),
             last_user_topic: tokio::sync::Mutex::new(None),
+            last_active_source: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -802,6 +807,11 @@ impl Reasoning for ReasoningEngine {
                     crate::decision::DecisionLevel::FullReasoning => {}
                 }
 
+                // Track last active source for smart proactive routing
+                if content.source != "cli" {
+                    *self.last_active_source.lock().await = Some(content.source.clone());
+                }
+
                 // v0.8.0: Implicit feedback — response latency & topic continuation
                 {
                     let elapsed_opt = self.last_response_ts.lock().await.map(|ts| ts.elapsed());
@@ -957,10 +967,10 @@ impl Reasoning for ReasoningEngine {
                 })
             }
             Event::ProactiveTrigger(trigger) => {
-                // Extract route before consuming trigger in match
+                // Extract route: explicit trigger route > last active source
                 let trigger_route = match &trigger {
-                    Trigger::Scheduled { route, .. } => route.clone(),
-                    _ => None,
+                    Trigger::Scheduled { route: Some(r), .. } => Some(r.clone()),
+                    _ => self.last_active_source.lock().await.clone(),
                 };
                 let prompt_text = match trigger {
                     Trigger::Scheduled { name, .. } => format!(

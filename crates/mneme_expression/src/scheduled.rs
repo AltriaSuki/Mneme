@@ -89,6 +89,43 @@ impl ScheduleHandle {
         };
         *self.0.lock().unwrap() = new;
     }
+
+    /// List all current schedules as formatted text.
+    pub fn list(&self) -> String {
+        let schedules = self.0.lock().unwrap();
+        if schedules.is_empty() {
+            return "No schedules configured.".to_string();
+        }
+        schedules
+            .iter()
+            .map(|e| {
+                let route = e.route.as_deref().unwrap_or("cli");
+                format!(
+                    "- {} @ {:02}:{:02} (±{}min) → {}",
+                    e.name, e.hour, e.minute, e.tolerance_minutes, route
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Add a new schedule entry. Returns error if name already exists.
+    pub fn add(&self, entry: ScheduleEntry) -> Result<(), String> {
+        let mut schedules = self.0.lock().unwrap();
+        if schedules.iter().any(|e| e.name == entry.name) {
+            return Err(format!("Schedule '{}' already exists", entry.name));
+        }
+        schedules.push(entry);
+        Ok(())
+    }
+
+    /// Remove a schedule by name. Returns true if found and removed.
+    pub fn remove(&self, name: &str) -> bool {
+        let mut schedules = self.0.lock().unwrap();
+        let before = schedules.len();
+        schedules.retain(|e| e.name != name);
+        schedules.len() < before
+    }
 }
 
 /// Evaluator for scheduled time-based triggers

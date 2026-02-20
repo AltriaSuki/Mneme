@@ -1724,6 +1724,8 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 自主工具获取 — ToolRegistry 改为 RwLock，McpManager.connect_one() 运行时连接，reload 自动 diff+连接新 MCP server ✅
 - [x] 主动输出路由 — ReasoningOutput.route 字段，proactive trigger 可路由到 OneBot group/private，不再只输出到 CLI ✅
 - [x] Plan-as-default 日程机制 — ScheduledTriggerEvaluator 从 TOML 配置读取 [[organism.schedules]]，支持 name/hour/minute/tolerance/route，热重载，空配置回退默认晨/晚 ✅
+- [x] 智能主动路由 — engine 追踪 last_active_source，proactive trigger 无显式 route 时自动路由到最近活跃渠道 ✅
+- [x] 日程自编辑工具 — ScheduleToolHandler (list/add/remove)，LLM 可通过 tool use 自主管理日程 ✅
 
 **她的耳朵 — Gateway 通讯层 (ADR-015)**:
 - [x] `mneme_gateway` crate 新建 — HTTP POST `/message` + WebSocket `/ws` 端点 ✅

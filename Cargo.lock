@@ -2131,6 +2131,7 @@ name = "mneme_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "clap",
  "dirs 5.0.1",
@@ -2147,6 +2148,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "rustyline",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-appender",
