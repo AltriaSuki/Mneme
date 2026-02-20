@@ -1,4 +1,5 @@
 use clap::Parser;
+mod connect_tool;
 mod schedule_tool;
 use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
@@ -393,6 +394,12 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(tokio::sync::RwLock::new(registry))
     };
     engine.set_registry(registry.clone());
+
+    // #60: Runtime self-configuration tool (needs Arc<RwLock<ToolRegistry>>)
+    {
+        let mut reg = registry.write().await;
+        reg.register(Box::new(connect_tool::ConnectToolHandler::new(registry.clone())));
+    }
 
     // Track connected MCP server names for reload diffing
     let mut known_mcp_servers: std::collections::HashSet<String> = config

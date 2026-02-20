@@ -1788,7 +1788,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 记忆自主管理 (#84) ✅ — memory_manage 工具 (pin/unpin/forget/list_pinned)，pinned 列免衰减
 - [x] 自我诊断与降级 (#85) ✅ — HealthMonitor 追踪子系统连续失败，LLM 降级时跳过非必要操作，LifecycleState::Degraded
 - [x] 运行时参数自修改 (#86) ✅ — RuntimeParams 无锁共享 + config 工具，LLM 可自主调整 temperature/max_tokens
-- [ ] 运行时自配置 (#60) — 被告知后自行建立外部连接（MCP server / Gateway 适配器）
+- [x] 运行时自配置 (#60) ✅ — ConnectToolHandler: LLM 可自主连接 MCP 服务器获取新工具
 - [x] GitHub Actions CI/CD 流水线 ✅ — cargo build/test/clippy + OTLP feature check
 
 ### v2.0.0 - 对等版本（远景）
