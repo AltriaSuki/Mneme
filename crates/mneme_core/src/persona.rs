@@ -102,71 +102,72 @@ impl Psyche {
 
 /// Raw persona seed data from .md files.
 /// Used only for first-run seeding into self_knowledge table.
+///
+/// Scans the persona directory for all `.md` files. Each file becomes a
+/// seed domain: legacy filenames map to their original domains (e.g.
+/// `hippocampus.md` → `identity`), all others use the filename stem directly.
 #[derive(Debug, Clone, Default)]
 pub struct SeedPersona {
-    /// Identity & memory style (hippocampus.md)
-    pub identity: String,
-    /// Emotion & attachment (limbic.md)
-    pub emotion: String,
-    /// Cognition & thinking (cortex.md)
-    pub cognition: String,
-    /// Language & expression (broca.md)
-    pub expression: String,
-    /// Perception & attention (occipital.md)
-    pub perception: String,
+    /// (domain, content) pairs loaded from .md files
+    pub entries: Vec<(String, String)>,
+}
+
+/// Map legacy persona filenames to their original domain names.
+fn filename_to_domain(stem: &str) -> &str {
+    match stem {
+        "hippocampus" => "identity",
+        "limbic" => "emotion_pattern",
+        "cortex" => "cognition",
+        "broca" => "expression",
+        "occipital" => "perception",
+        other => other,
+    }
 }
 
 impl SeedPersona {
-    /// Load seed persona from a directory of .md files.
-    /// Missing files produce empty strings (graceful degradation).
+    /// Load seed persona by scanning a directory for all `.md` files.
+    /// Each file becomes a (domain, content) entry. Empty files are skipped.
     pub async fn load<P: AsRef<Path>>(root: P) -> anyhow::Result<Self> {
         let root = root.as_ref();
+        let mut entries = Vec::new();
 
-        let (identity, emotion, cognition, expression, perception) = tokio::join!(
-            read_file(root.join("hippocampus.md")),
-            read_file(root.join("limbic.md")),
-            read_file(root.join("cortex.md")),
-            read_file(root.join("broca.md")),
-            read_file(root.join("occipital.md")),
-        );
+        let mut dir = match fs::read_dir(root).await {
+            Ok(d) => d,
+            Err(_) => return Ok(Self::default()),
+        };
 
-        Ok(Self {
-            identity: identity?,
-            emotion: emotion?,
-            cognition: cognition?,
-            expression: expression?,
-            perception: perception?,
-        })
+        while let Some(entry) = dir.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let content = read_file(&path).await?;
+            if !content.is_empty() {
+                let domain = filename_to_domain(&stem).to_string();
+                entries.push((domain, content));
+            }
+        }
+
+        // Sort by domain for deterministic ordering
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(Self { entries })
     }
 
-    /// Convert seed persona into (domain, content) pairs for self_knowledge seeding.
+    /// Convert into (domain, content) pairs for self_knowledge seeding.
     pub fn to_seed_entries(&self) -> Vec<(&str, &str)> {
-        let mut entries = Vec::new();
-        if !self.identity.is_empty() {
-            entries.push(("identity", self.identity.as_str()));
-        }
-        if !self.emotion.is_empty() {
-            entries.push(("emotion_pattern", self.emotion.as_str()));
-        }
-        if !self.cognition.is_empty() {
-            entries.push(("cognition", self.cognition.as_str()));
-        }
-        if !self.expression.is_empty() {
-            entries.push(("expression", self.expression.as_str()));
-        }
-        if !self.perception.is_empty() {
-            entries.push(("perception", self.perception.as_str()));
-        }
-        entries
+        self.entries
+            .iter()
+            .map(|(d, c)| (d.as_str(), c.as_str()))
+            .collect()
     }
 
     /// Check if the seed has any content.
     pub fn is_empty(&self) -> bool {
-        self.identity.is_empty()
-            && self.emotion.is_empty()
-            && self.cognition.is_empty()
-            && self.expression.is_empty()
-            && self.perception.is_empty()
+        self.entries.is_empty()
     }
 }
 
@@ -220,26 +221,38 @@ mod tests {
     #[test]
     fn test_seed_persona_to_entries() {
         let seed = SeedPersona {
-            identity: "I am new".to_string(),
-            emotion: "I feel things".to_string(),
-            cognition: String::new(), // empty → skipped
-            expression: "I speak simply".to_string(),
-            perception: String::new(),
+            entries: vec![
+                ("expression".into(), "I speak simply".into()),
+                ("identity".into(), "I am new".into()),
+            ],
         };
         let entries = seed.to_seed_entries();
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].0, "identity");
-        assert_eq!(entries[1].0, "emotion_pattern");
-        assert_eq!(entries[2].0, "expression");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "expression");
+        assert_eq!(entries[1].0, "identity");
     }
 
     #[test]
     fn test_seed_persona_is_empty() {
         assert!(SeedPersona::default().is_empty());
         let non_empty = SeedPersona {
-            identity: "x".to_string(),
-            ..Default::default()
+            entries: vec![("identity".into(), "x".into())],
         };
         assert!(!non_empty.is_empty());
+    }
+
+    #[test]
+    fn test_filename_to_domain_legacy() {
+        assert_eq!(filename_to_domain("hippocampus"), "identity");
+        assert_eq!(filename_to_domain("limbic"), "emotion_pattern");
+        assert_eq!(filename_to_domain("cortex"), "cognition");
+        assert_eq!(filename_to_domain("broca"), "expression");
+        assert_eq!(filename_to_domain("occipital"), "perception");
+    }
+
+    #[test]
+    fn test_filename_to_domain_passthrough() {
+        assert_eq!(filename_to_domain("somatic"), "somatic");
+        assert_eq!(filename_to_domain("infrastructure"), "infrastructure");
     }
 }
