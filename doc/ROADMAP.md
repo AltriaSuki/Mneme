@@ -57,7 +57,7 @@
 | `state.rs` | `ValueNetwork::default()` 预设道德权重 | 空初始化 → 从 self_knowledge 加载 → 审计 B-1 | ✅ |
 | `values.rs` | 初始价值权重 | 从用户反馈中调整 | 🟢 |
 | `prompts.rs` | 工具说明规定性语气 | 改为中性技术规范 → 审计 B-14 | ✅ |
-| `prompts.rs` | 工具说明硬编码 | 从 ToolRegistry 动态生成 → 自适应 prompt | 🟡 |
+| `prompts.rs` | ~~工具说明硬编码~~ | 工具通过 API native tools 参数传递，不再在 prompt 中重复；已删除死代码 | ✅ |
 | `tools.rs` | ~~固定 6 工具列表~~ | shell 为唯一硬编码工具（身体器官），其余通过 MCP 动态获取 → 审计 B-8 | ✅ |
 | `persona/*.md` | 行为处方式种子文件 | 改为纯事实性种子记忆 → 审计 B-2 | ✅ |
 | `engine.rs` | `sanitize_chat_output()` 固定过滤 | 查询 self_knowledge 表达偏好 → 审计 ADR-007 | ✅ |

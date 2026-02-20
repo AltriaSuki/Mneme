@@ -77,18 +77,6 @@ impl ToolRegistry {
         }
     }
 
-    /// Format all registered tools as a text prompt section for the LLM.
-    ///
-    /// This is the single source of truth for tool descriptions in the system prompt.
-    /// Returns an empty string if no tools are registered.
-    pub fn format_for_prompt(&self) -> String {
-        let tools = self.available_tools();
-        if tools.is_empty() {
-            return String::new();
-        }
-        crate::prompts::generate_text_tool_instructions(&tools)
-    }
-
     /// Get a reference to the safety guard (if set).
     pub fn guard(&self) -> Option<&Arc<CapabilityGuard>> {
         self.guard.as_ref()

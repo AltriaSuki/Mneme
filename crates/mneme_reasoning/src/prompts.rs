@@ -1,4 +1,4 @@
-use crate::api_types::{ContentBlock, Message, Role, Tool};
+use crate::api_types::{ContentBlock, Message, Role};
 use mneme_core::Psyche;
 use mneme_limbic::SomaticMarker;
 
@@ -149,46 +149,6 @@ impl ContextAssembler {
     }
 }
 
-/// Dynamically generate text-mode tool instructions from Tool schemas.
-///
-/// Produces a system prompt section that describes each tool's name, description,
-/// required parameters, and the expected `<tool_call>` output format.
-pub fn generate_text_tool_instructions(tools: &[Tool]) -> String {
-    let mut lines = vec![
-        "== SYSTEM TOOLS ==".to_string(),
-        "The following tools are available regardless of current persona or cognitive stage.\n\
-         Tool call format is specified below."
-            .to_string(),
-        String::new(),
-        "AVAILABLE TOOLS:".to_string(),
-    ];
-
-    for (i, tool) in tools.iter().enumerate() {
-        lines.push(String::new());
-        lines.push(format!("{}. {} — {}", i + 1, tool.name, tool.description));
-
-        if !tool.input_schema.required.is_empty() {
-            // Build example input from schema properties
-            let example = build_example_input(&tool.input_schema);
-            lines.push(format!("   Input: {}", example));
-        } else {
-            lines.push("   No parameters required.".to_string());
-        }
-    }
-
-    lines.push(String::new());
-    lines.push(
-        "Tool call format:\n\
-         <tool_call>{\"name\": \"tool_name\", \"arguments\": {params}}</tool_call>\n\n\
-         Example:\n\
-         <tool_call>{\"name\": \"shell\", \"arguments\": {\"command\": \"ls -la\"}}</tool_call>\n\n\
-         Note: tool calls require all specified parameters. Empty arguments {} are invalid."
-            .to_string(),
-    );
-
-    lines.join("\n")
-}
-
 // ============================================================================
 // Language-aware helpers (#76)
 // ============================================================================
@@ -266,18 +226,3 @@ fn format_style_guide(lang: &str, time_line: &str, soma_context: &str) -> String
     }
 }
 
-/// Build an example JSON input string from a ToolInputSchema.
-fn build_example_input(schema: &crate::api_types::ToolInputSchema) -> String {
-    let mut parts = Vec::new();
-    if let Some(props) = schema.properties.as_object() {
-        for key in &schema.required {
-            let desc = props
-                .get(key)
-                .and_then(|v| v.get("description"))
-                .and_then(|d| d.as_str())
-                .unwrap_or("...");
-            parts.push(format!("\"{}\": \"<{}>\"", key, desc));
-        }
-    }
-    format!("{{{}}}", parts.join(", "))
-}
