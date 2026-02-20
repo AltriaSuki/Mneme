@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use mneme_core::{OrganismState, SocialGraph, Trigger, TriggerEvaluator};
+use mneme_limbic::BehaviorThresholds;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -12,8 +13,6 @@ use tokio::sync::RwLock;
 /// Configuration for social trigger evaluation.
 #[derive(Debug, Clone)]
 pub struct SocialTriggerConfig {
-    /// Social need threshold to trigger outreach (default: 0.7).
-    pub social_need_threshold: f32,
     /// Cooldown between social triggers in seconds (default: 3600 = 1 hour).
     pub cooldown_secs: i64,
 }
@@ -21,7 +20,6 @@ pub struct SocialTriggerConfig {
 impl Default for SocialTriggerConfig {
     fn default() -> Self {
         Self {
-            social_need_threshold: 0.7,
             cooldown_secs: 3600,
         }
     }
@@ -31,15 +29,17 @@ impl Default for SocialTriggerConfig {
 pub struct SocialTriggerEvaluator {
     state: Arc<RwLock<OrganismState>>,
     social_graph: Arc<dyn SocialGraph>,
+    thresholds: Arc<RwLock<BehaviorThresholds>>,
     config: SocialTriggerConfig,
     last_fired: AtomicI64,
 }
 
 impl SocialTriggerEvaluator {
-    pub fn new(state: Arc<RwLock<OrganismState>>, social_graph: Arc<dyn SocialGraph>) -> Self {
+    pub fn new(state: Arc<RwLock<OrganismState>>, social_graph: Arc<dyn SocialGraph>, thresholds: Arc<RwLock<BehaviorThresholds>>) -> Self {
         Self {
             state,
             social_graph,
+            thresholds,
             config: SocialTriggerConfig::default(),
             last_fired: AtomicI64::new(0),
         }
@@ -50,7 +50,8 @@ impl SocialTriggerEvaluator {
 impl TriggerEvaluator for SocialTriggerEvaluator {
     async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>> {
         let state = self.state.read().await;
-        if state.fast.social_need < self.config.social_need_threshold {
+        let thresholds = self.thresholds.read().await;
+        if state.fast.social_need < thresholds.social_trigger {
             return Ok(Vec::new());
         }
 

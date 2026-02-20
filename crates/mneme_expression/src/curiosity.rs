@@ -6,27 +6,24 @@
 
 use async_trait::async_trait;
 use mneme_core::{OrganismState, Trigger, TriggerEvaluator};
+use mneme_limbic::BehaviorThresholds;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct CuriosityTriggerEvaluator {
     state: Arc<RwLock<OrganismState>>,
-    /// Minimum curiosity scalar to trigger (default: 0.65).
-    curiosity_threshold: f32,
-    /// Minimum interest intensity to act on (default: 0.4).
-    interest_threshold: f32,
+    thresholds: Arc<RwLock<BehaviorThresholds>>,
     /// Cooldown in seconds (default: 1800 = 30 min).
     cooldown_secs: i64,
     last_fired: AtomicI64,
 }
 
 impl CuriosityTriggerEvaluator {
-    pub fn new(state: Arc<RwLock<OrganismState>>) -> Self {
+    pub fn new(state: Arc<RwLock<OrganismState>>, thresholds: Arc<RwLock<BehaviorThresholds>>) -> Self {
         Self {
             state,
-            curiosity_threshold: 0.65,
-            interest_threshold: 0.4,
+            thresholds,
             cooldown_secs: 1800,
             last_fired: AtomicI64::new(0),
         }
@@ -37,7 +34,9 @@ impl CuriosityTriggerEvaluator {
 impl TriggerEvaluator for CuriosityTriggerEvaluator {
     async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>> {
         let state = self.state.read().await;
-        if state.fast.curiosity < self.curiosity_threshold {
+        let thresholds = self.thresholds.read().await;
+
+        if state.fast.curiosity < thresholds.curiosity_trigger {
             return Ok(Vec::new());
         }
 
@@ -45,7 +44,7 @@ impl TriggerEvaluator for CuriosityTriggerEvaluator {
         let Some(&(topic, intensity)) = top.first() else {
             return Ok(Vec::new());
         };
-        if intensity < self.interest_threshold {
+        if intensity < thresholds.curiosity_interest {
             return Ok(Vec::new());
         }
 

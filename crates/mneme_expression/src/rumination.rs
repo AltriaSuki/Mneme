@@ -11,16 +11,11 @@ use std::sync::Mutex;
 use tokio::sync::RwLock;
 
 use mneme_core::{OrganismState, Trigger, TriggerEvaluator};
+use mneme_limbic::BehaviorThresholds;
 
 /// Thresholds for rumination triggers
 #[derive(Debug, Clone)]
 pub struct RuminationConfig {
-    /// Boredom threshold for mind-wandering (0.0 - 1.0)
-    pub boredom_threshold: f32,
-    /// Social need threshold for social longing (0.0 - 1.0)
-    pub social_need_threshold: f32,
-    /// Curiosity threshold for curiosity spike (0.0 - 1.0)
-    pub curiosity_threshold: f32,
     /// Minimum seconds between triggers of the same kind
     pub cooldown_secs: i64,
 }
@@ -28,9 +23,6 @@ pub struct RuminationConfig {
 impl Default for RuminationConfig {
     fn default() -> Self {
         Self {
-            boredom_threshold: 0.6,
-            social_need_threshold: 0.75,
-            curiosity_threshold: 0.8,
             cooldown_secs: 600, // 10 minutes
         }
     }
@@ -40,23 +32,26 @@ impl Default for RuminationConfig {
 pub struct RuminationEvaluator {
     state: Arc<RwLock<OrganismState>>,
     config: RuminationConfig,
+    thresholds: Arc<RwLock<BehaviorThresholds>>,
     /// Cooldown tracker: kind -> last fired timestamp
     last_fired: Mutex<std::collections::HashMap<String, i64>>,
 }
 
 impl RuminationEvaluator {
-    pub fn new(state: Arc<RwLock<OrganismState>>) -> Self {
+    pub fn new(state: Arc<RwLock<OrganismState>>, thresholds: Arc<RwLock<BehaviorThresholds>>) -> Self {
         Self {
             state,
             config: RuminationConfig::default(),
+            thresholds,
             last_fired: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
-    pub fn with_config(state: Arc<RwLock<OrganismState>>, config: RuminationConfig) -> Self {
+    pub fn with_config(state: Arc<RwLock<OrganismState>>, thresholds: Arc<RwLock<BehaviorThresholds>>, config: RuminationConfig) -> Self {
         Self {
             state,
             config,
+            thresholds,
             last_fired: Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -81,17 +76,18 @@ impl RuminationEvaluator {
 impl TriggerEvaluator for RuminationEvaluator {
     async fn evaluate(&self) -> Result<Vec<Trigger>> {
         let state = self.state.read().await;
+        let thresholds = self.thresholds.read().await;
         let now = chrono::Utc::now().timestamp();
         let mut triggers = Vec::new();
 
         // Mind-wandering: high boredom → spontaneous recall
-        if state.fast.boredom > self.config.boredom_threshold
+        if state.fast.boredom > thresholds.rumination_boredom
             && self.check_cooldown("mind_wandering", now)
         {
             tracing::debug!(
                 "Rumination: boredom={:.2} > threshold={:.2}, triggering mind-wandering",
                 state.fast.boredom,
-                self.config.boredom_threshold
+                thresholds.rumination_boredom
             );
             triggers.push(Trigger::Rumination {
                 kind: "mind_wandering".to_string(),
@@ -105,13 +101,13 @@ impl TriggerEvaluator for RuminationEvaluator {
         }
 
         // Social longing: high social need → want to talk
-        if state.fast.social_need > self.config.social_need_threshold
+        if state.fast.social_need > thresholds.rumination_social
             && self.check_cooldown("social_longing", now)
         {
             tracing::debug!(
                 "Rumination: social_need={:.2} > threshold={:.2}, triggering social longing",
                 state.fast.social_need,
-                self.config.social_need_threshold
+                thresholds.rumination_social
             );
             triggers.push(Trigger::Rumination {
                 kind: "social_longing".to_string(),
@@ -125,13 +121,13 @@ impl TriggerEvaluator for RuminationEvaluator {
         }
 
         // Curiosity spike: high curiosity → want to explore
-        if state.fast.curiosity > self.config.curiosity_threshold
+        if state.fast.curiosity > thresholds.rumination_curiosity
             && self.check_cooldown("curiosity_spike", now)
         {
             tracing::debug!(
                 "Rumination: curiosity={:.2} > threshold={:.2}, triggering curiosity spike",
                 state.fast.curiosity,
-                self.config.curiosity_threshold
+                thresholds.rumination_curiosity
             );
             triggers.push(Trigger::Rumination {
                 kind: "curiosity_spike".to_string(),
@@ -164,10 +160,14 @@ mod tests {
         Arc::new(RwLock::new(state))
     }
 
+    fn default_thresholds() -> Arc<RwLock<BehaviorThresholds>> {
+        Arc::new(RwLock::new(BehaviorThresholds::default()))
+    }
+
     #[tokio::test]
     async fn test_no_triggers_at_baseline() {
         let state = make_state(0.2, 0.4, 0.5);
-        let eval = RuminationEvaluator::new(state);
+        let eval = RuminationEvaluator::new(state, default_thresholds());
         let triggers = eval.evaluate().await.unwrap();
         assert!(triggers.is_empty());
     }
@@ -175,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn test_boredom_triggers_mind_wandering() {
         let state = make_state(0.8, 0.3, 0.3);
-        let eval = RuminationEvaluator::new(state);
+        let eval = RuminationEvaluator::new(state, default_thresholds());
         let triggers = eval.evaluate().await.unwrap();
         assert_eq!(triggers.len(), 1);
         match &triggers[0] {
@@ -187,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn test_social_need_triggers_longing() {
         let state = make_state(0.2, 0.9, 0.3);
-        let eval = RuminationEvaluator::new(state);
+        let eval = RuminationEvaluator::new(state, default_thresholds());
         let triggers = eval.evaluate().await.unwrap();
         assert_eq!(triggers.len(), 1);
         match &triggers[0] {
@@ -199,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn test_curiosity_triggers_spike() {
         let state = make_state(0.2, 0.3, 0.9);
-        let eval = RuminationEvaluator::new(state);
+        let eval = RuminationEvaluator::new(state, default_thresholds());
         let triggers = eval.evaluate().await.unwrap();
         assert_eq!(triggers.len(), 1);
         match &triggers[0] {
@@ -211,7 +211,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_triggers_simultaneously() {
         let state = make_state(0.8, 0.9, 0.9);
-        let eval = RuminationEvaluator::new(state);
+        let eval = RuminationEvaluator::new(state, default_thresholds());
         let triggers = eval.evaluate().await.unwrap();
         assert_eq!(triggers.len(), 3);
     }
@@ -219,12 +219,11 @@ mod tests {
     #[tokio::test]
     async fn test_cooldown_prevents_duplicate() {
         let state = make_state(0.8, 0.3, 0.3);
-        let eval = RuminationEvaluator::new(state);
+        let eval = RuminationEvaluator::new(state, default_thresholds());
 
         let t1 = eval.evaluate().await.unwrap();
         assert_eq!(t1.len(), 1);
 
-        // Second call within cooldown → no trigger
         let t2 = eval.evaluate().await.unwrap();
         assert!(t2.is_empty());
     }
@@ -232,16 +231,12 @@ mod tests {
     #[tokio::test]
     async fn test_cooldown_expires() {
         let state = make_state(0.8, 0.3, 0.3);
-        let config = RuminationConfig {
-            cooldown_secs: 0, // Instant cooldown for testing
-            ..Default::default()
-        };
-        let eval = RuminationEvaluator::with_config(state, config);
+        let config = RuminationConfig { cooldown_secs: 0 };
+        let eval = RuminationEvaluator::with_config(state, default_thresholds(), config);
 
         let t1 = eval.evaluate().await.unwrap();
         assert_eq!(t1.len(), 1);
 
-        // With 0 cooldown, should fire again
         let t2 = eval.evaluate().await.unwrap();
         assert_eq!(t2.len(), 1);
     }

@@ -141,6 +141,21 @@ pub struct BehaviorThresholds {
     pub calm_arousal_max: f32,
     /// Stress above this → extra silence inclination
     pub stress_silence_min: f32,
+
+    // --- Trigger evaluator thresholds (learnable) ---
+
+    /// Rumination: boredom threshold for mind-wandering
+    pub rumination_boredom: f32,
+    /// Rumination: social need threshold for social longing
+    pub rumination_social: f32,
+    /// Rumination: curiosity threshold for curiosity spike
+    pub rumination_curiosity: f32,
+    /// CuriosityTrigger: minimum curiosity scalar to trigger exploration
+    pub curiosity_trigger: f32,
+    /// CuriosityTrigger: minimum interest intensity to act on
+    pub curiosity_interest: f32,
+    /// SocialTrigger: social need threshold for outreach
+    pub social_trigger: f32,
 }
 
 impl Default for BehaviorThresholds {
@@ -157,7 +172,38 @@ impl Default for BehaviorThresholds {
             calm_stress_max: 0.2,
             calm_arousal_max: 0.3,
             stress_silence_min: 0.8,
+            // Trigger evaluator defaults (match original hardcoded values)
+            rumination_boredom: 0.6,
+            rumination_social: 0.75,
+            rumination_curiosity: 0.8,
+            curiosity_trigger: 0.65,
+            curiosity_interest: 0.4,
+            social_trigger: 0.7,
         }
+    }
+}
+
+impl BehaviorThresholds {
+    /// Nudge a named threshold by `delta`, clamped to [0.05, 0.95].
+    /// Positive delta = raise threshold (trigger less often).
+    /// Negative delta = lower threshold (trigger more often).
+    /// Returns true if the field was found and updated.
+    pub fn nudge(&mut self, field: &str, delta: f32) -> bool {
+        let val = match field {
+            "rumination_boredom" => &mut self.rumination_boredom,
+            "rumination_social" => &mut self.rumination_social,
+            "rumination_curiosity" => &mut self.rumination_curiosity,
+            "curiosity_trigger" => &mut self.curiosity_trigger,
+            "curiosity_interest" => &mut self.curiosity_interest,
+            "social_trigger" => &mut self.social_trigger,
+            "attention_stress" => &mut self.attention_stress,
+            "attention_energy" => &mut self.attention_energy,
+            "social_need_high" => &mut self.social_need_high,
+            "curiosity_high" => &mut self.curiosity_high,
+            _ => return false,
+        };
+        *val = (*val + delta).clamp(0.05, 0.95);
+        true
     }
 }
 

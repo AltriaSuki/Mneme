@@ -7,7 +7,7 @@ use mneme_expression::{
     MetacognitionEvaluator, PresenceScheduler, RuminationEvaluator, ScheduledTriggerEvaluator,
     SocialTriggerEvaluator,
 };
-use mneme_limbic::LimbicSystem;
+use mneme_limbic::{BehaviorThresholds, LimbicSystem};
 use mneme_memory::{OrganismConfig, OrganismCoordinator, SqliteMemory};
 use mneme_reasoning::ReasoningEngine;
 use std::sync::Arc;
@@ -421,17 +421,19 @@ async fn main() -> anyhow::Result<()> {
         reg.register(Box::new(schedule_tool::ScheduleToolHandler::new(schedule_handle.clone())));
     }
 
+    let thresholds = Arc::new(tokio::sync::RwLock::new(BehaviorThresholds::default()));
+
     let inner_evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![
         Box::new(scheduled_eval),
-        Box::new(RuminationEvaluator::new(coordinator.state())),
+        Box::new(RuminationEvaluator::new(coordinator.state(), thresholds.clone())),
         Box::new(ConsciousnessGate::new(coordinator.state())),
         Box::new(MetacognitionEvaluator::new(
             coordinator.state(),
             coordinator.interaction_count_ref(),
         )),
         Box::new(HabitDetector::new(memory.clone())),
-        Box::new(SocialTriggerEvaluator::new(coordinator.state(), memory.clone())),
-        Box::new(CuriosityTriggerEvaluator::new(coordinator.state())),
+        Box::new(SocialTriggerEvaluator::new(coordinator.state(), memory.clone(), thresholds.clone())),
+        Box::new(CuriosityTriggerEvaluator::new(coordinator.state(), thresholds.clone())),
     ];
 
     // B-17: Wrap all evaluators in AttentionGate for single-focus competition
