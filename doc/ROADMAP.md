@@ -1768,7 +1768,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 > **目标**: 从 request-response 变成有存在感的对话者。
 
 - [ ] 异步对话流 (#58) — `engine.think()` 拆分为并发的生成流与接收流，新输入可中断正在生成的回复
-- [ ] 对话 agency (#59) — 对话目标系统：Mneme 在对话中维持自己的意图（追问、好奇、反驳）
+- [x] 对话 agency (#59) ✅ — ConversationIntent 意图标记系统，LLM 可追问/好奇/反驳/分享，意图注入系统提示自然融入对话
 - [ ] 对话目标提取 — 从对话中自动识别并创建 Goal
 - [x] 好奇心驱动自主探索 (#81) ✅ — CuriosityTriggerEvaluator 当 curiosity 高且有具体兴趣时触发探索，LLM 用工具搜索话题
 - [x] 工具失败模式学习 (#82) ✅ — 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败并避免重复

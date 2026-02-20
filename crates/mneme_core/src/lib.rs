@@ -135,6 +135,53 @@ pub enum Trigger {
     },
 }
 
+// ============================================================================
+// Conversation Agency (#59)
+// ============================================================================
+
+/// Conversational intent — an ephemeral goal Mneme maintains within a conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationIntent {
+    pub kind: IntentKind,
+    pub content: String,
+    /// Unix timestamp when this intent was created
+    pub created_at: i64,
+}
+
+/// Kind of conversational intent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum IntentKind {
+    /// Want to follow up on something the user said
+    FollowUp,
+    /// Curious about a topic, want to ask more
+    Curiosity,
+    /// Disagree with something, want to express it
+    Disagreement,
+    /// Have something to share proactively
+    Share,
+}
+
+impl IntentKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::FollowUp => "follow_up",
+            Self::Curiosity => "curiosity",
+            Self::Disagreement => "disagreement",
+            Self::Share => "share",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "follow_up" => Some(Self::FollowUp),
+            "curiosity" => Some(Self::Curiosity),
+            "disagreement" => Some(Self::Disagreement),
+            "share" => Some(Self::Share),
+            _ => None,
+        }
+    }
+}
+
 /// Blended recall result combining episodes and facts from memory.
 #[derive(Debug, Clone, Default)]
 pub struct BlendedRecall {

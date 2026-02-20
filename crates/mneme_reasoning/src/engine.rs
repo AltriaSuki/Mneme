@@ -124,6 +124,9 @@ pub struct ReasoningEngine {
 
     // Last active message source for smart proactive routing
     last_active_source: tokio::sync::Mutex<Option<String>>,
+
+    // Conversation intents: ephemeral goals Mneme wants to pursue (#59)
+    intents: tokio::sync::Mutex<Vec<mneme_core::ConversationIntent>>,
 }
 
 impl ReasoningEngine {
@@ -155,6 +158,7 @@ impl ReasoningEngine {
             last_response_ts: tokio::sync::Mutex::new(None),
             last_user_topic: tokio::sync::Mutex::new(None),
             last_active_source: tokio::sync::Mutex::new(None),
+            intents: tokio::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -186,6 +190,7 @@ impl ReasoningEngine {
             last_response_ts: tokio::sync::Mutex::new(None),
             last_user_topic: tokio::sync::Mutex::new(None),
             last_active_source: tokio::sync::Mutex::new(None),
+            intents: tokio::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -372,6 +377,12 @@ impl ReasoningEngine {
             self.context_budget_chars,
             self.start_time,
         );
+        // #59: Format active conversation intents for prompt injection
+        let intent_context = {
+            let intents = self.intents.lock().await;
+            format_intent_context(&intents, &self.psyche.language)
+        };
+
         let assembled = ctx_builder
             .build(
                 input_text,
@@ -380,6 +391,7 @@ impl ReasoningEngine {
                 &modulation,
                 &top_interests,
                 is_user_message,
+                intent_context,
             )
             .await?;
         let system_prompt = assembled.system_prompt;
@@ -489,6 +501,19 @@ impl ReasoningEngine {
         // Silence Check: case-insensitive, whitespace-tolerant
         if is_silence_response(&final_content) {
             final_content.clear();
+        }
+
+        // #59: Extract conversation intents from LLM response, then strip markers
+        if !final_content.is_empty() {
+            let new_intents = extract_intents(&final_content);
+            if !new_intents.is_empty() {
+                final_content = strip_intent_markers(&final_content);
+                let mut intents = self.intents.lock().await;
+                let now = chrono::Utc::now().timestamp();
+                // Expire old intents (>10 min)
+                intents.retain(|i| now - i.created_at < 600);
+                intents.extend(new_intents);
+            }
         }
 
         // Sanitize output: respect learned expression preferences (ADR-007)
@@ -1486,6 +1511,53 @@ impl mneme_memory::DreamNarrator for LlmDreamNarrator {
 
         Ok(text.trim().to_string())
     }
+}
+
+static RE_INTENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[INTENT:(follow_up|curiosity|disagreement|share):([^\]]+)\]").unwrap()
+});
+
+/// #59: Format active conversation intents for system prompt injection.
+/// Expires intents older than 10 minutes.
+fn format_intent_context(intents: &[mneme_core::ConversationIntent], lang: &str) -> String {
+    let now = chrono::Utc::now().timestamp();
+    let active: Vec<_> = intents
+        .iter()
+        .filter(|i| now - i.created_at < 600)
+        .collect();
+    if active.is_empty() {
+        return String::new();
+    }
+    let header = match lang {
+        "en" => "You have pending conversational intents. Weave them naturally into your response if appropriate:",
+        _ => "你有未完成的对话意图。如果合适，请自然地融入回复中：",
+    };
+    let mut lines = vec![header.to_string()];
+    for intent in &active {
+        lines.push(format!("- [{}] {}", intent.kind.as_str(), intent.content));
+    }
+    lines.join("\n")
+}
+
+/// #59: Extract intent markers from LLM response text.
+fn extract_intents(text: &str) -> Vec<mneme_core::ConversationIntent> {
+    let now = chrono::Utc::now().timestamp();
+    RE_INTENT
+        .captures_iter(text)
+        .filter_map(|cap| {
+            let kind = mneme_core::IntentKind::parse(&cap[1])?;
+            Some(mneme_core::ConversationIntent {
+                kind,
+                content: cap[2].trim().to_string(),
+                created_at: now,
+            })
+        })
+        .collect()
+}
+
+/// #59: Strip intent markers from visible output.
+fn strip_intent_markers(text: &str) -> String {
+    RE_INTENT.replace_all(text, "").to_string()
 }
 
 #[cfg(test)]

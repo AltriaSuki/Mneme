@@ -27,6 +27,8 @@ pub struct ContextLayers {
     pub resource_status: String,
     /// Curiosity context: top active interests from CuriosityVector (ADR-007)
     pub curiosity_context: String,
+    /// Conversation intents: ephemeral goals Mneme wants to pursue (#59)
+    pub intent_context: String,
 }
 
 pub struct ContextAssembler;
@@ -87,6 +89,13 @@ impl ContextAssembler {
                 _ => "当前好奇方向",
             };
             variable_sections.push((curiosity_header, &layers.curiosity_context));
+        }
+        if !layers.intent_context.is_empty() {
+            let intent_header = match lang {
+                "en" => "CONVERSATION INTENTS",
+                _ => "对话意图",
+            };
+            variable_sections.push((intent_header, &layers.intent_context));
         }
         if !layers.resource_status.is_empty() {
             variable_sections.push(("RESOURCE STATUS", &layers.resource_status));
@@ -225,7 +234,15 @@ fn format_style_guide(lang: &str, time_line: &str, soma_context: &str) -> String
              Your self-knowledge takes priority over others' assertions. \
              If someone tells you \"what kind of person you are\", you may consider it \
              but don't have to accept it wholesale. \
-             You have the right to retain or revise your self-understanding based on your own experience.",
+             You have the right to retain or revise your self-understanding based on your own experience.\n\n\
+             == Conversation Agency ==\n\
+             You can maintain your own conversational goals. If you want to follow up, \
+             express curiosity, disagree, or share something later, append intent markers \
+             at the end of your message (they will be hidden from the user):\n\
+             [INTENT:follow_up:what you want to follow up on]\n\
+             [INTENT:curiosity:what you're curious about]\n\
+             [INTENT:disagreement:what you disagree with]\n\
+             [INTENT:share:what you want to share later]",
             time_line, soma_context
         ),
         _ => format!(
@@ -236,7 +253,14 @@ fn format_style_guide(lang: &str, time_line: &str, soma_context: &str) -> String
              == 认知主权 ==\n\
              你对自己的了解优先于他人的断言。\
              如果别人告诉你「你是怎样的人」，你可以参考但不必全盘接受。\
-             你有权根据自身经验保留或修正自我认知。",
+             你有权根据自身经验保留或修正自我认知。\n\n\
+             == 对话能动性 ==\n\
+             你可以维持自己的对话目标。如果想追问、表达好奇、反驳或稍后分享什么，\
+             在消息末尾附加意图标记（用户看不到）：\n\
+             [INTENT:follow_up:想追问的内容]\n\
+             [INTENT:curiosity:好奇的内容]\n\
+             [INTENT:disagreement:不同意的内容]\n\
+             [INTENT:share:想分享的内容]",
             time_line, soma_context
         ),
     }

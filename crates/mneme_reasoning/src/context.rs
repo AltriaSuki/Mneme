@@ -67,6 +67,7 @@ impl<'a> ContextBuilder<'a> {
         modulation: &ModulationVector,
         top_interests: &[(&str, f32)],
         is_user_message: bool,
+        intent_context: String,
     ) -> Result<AssembledContext> {
         // Curiosity context for prompt
         let curiosity_context = if top_interests.is_empty() {
@@ -145,6 +146,7 @@ impl<'a> ContextBuilder<'a> {
             self_knowledge,
             resource_status,
             curiosity_context,
+            intent_context,
         };
 
         let system_prompt = ContextAssembler::build_full_system_prompt(
