@@ -905,15 +905,12 @@ impl Reasoning for ReasoningEngine {
                 // Memorize the episode
                 self.memory.memorize(&content).await?;
 
-                // Background fact extraction: spawn a task so it doesn't delay the response.
-                // We extract facts from the exchange and store them in semantic memory.
+                // Background fact + goal extraction (#对话目标提取)
                 {
                     let user_text = content.body.clone();
                     let reply_text = response_text.clone();
                     let memory = self.memory.clone();
-                    // We need to call the LLM client, but it's not Arc-shareable.
-                    // Instead, extract facts inline (fast: ~500ms with low max_tokens).
-                    let facts = crate::extraction::extract_facts(
+                    let (facts, goals) = crate::extraction::extract_all(
                         self.client.as_ref(),
                         &user_text,
                         &reply_text,
@@ -930,6 +927,31 @@ impl Reasoning for ReasoningEngine {
                             .await
                         {
                             tracing::warn!("Failed to store extracted fact: {:#}", e);
+                        }
+                    }
+                    // Create goals via GoalManager
+                    if let Some(gm) = self.coordinator.goal_manager() {
+                        for g in goals {
+                            let goal = mneme_memory::Goal {
+                                id: 0,
+                                goal_type: match g.goal_type.as_str() {
+                                    "social" => mneme_memory::GoalType::Social,
+                                    "exploration" => mneme_memory::GoalType::Exploration,
+                                    "maintenance" => mneme_memory::GoalType::Maintenance,
+                                    _ => mneme_memory::GoalType::Achievement,
+                                },
+                                description: g.description,
+                                priority: g.priority,
+                                status: mneme_memory::GoalStatus::Active,
+                                progress: 0.0,
+                                created_at: chrono::Utc::now().timestamp(),
+                                deadline: None,
+                                parent_id: None,
+                                metadata: serde_json::json!({"source": "conversation_extraction"}),
+                            };
+                            if let Err(e) = gm.create_goal(&goal).await {
+                                tracing::warn!("Failed to create extracted goal: {:#}", e);
+                            }
                         }
                     }
                 }
