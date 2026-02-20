@@ -2127,6 +2127,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mneme_bench"
+version = "0.1.0"
+dependencies = [
+ "mneme_core",
+ "mneme_limbic",
+]
+
+[[package]]
 name = "mneme_cli"
 version = "0.1.0"
 dependencies = [
