@@ -13,7 +13,8 @@ pub use consolidation::{
     ConsolidationResult, SelfKnowledgeCandidate, SelfReflector, SleepConfig, SleepConsolidator,
 };
 pub use coordinator::{
-    ActionEvaluation, InteractionResult, LifecycleState, OrganismConfig, OrganismCoordinator,
+    ActionEvaluation, HealthMonitor, InteractionResult, LifecycleState, OrganismConfig,
+    OrganismCoordinator,
 };
 pub use dream::{DreamEpisode, DreamGenerator, DreamNarrator};
 pub use feedback_buffer::{

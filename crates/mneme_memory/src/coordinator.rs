@@ -40,6 +40,8 @@ pub enum LifecycleState {
     Drowsy,
     /// Shutdown requested
     ShuttingDown,
+    /// #85: Partial failure — some subsystems unavailable, core still running
+    Degraded,
 }
 
 /// Configuration for the organism coordinator
@@ -66,6 +68,69 @@ impl Default for OrganismConfig {
             auto_sleep: true,
             min_interactions_before_sleep: 10,
         }
+    }
+}
+
+/// #85: Tracks subsystem health for self-diagnosis and graceful degradation.
+#[derive(Debug, Clone)]
+pub struct HealthMonitor {
+    /// Consecutive DB failure count
+    pub db_failures: u32,
+    /// Consecutive LLM failure count
+    pub llm_failures: u32,
+    /// Whether DB is considered healthy
+    pub db_healthy: bool,
+    /// Whether LLM is considered healthy
+    pub llm_healthy: bool,
+}
+
+impl Default for HealthMonitor {
+    fn default() -> Self {
+        Self { db_failures: 0, llm_failures: 0, db_healthy: true, llm_healthy: true }
+    }
+}
+
+impl HealthMonitor {
+    /// Record a subsystem success, resetting its failure counter.
+    pub fn record_success(&mut self, subsystem: &str) {
+        match subsystem {
+            "db" => { self.db_failures = 0; self.db_healthy = true; }
+            "llm" => { self.llm_failures = 0; self.llm_healthy = true; }
+            _ => {}
+        }
+    }
+
+    /// Record a subsystem failure. Returns true if the subsystem just became unhealthy.
+    pub fn record_failure(&mut self, subsystem: &str) -> bool {
+        match subsystem {
+            "db" => {
+                self.db_failures += 1;
+                let was_healthy = self.db_healthy;
+                self.db_healthy = self.db_failures < 3;
+                was_healthy && !self.db_healthy
+            }
+            "llm" => {
+                self.llm_failures += 1;
+                let was_healthy = self.llm_healthy;
+                self.llm_healthy = self.llm_failures < 3;
+                was_healthy && !self.llm_healthy
+            }
+            _ => false,
+        }
+    }
+
+    /// True if any subsystem is unhealthy.
+    pub fn is_degraded(&self) -> bool {
+        !self.db_healthy || !self.llm_healthy
+    }
+
+    /// Format a diagnostic summary.
+    pub fn diagnostic_summary(&self) -> String {
+        format!(
+            "DB: {} (failures: {}), LLM: {} (failures: {})",
+            if self.db_healthy { "ok" } else { "UNHEALTHY" }, self.db_failures,
+            if self.llm_healthy { "ok" } else { "UNHEALTHY" }, self.llm_failures,
+        )
     }
 }
 
@@ -128,6 +193,9 @@ pub struct OrganismCoordinator {
 
     /// LLM-based dream narrator (Phase 2, v0.8.0)
     dream_narrator: tokio::sync::RwLock<Option<Arc<dyn crate::dream::DreamNarrator>>>,
+
+    /// #85: Health monitor for self-diagnosis and graceful degradation
+    health: Arc<RwLock<HealthMonitor>>,
 }
 
 impl OrganismCoordinator {
@@ -169,6 +237,7 @@ impl OrganismCoordinator {
             goal_manager: None,
             state_mutation_lock: tokio::sync::Mutex::new(()),
             dream_narrator: tokio::sync::RwLock::new(None),
+            health: Arc::new(RwLock::new(HealthMonitor::default())),
         }
     }
 
@@ -255,6 +324,11 @@ impl OrganismCoordinator {
     /// Get goal manager reference (v0.6.0)
     pub fn goal_manager(&self) -> Option<&Arc<GoalManager>> {
         self.goal_manager.as_ref()
+    }
+
+    /// #85: Get health monitor reference for external subsystems to report status.
+    pub fn health(&self) -> Arc<RwLock<HealthMonitor>> {
+        self.health.clone()
     }
 
     /// Get interaction count
@@ -834,6 +908,12 @@ impl OrganismCoordinator {
             }
             LifecycleState::ShuttingDown => {
                 // Cleanup if needed
+            }
+            LifecycleState::Degraded => {
+                // #85: Minimal ticks only — save state, skip medium dynamics
+                if tick.is_multiple_of(6) {
+                    self.save_state().await;
+                }
             }
         }
 

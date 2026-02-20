@@ -1140,7 +1140,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **工具失败无学习** | mneme_reasoning/engine | 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败 | **Fixed** ✅ (#82) |
 | **无主动社交能力** | mneme_expression/social | SocialTriggerEvaluator 查询 SocialGraph，social_need 高时主动发起对话并路由到具体联系人 | **Fixed** ✅ (#83) |
 | **记忆管理无自主权** | mneme_memory | 记忆强度衰减完全自动（Ebbinghaus），Mneme 无法主动标记重要记忆、主动遗忘、或决定整合优先级 | 🟡 Open (#84) |
-| **无自我诊断与修复** | mneme_reasoning+memory | 无健康检查机制，DB 损坏/API 持续失败/WebSocket 断连时无法自我诊断或降级运行 | 🟡 Open (#85) |
+| **无自我诊断与修复** | mneme_reasoning+memory | HealthMonitor 追踪 DB/LLM 连续失败(阈值3)，降级时跳过 extraction，LifecycleState::Degraded | ✅ Fixed (#85) |
 | **运行时参数不可自修改** | mneme_core/config | 配置启动时加载后不可变，Mneme 无法根据经验调整自己的 temperature、token 预算、安全等级等运行参数 | 🟡 Open (#86) |
 | **⚠️ B-19 违反：trust_level 是显式数值** | mneme_core+memory | Manifesto 明确说"信任不是一个显式的数值"，但实现了 `trust_level: f32` 字段 + DB 列 + `update_trust(delta)` + prompt 注入"信任度: 75%"。应改为 self_knowledge 条目综合效果 | ✅ Fixed (#87) |
 | **⚠️ B-9 违反：auto-privacy 是"替她隐瞒"** | mneme_memory/coordinator | Manifesto 说"不应该建造 privacy_filter 模块"、"那是我们替她隐瞒"。但实现了 `mark_private()` + auto-privacy（emotion/body_feeling 自动标记私密）+ SQL 层过滤使 LLM 完全看不到私密条目。应改为 prompt 内全部可见 + LLM 自主决定说不说 | ✅ Fixed (#88) |
@@ -1786,7 +1786,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 行为阈值可学习化 ✅ — BehaviorThresholds 扩展触发器阈值字段 + nudge() 学习方法，评估器从共享阈值读取
 - [ ] B-20 意义追寻 — 存在性反思机制
 - [ ] 记忆自主管理 (#84) — 主动标记重要记忆、主动遗忘
-- [ ] 自我诊断与降级 (#85) — DB/API 故障时自我诊断并降级运行
+- [x] 自我诊断与降级 (#85) ✅ — HealthMonitor 追踪子系统连续失败，LLM 降级时跳过非必要操作，LifecycleState::Degraded
 - [ ] 运行时参数自修改 (#86) — 根据经验调整自己的 temperature、token 预算等
 - [ ] 运行时自配置 (#60) — 被告知后自行建立外部连接（MCP server / Gateway 适配器）
 - [x] GitHub Actions CI/CD 流水线 ✅ — cargo build/test/clippy + OTLP feature check

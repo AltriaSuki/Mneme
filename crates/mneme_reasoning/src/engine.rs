@@ -503,7 +503,8 @@ impl ReasoningEngine {
             }
 
             // #58: Use streaming for real-time output + cancellation support
-            let rx = self
+            // #85: Record LLM health for self-diagnosis
+            let rx = match self
                 .client
                 .stream_complete(
                     &system_prompt,
@@ -511,7 +512,20 @@ impl ReasoningEngine {
                     api_tools.clone(),
                     completion_params.clone(),
                 )
-                .await?;
+                .await
+            {
+                Ok(rx) => {
+                    self.coordinator.health().write().await.record_success("llm");
+                    rx
+                }
+                Err(e) => {
+                    let became_unhealthy = self.coordinator.health().write().await.record_failure("llm");
+                    if became_unhealthy {
+                        tracing::error!("LLM subsystem marked unhealthy: {}", e);
+                    }
+                    return Err(e);
+                }
+            };
 
             let (content_blocks, was_cancelled) = self.consume_stream(rx).await;
 
@@ -997,7 +1011,8 @@ impl Reasoning for ReasoningEngine {
                 self.memory.memorize(&content).await?;
 
                 // Background fact + goal extraction (#对话目标提取)
-                {
+                // #85: Skip extraction when LLM is degraded (non-essential)
+                if !self.coordinator.health().read().await.is_degraded() {
                     let user_text = content.body.clone();
                     let reply_text = response_text.clone();
                     let memory = self.memory.clone();

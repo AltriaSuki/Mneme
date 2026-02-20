@@ -196,8 +196,8 @@ impl McpManager {
                         // Peers are already set from connect_all; if we need
                         // reconnection logic in the future, it goes here.
                     }
-                    LifecycleState::Drowsy => {
-                        // No action needed for drowsy state
+                    LifecycleState::Drowsy | LifecycleState::Degraded => {
+                        // No action needed for drowsy/degraded state
                     }
                 }
             }

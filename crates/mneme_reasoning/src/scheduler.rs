@@ -30,6 +30,7 @@ impl PresenceScheduler {
             LifecycleState::Sleeping => 10.0,
             LifecycleState::Drowsy => 3.0,
             LifecycleState::ShuttingDown => 1.0,
+            LifecycleState::Degraded => 2.0,
             LifecycleState::Awake => {
                 if state.fast.energy > 0.7 {
                     0.5
