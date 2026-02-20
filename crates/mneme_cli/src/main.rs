@@ -3,9 +3,9 @@ mod schedule_tool;
 use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
 use mneme_expression::{
-    AttentionGate, ConsciousnessGate, CuriosityTriggerEvaluator, HabitDetector, Humanizer,
-    MeaningSeekingEvaluator, MetacognitionEvaluator, PresenceScheduler, RuminationEvaluator,
-    ScheduledTriggerEvaluator, SocialTriggerEvaluator,
+    AttentionGate, ConsciousnessGate, CreativityTriggerEvaluator, CuriosityTriggerEvaluator,
+    HabitDetector, Humanizer, MeaningSeekingEvaluator, MetacognitionEvaluator, PresenceScheduler,
+    RuminationEvaluator, ScheduledTriggerEvaluator, SocialTriggerEvaluator,
 };
 use mneme_limbic::{BehaviorThresholds, LimbicSystem};
 use mneme_memory::{OrganismConfig, OrganismCoordinator, SqliteMemory};
@@ -441,6 +441,7 @@ async fn main() -> anyhow::Result<()> {
         Box::new(SocialTriggerEvaluator::new(coordinator.state(), memory.clone(), thresholds.clone())),
         Box::new(CuriosityTriggerEvaluator::new(coordinator.state(), thresholds.clone())),
         Box::new(MeaningSeekingEvaluator::new(coordinator.state(), thresholds.clone())),
+        Box::new(CreativityTriggerEvaluator::new(coordinator.state(), thresholds.clone())),
     ];
 
     // B-17: Wrap all evaluators in AttentionGate for single-focus competition

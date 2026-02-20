@@ -1782,7 +1782,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] ODE 之上叠加可塑神经网络 (ADR-001/009 演进) (#14)
 - [ ] 低分辨率内心独白 (ADR-013) (#55) — 本地小模型片段式独白
 - [ ] 形成性课程 — 文学管道 (ADR-011) (#56)
-- [ ] 自发创造 (ADR-007) — boredom + curiosity + 工具 → 自主创作
+- [x] 自发创造 (ADR-007) ✅ — CreativityTriggerEvaluator: boredom+curiosity 驱动自主创作，3h 冷却
 - [x] 行为阈值可学习化 ✅ — BehaviorThresholds 扩展触发器阈值字段 + nudge() 学习方法，评估器从共享阈值读取
 - [x] B-20 意义追寻 ✅ — MeaningSeekingEvaluator 低压力+充足能量时触发存在性反思，6h 冷却
 - [x] 记忆自主管理 (#84) ✅ — memory_manage 工具 (pin/unpin/forget/list_pinned)，pinned 列免衰减

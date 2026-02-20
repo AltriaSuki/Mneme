@@ -4,6 +4,7 @@ use std::time::Duration;
 
 mod attention;
 mod consciousness;
+mod creativity;
 mod curiosity;
 mod habits;
 mod metacognition;
@@ -14,6 +15,7 @@ mod meaning;
 mod social;
 pub use attention::{AttentionConfig, AttentionGate, EngagementHandle};
 pub use consciousness::{ConsciousnessConfig, ConsciousnessGate};
+pub use creativity::CreativityTriggerEvaluator;
 pub use curiosity::CuriosityTriggerEvaluator;
 pub use habits::{HabitConfig, HabitDetector};
 pub use meaning::MeaningSeekingEvaluator;
