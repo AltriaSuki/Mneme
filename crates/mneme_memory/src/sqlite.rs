@@ -542,6 +542,47 @@ impl SocialGraph for SqliteMemory {
         }))
     }
 
+    async fn list_recent_contacts(&self, limit: usize) -> Result<Vec<PersonContext>> {
+        // Find people ordered by most recent interaction
+        let rows = sqlx::query(
+            "SELECT DISTINCT p.id, p.name, \
+             (SELECT COUNT(*) FROM relationships r WHERE r.source_id = p.id OR r.target_id = p.id) as cnt, \
+             (SELECT MAX(r2.timestamp) FROM relationships r2 WHERE r2.source_id = p.id OR r2.target_id = p.id) as last_ts \
+             FROM people p \
+             INNER JOIN relationships rel ON rel.source_id = p.id OR rel.target_id = p.id \
+             GROUP BY p.id ORDER BY last_ts DESC LIMIT ?",
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut contacts = Vec::new();
+        for row in rows {
+            let id_str: String = row.get("id");
+            let id = Uuid::parse_str(&id_str).unwrap_or_default();
+            let name: String = row.get("name");
+            let cnt: i64 = row.get("cnt");
+            let last_ts: Option<i64> = row.get("last_ts");
+
+            let aliases: Vec<(String, String)> =
+                sqlx::query_as("SELECT platform, platform_id FROM aliases WHERE person_id = ?")
+                    .bind(&id_str)
+                    .fetch_all(&self.pool)
+                    .await?;
+
+            contacts.push(PersonContext {
+                person: Person {
+                    id,
+                    name,
+                    aliases: aliases.into_iter().collect(),
+                },
+                interaction_count: cnt,
+                last_interaction_ts: last_ts,
+                relationship_notes: String::new(),
+            });
+        }
+        Ok(contacts)
+    }
 }
 
 // =============================================================================

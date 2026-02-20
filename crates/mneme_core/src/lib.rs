@@ -102,10 +102,13 @@ pub enum Trigger {
     Trending { platform: String, topic: String },
     /// Internal state-driven rumination (mind-wandering, social longing, curiosity)
     Rumination {
-        /// Kind: "mind_wandering", "social_longing", "curiosity_spike"
+        /// Kind: "mind_wandering", "social_longing", "curiosity_spike", "social_outreach"
         kind: String,
         /// Human-readable context for the LLM
         context: String,
+        /// Optional output route (e.g. "onebot:group:12345")
+        #[serde(default)]
+        route: Option<String>,
     },
     /// Self-triggered inner monologue (ADR-012 + ADR-013).
     ///
@@ -269,6 +272,12 @@ pub trait SocialGraph: Send + Sync {
 
     /// Get rich context about a person (for prompt injection)
     async fn get_person_context(&self, person_id: Uuid) -> anyhow::Result<Option<PersonContext>>;
+
+    /// List recently contacted people (for proactive social triggers, #83).
+    /// Default: empty (no social graph available).
+    async fn list_recent_contacts(&self, _limit: usize) -> anyhow::Result<Vec<PersonContext>> {
+        Ok(vec![])
+    }
 }
 
 #[async_trait]

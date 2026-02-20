@@ -1137,8 +1137,8 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **无时间/日期上下文** | mneme_reasoning/prompts | prompt 不注入当前时间、星期、日期，Mneme 不知道现在是凌晨三点还是下午三点，行为与时间脱节 | ✅ Fixed (#79) |
 | **资源状态对 LLM 不可见** | mneme_reasoning/engine | build_resource_status() 注入运行时间、记忆片段数、token 用量到 prompt | **Fixed** ✅ (#80) |
 | **好奇心不驱动工具使用** | mneme_reasoning/engine | `CuriosityVector` 存在但不触发自主搜索/浏览，无 `CuriosityTriggerEvaluator`，好奇心只存不用 | 🔴 Open (#81) |
-| **工具失败无学习** | mneme_reasoning/engine | 工具执行失败只 log + retry，不记录失败模式，不调整未来工具选择，重复犯同样的错 | 🟡 Open (#82) |
-| **无主动社交能力** | mneme_reasoning+onebot | Mneme 无法主动给特定人发消息，无"我想找某人聊聊"的触发机制，社交完全被动 | 🟡 Open (#83) |
+| **工具失败无学习** | mneme_reasoning/engine | 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败 | **Fixed** ✅ (#82) |
+| **无主动社交能力** | mneme_expression/social | SocialTriggerEvaluator 查询 SocialGraph，social_need 高时主动发起对话并路由到具体联系人 | **Fixed** ✅ (#83) |
 | **记忆管理无自主权** | mneme_memory | 记忆强度衰减完全自动（Ebbinghaus），Mneme 无法主动标记重要记忆、主动遗忘、或决定整合优先级 | 🟡 Open (#84) |
 | **无自我诊断与修复** | mneme_reasoning+memory | 无健康检查机制，DB 损坏/API 持续失败/WebSocket 断连时无法自我诊断或降级运行 | 🟡 Open (#85) |
 | **运行时参数不可自修改** | mneme_core/config | 配置启动时加载后不可变，Mneme 无法根据经验调整自己的 temperature、token 预算、安全等级等运行参数 | 🟡 Open (#86) |
@@ -1771,8 +1771,8 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] 对话 agency (#59) — 对话目标系统：Mneme 在对话中维持自己的意图（追问、好奇、反驳）
 - [ ] 对话目标提取 — 从对话中自动识别并创建 Goal
 - [ ] 好奇心驱动自主探索 (#81) — CuriosityVector 触发自主搜索/浏览
-- [ ] 工具失败模式学习 (#82) — 记录失败模式，调整未来工具选择
-- [ ] 主动社交触发 (#83) — 基于社交图谱 + social_need 主动发起对话
+- [x] 工具失败模式学习 (#82) ✅ — 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败并避免重复
+- [x] 主动社交触发 (#83) ✅ — SocialTriggerEvaluator 查询 SocialGraph + social_need 阈值，主动路由到具体联系人
 - [ ] LLM 工具输出诚实性 — 防止对工具返回结果进行虚构推理
 
 ### v1.0.0 - 成熟版本
@@ -1805,4 +1805,4 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 
 ---
 
-*最后更新: 2026-02-13*
+*最后更新: 2026-02-20*

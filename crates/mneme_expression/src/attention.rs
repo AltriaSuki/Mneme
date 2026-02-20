@@ -256,6 +256,7 @@ mod tests {
         Trigger::Rumination {
             kind: "mind_wandering".to_string(),
             context: "想起了什么".to_string(),
+            route: None,
         }
     }
 

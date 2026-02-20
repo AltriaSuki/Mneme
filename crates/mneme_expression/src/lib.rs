@@ -9,6 +9,7 @@ mod metacognition;
 mod presence;
 mod rumination;
 mod scheduled;
+mod social;
 pub use attention::{AttentionConfig, AttentionGate, EngagementHandle};
 pub use consciousness::{ConsciousnessConfig, ConsciousnessGate};
 pub use habits::{HabitConfig, HabitDetector};
@@ -16,6 +17,7 @@ pub use metacognition::{MetacognitionConfig, MetacognitionEvaluator};
 pub use presence::PresenceScheduler;
 pub use rumination::{RuminationConfig, RuminationEvaluator};
 pub use scheduled::{ScheduleEntry, ScheduleHandle, ScheduledTriggerEvaluator};
+pub use social::SocialTriggerEvaluator;
 
 pub struct Humanizer {
     read_speed_cpm: u32,

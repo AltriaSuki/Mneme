@@ -65,6 +65,7 @@ impl TriggerEvaluator for HabitDetector {
                     "反复出现的行为模式 ({}次): {}。这是否已经成为一种习惯？值得反思。",
                     count, pattern
                 ),
+                route: None,
             })
             .collect();
 
@@ -123,7 +124,7 @@ mod tests {
         let triggers = detector.evaluate().await.unwrap();
         assert_eq!(triggers.len(), 2);
         match &triggers[0] {
-            Trigger::Rumination { kind, context } => {
+            Trigger::Rumination { kind, context, .. } => {
                 assert_eq!(kind, "habit_detected");
                 assert!(context.contains("回避社交"));
                 assert!(context.contains("5次"));

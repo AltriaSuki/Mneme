@@ -198,6 +198,7 @@ impl TriggerEvaluator for GoalTriggerEvaluator {
                         triggers.push(Trigger::Rumination {
                             kind: "social_goal".into(),
                             context: goal.description.clone(),
+                            route: None,
                         });
                     }
                 }

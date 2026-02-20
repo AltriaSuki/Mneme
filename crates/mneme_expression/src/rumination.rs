@@ -99,6 +99,7 @@ impl TriggerEvaluator for RuminationEvaluator {
                     "无聊感累积到 {:.0}%，脑子开始自由联想。试着回忆一段有趣的记忆，或者想到一个新话题和用户分享。",
                     state.fast.boredom * 100.0
                 ),
+                route: None,
             });
             self.record_fired("mind_wandering", now);
         }
@@ -118,6 +119,7 @@ impl TriggerEvaluator for RuminationEvaluator {
                     "社交需求达到 {:.0}%，想和人说说话。主动发起一个轻松的话题。",
                     state.fast.social_need * 100.0
                 ),
+                route: None,
             });
             self.record_fired("social_longing", now);
         }
@@ -137,6 +139,7 @@ impl TriggerEvaluator for RuminationEvaluator {
                     "好奇心达到 {:.0}%，想探索新事物。提出一个你感兴趣的问题或话题。",
                     state.fast.curiosity * 100.0
                 ),
+                route: None,
             });
             self.record_fired("curiosity_spike", now);
         }

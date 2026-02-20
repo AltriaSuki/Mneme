@@ -452,6 +452,8 @@ impl ReasoningEngine {
                         tracing::warn!("Tool '{}' failed: {}", name, outcome.content);
                         if outcome.error_kind == Some(ToolErrorKind::Permanent) {
                             any_permanent_fail = true;
+                            // #82: Record failure pattern in self_knowledge
+                            self.record_tool_failure(name, &outcome.content).await;
                         }
                     }
                     result_blocks.push(ContentBlock::ToolResult {
@@ -640,6 +642,15 @@ impl ReasoningEngine {
             "No tool registry configured — cannot execute '{}'",
             name
         ))
+    }
+
+    /// #82: Record tool failure pattern in self_knowledge so LLM learns from mistakes.
+    async fn record_tool_failure(&self, tool_name: &str, error: &str) {
+        let end = error.floor_char_boundary(200.min(error.len()));
+        let claim = format!("工具 '{}' 执行失败: {}", tool_name, &error[..end]);
+        self.coordinator
+            .store_metacognition_insight("tool_experience", &claim, 0.4)
+            .await;
     }
 
     /// Ensure the speaker exists in the social graph and record the interaction (#53).
@@ -969,7 +980,8 @@ impl Reasoning for ReasoningEngine {
             Event::ProactiveTrigger(trigger) => {
                 // Extract route: explicit trigger route > last active source
                 let trigger_route = match &trigger {
-                    Trigger::Scheduled { route: Some(r), .. } => Some(r.clone()),
+                    Trigger::Scheduled { route: Some(r), .. }
+                    | Trigger::Rumination { route: Some(r), .. } => Some(r.clone()),
                     _ => self.last_active_source.lock().await.clone(),
                 };
                 let prompt_text = match trigger {
@@ -988,7 +1000,7 @@ impl Reasoning for ReasoningEngine {
                     Trigger::Trending { topic, .. } => {
                         format!("'{}' is trending. Mention it if relevant.", topic)
                     }
-                    Trigger::Rumination { kind, context } => {
+                    Trigger::Rumination { kind, context, .. } => {
                         format!("[内部驱动: {}] {}", kind, context)
                     }
                     Trigger::InnerMonologue {
