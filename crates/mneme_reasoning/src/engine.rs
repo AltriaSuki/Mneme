@@ -693,8 +693,12 @@ impl ReasoningEngine {
             }
         }
 
-        // Sanitize output: respect learned expression preferences (ADR-007)
-        if !final_content.is_empty() {
+        // #34: Context-aware sanitize — skip for CLI (markdown-capable) and code-heavy content
+        let source = speaker.map(|(s, _)| s).unwrap_or("cli");
+        let has_code_blocks = final_content.contains("```");
+        let skip_sanitize = source == "cli" || has_code_blocks;
+
+        if !final_content.is_empty() && !skip_sanitize {
             let expr_entries = self
                 .memory
                 .recall_self_knowledge_by_domain("expression")
