@@ -1878,6 +1878,39 @@ impl SqliteMemory {
         }
     }
 
+    /// Save learned NeuralModulator weights (upsert — always id=1).
+    pub async fn save_learned_neural(&self, nn: &mneme_limbic::NeuralModulator) -> Result<()> {
+        let json = serde_json::to_string(nn).context("Failed to serialize neural modulator")?;
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO learned_neural (id, neural_json, updated_at) VALUES (1, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET neural_json = excluded.neural_json, updated_at = excluded.updated_at"
+        )
+        .bind(&json)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save learned neural")?;
+        Ok(())
+    }
+
+    /// Load previously learned NeuralModulator from DB.
+    pub async fn load_learned_neural(&self) -> Result<Option<mneme_limbic::NeuralModulator>> {
+        let row = sqlx::query("SELECT neural_json FROM learned_neural WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to load learned neural")?;
+        match row {
+            Some(r) => {
+                let json_str: String = r.get("neural_json");
+                let nn = serde_json::from_str(&json_str)
+                    .context("Failed to deserialize learned neural")?;
+                Ok(Some(nn))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Save learned BehaviorThresholds (upsert — always id=1).
     pub async fn save_learned_thresholds(
         &self,

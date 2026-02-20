@@ -278,6 +278,12 @@ impl OrganismCoordinator {
             tracing::info!("Loaded learned ModulationCurves from DB");
         }
 
+        // Load learned NeuralModulator from DB (#14)
+        if let Ok(Some(nn)) = db.load_learned_neural().await {
+            tracing::info!("Loaded learned NeuralModulator (blend={:.2})", nn.blend);
+            coordinator.limbic.set_neural(Some(nn)).await;
+        }
+
         // Load behavior rule engine (ADR-004)
         let seed = crate::rules::seed_rules();
         let _ = db.seed_behavior_rules(&seed).await;
@@ -790,6 +796,29 @@ impl OrganismCoordinator {
                     let _ = db.save_learned_curves(&new_curves).await;
                     tracing::info!("Adjusted ModulationCurves from {} samples", samples.len());
                 }
+                // #14: Also train NeuralModulator on the same samples
+                let mut nn = self.limbic.get_neural().await
+                    .unwrap_or_else(mneme_limbic::NeuralModulator::default);
+                let train_samples: Vec<_> = samples.iter().map(|s| {
+                    (
+                        mneme_limbic::neural::StateFeatures {
+                            energy: s.energy,
+                            stress: s.stress,
+                            arousal: s.arousal,
+                            mood_bias: s.mood_bias,
+                            social_need: s.social_need,
+                        },
+                        s.modulation.clone(),
+                        s.feedback_valence,
+                    )
+                }).collect();
+                nn.train(&train_samples, 0.01);
+                // Gradually increase blend as we accumulate training
+                nn.blend = (nn.blend + 0.02).min(0.5);
+                let _ = db.save_learned_neural(&nn).await;
+                self.limbic.set_neural(Some(nn)).await;
+                tracing::info!("Trained NeuralModulator on {} samples", samples.len());
+
                 let ids: Vec<i64> = samples.iter().map(|s| s.id).collect();
                 let _ = db.mark_samples_consumed(&ids).await;
             }

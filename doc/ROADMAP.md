@@ -997,27 +997,24 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
-### 14. 🧬 ODE 之上叠加可塑神经网络 (ADR-001 演进)
-**模块**: `mneme_core/src/values.rs`, `mneme_limbic/src/somatic.rs`  
-**问题**: 当前价值判断和行为指导是规则硬编码的。长期目标：ODE 提供稳定骨架，上层叠加可学习的神经网络层，实现完全数据驱动的个性化行为。
+### 14. 🧬 ODE 之上叠加可塑神经网络 (ADR-001 演进) ✅
+**模块**: `mneme_limbic/src/neural.rs`, `mneme_limbic/src/system.rs`, `mneme_memory/src/coordinator.rs`
+**实现**: NeuralModulator — 纯 Rust 手写 MLP (5→8→6)，无外部 ML 框架依赖。
 
 **架构**:
 ```
 Layer 0: ODE 动力学（写死，保证稳定性/安全性/时间尺度分离）
-Layer 1: ModulationCurves — 可学习的 state → parameter 映射（见 #20 中期）
-Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
+Layer 1: ModulationCurves — 可学习的 state → parameter 映射
+Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 ```
 
-**长期目标**:
-- [ ] 研究适合的小型神经网络架构（MLP? Transformer micro-head?）
-- [ ] 在线微调机制：用 (state, modulation, user_feedback) 三元组学习
-- [ ] 可解释性保证（输出仍然是 ModulationVector，可检查）
-- [ ] 与 ODE 规则系统的平滑切换（从 Layer 1 渐进到 Layer 2）
-
-**参考技术**:
-- Burn/Candle 作为 Rust ML 框架
-- ONNX 模型加载
-- 强化学习从人类反馈 (RLHF)
+**已完成**:
+- [x] MLP 架构: 5 inputs (energy/stress/arousal/mood_bias/social_need) → 8 hidden (tanh) → 6 outputs
+- [x] 在线微调: reward-weighted gradient descent，sleep 周期从 ModulationSample 训练
+- [x] 可解释性: 输出仍是 ModulationVector，blend 因子可检查
+- [x] 平滑切换: blend_with() 在 curves (Layer 1) 和 neural (Layer 2) 之间渐进混合
+- [x] 持久化: learned_neural SQLite 表，启动加载 + sleep 保存
+- [x] Xavier 初始化 + 权重裁剪 (±5.0) 防止爆炸
 
 ---
 
@@ -1777,7 +1774,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 > **目标**: 完整的自主数字生命。
 
 - ~~元认知反思 (#24)~~ ✅
-- [ ] ODE 之上叠加可塑神经网络 (ADR-001/009 演进) (#14)
+- [x] ODE 之上叠加可塑神经网络 (ADR-001/009 演进) (#14) ✅ — NeuralModulator MLP(5→8→6) 作为 Layer 2，blend_with 渐进混合，sleep 周期训练+持久化
 - [x] 低分辨率内心独白 (ADR-013) (#55) ✅ — low_res_client 路由到本地 Ollama 模型，fallback 到主 LLM
 - [x] 形成性课程 — 文学管道 (ADR-011) (#56) ✅ — ReadingToolHandler: 阅读文件/文本 → LLM 状态依赖反思 → self_knowledge 存储
 - [x] 自发创造 (ADR-007) ✅ — CreativityTriggerEvaluator: boredom+curiosity 驱动自主创作，3h 冷却

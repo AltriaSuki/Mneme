@@ -7,6 +7,7 @@
 //! - Provides state snapshots for System 2
 
 use crate::heartbeat::HeartbeatConfig;
+use crate::neural::{NeuralModulator, StateFeatures};
 use crate::somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticMarker};
 use crate::surprise::SurpriseDetector;
 use mneme_core::{Affect, DefaultDynamics, Dynamics, FastState, OrganismState, SensoryInput};
@@ -87,6 +88,10 @@ pub struct LimbicSystem {
     /// Learnable behavior thresholds — when specific behaviors trigger.
     /// Protected by RwLock so offline learning can update thresholds via `&self`.
     thresholds: RwLock<BehaviorThresholds>,
+
+    /// Layer 2: Small MLP that learns state → ModulationVector mapping.
+    /// Blends with Layer 1 (curves) via its internal `blend` factor.
+    neural: RwLock<Option<NeuralModulator>>,
 }
 
 impl LimbicSystem {
@@ -115,6 +120,7 @@ impl LimbicSystem {
             surprise_bypass_threshold: 0.5, // large jumps bypass smoothing
             curves: RwLock::new(ModulationCurves::default()),
             thresholds: RwLock::new(BehaviorThresholds::default()),
+            neural: RwLock::new(None),
         };
 
         // Spawn the heartbeat task
@@ -254,9 +260,24 @@ impl LimbicSystem {
         let marker = self.get_somatic_marker().await;
         let curves = self.curves.read().await;
         let thresholds = self.thresholds.read().await;
-        let raw = marker.to_modulation_vector_full(&curves, &thresholds);
+        let curves_mv = marker.to_modulation_vector_full(&curves, &thresholds);
         drop(curves);
         drop(thresholds);
+
+        // Layer 2: blend with neural modulator if present
+        let raw = match &*self.neural.read().await {
+            Some(nn) if nn.blend > 0.0 => {
+                let features = StateFeatures {
+                    energy: marker.energy,
+                    stress: marker.stress,
+                    arousal: marker.affect.arousal,
+                    mood_bias: marker.mood_bias,
+                    social_need: marker.social_need,
+                };
+                nn.blend_with(&curves_mv, &features)
+            }
+            _ => curves_mv,
+        };
 
         let mut prev = self.prev_modulation.write().await;
         let delta = prev.max_delta(&raw);
@@ -324,6 +345,16 @@ impl LimbicSystem {
     /// Set new behavior thresholds (e.g., loaded from persistence or learned)
     pub async fn set_thresholds(&self, thresholds: BehaviorThresholds) {
         *self.thresholds.write().await = thresholds;
+    }
+
+    /// Get the current neural modulator (if any)
+    pub async fn get_neural(&self) -> Option<NeuralModulator> {
+        self.neural.read().await.clone()
+    }
+
+    /// Set the neural modulator (e.g., loaded from persistence or after training)
+    pub async fn set_neural(&self, nn: Option<NeuralModulator>) {
+        *self.neural.write().await = nn;
     }
 
     /// Check if the system needs social interaction (proactivity trigger)
