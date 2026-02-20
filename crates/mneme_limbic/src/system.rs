@@ -7,7 +7,7 @@
 //! - Provides state snapshots for System 2
 
 use crate::heartbeat::HeartbeatConfig;
-use crate::neural::{NeuralModulator, StateFeatures};
+use crate::neural::{LiquidNeuralModulator, NeuralModulator, StateFeatures};
 use crate::somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticMarker};
 use crate::surprise::SurpriseDetector;
 use mneme_core::{Affect, DefaultDynamics, Dynamics, FastState, OrganismState, SensoryInput};
@@ -92,6 +92,10 @@ pub struct LimbicSystem {
     /// Layer 2: Small MLP that learns state → ModulationVector mapping.
     /// Blends with Layer 1 (curves) via its internal `blend` factor.
     neural: RwLock<Option<NeuralModulator>>,
+
+    /// Layer 2b (ADR-016): Liquid Time-Constant neural modulator.
+    /// When present and blend > 0, replaces the static MLP with a dynamical system.
+    ltc: RwLock<Option<LiquidNeuralModulator>>,
 }
 
 impl LimbicSystem {
@@ -121,6 +125,7 @@ impl LimbicSystem {
             curves: RwLock::new(ModulationCurves::default()),
             thresholds: RwLock::new(BehaviorThresholds::default()),
             neural: RwLock::new(None),
+            ltc: RwLock::new(None),
         };
 
         // Spawn the heartbeat task
@@ -264,19 +269,29 @@ impl LimbicSystem {
         drop(curves);
         drop(thresholds);
 
-        // Layer 2: blend with neural modulator if present
-        let raw = match &*self.neural.read().await {
-            Some(nn) if nn.blend > 0.0 => {
-                let features = StateFeatures {
-                    energy: marker.energy,
-                    stress: marker.stress,
-                    arousal: marker.affect.arousal,
-                    mood_bias: marker.mood_bias,
-                    social_need: marker.social_need,
-                };
-                nn.blend_with(&curves_mv, &features)
+        // Layer 2: blend with neural modulator (LTC preferred over static MLP)
+        let features = StateFeatures {
+            energy: marker.energy,
+            stress: marker.stress,
+            arousal: marker.affect.arousal,
+            mood_bias: marker.mood_bias,
+            social_need: marker.social_need,
+        };
+
+        let raw = if let Some(ref mut ltc) = *self.ltc.write().await {
+            if ltc.blend > 0.0 {
+                ltc.blend_with(&curves_mv, &features, 1.0)
+            } else {
+                curves_mv
             }
-            _ => curves_mv,
+        } else if let Some(nn) = &*self.neural.read().await {
+            if nn.blend > 0.0 {
+                nn.blend_with(&curves_mv, &features)
+            } else {
+                curves_mv
+            }
+        } else {
+            curves_mv
         };
 
         let mut prev = self.prev_modulation.write().await;
@@ -355,6 +370,16 @@ impl LimbicSystem {
     /// Set the neural modulator (e.g., loaded from persistence or after training)
     pub async fn set_neural(&self, nn: Option<NeuralModulator>) {
         *self.neural.write().await = nn;
+    }
+
+    /// Get the current LTC modulator (if any)
+    pub async fn get_ltc(&self) -> Option<LiquidNeuralModulator> {
+        self.ltc.read().await.clone()
+    }
+
+    /// Set the LTC modulator (e.g., loaded from persistence)
+    pub async fn set_ltc(&self, ltc: Option<LiquidNeuralModulator>) {
+        *self.ltc.write().await = ltc;
     }
 
     /// Check if the system needs social interaction (proactivity trigger)
