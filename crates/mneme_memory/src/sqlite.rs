@@ -1421,31 +1421,30 @@ impl SqliteMemory {
     /// Each (domain, content) pair is stored as a source="seed" entry with
     /// high confidence (0.9). Idempotent: skips if seed entries already exist.
     pub async fn seed_self_knowledge(&self, entries: &[(&str, &str)]) -> Result<usize> {
-        // Check if any seed entries already exist
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM self_knowledge WHERE source = 'seed'")
-                .fetch_one(&self.pool)
-                .await
-                .context("Failed to check seed entries")?;
-
-        if count > 0 {
-            tracing::info!(
-                "Self-knowledge already seeded ({} entries), skipping",
-                count
-            );
-            return Ok(0);
-        }
+        // Per-domain idempotency: only seed domains that don't already have seed entries.
+        // This allows new persona .md files to be picked up on existing databases.
+        let existing: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT domain FROM self_knowledge WHERE source = 'seed'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to check seed entries")?;
 
         let mut seeded = 0;
         for (domain, content) in entries {
+            if existing.contains(&domain.to_string()) {
+                continue;
+            }
             self.store_self_knowledge(domain, content, 0.9, "seed", None)
                 .await?;
             seeded += 1;
         }
-        tracing::info!(
-            "Seeded {} self-knowledge entries from persona files",
-            seeded
-        );
+        if seeded > 0 {
+            tracing::info!(
+                "Seeded {} self-knowledge entries from persona files",
+                seeded
+            );
+        }
         Ok(seeded)
     }
 
