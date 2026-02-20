@@ -362,6 +362,10 @@ pub struct ReasoningOutput {
     /// New continuous affect model
     #[serde(default)]
     pub affect: Affect,
+    /// Optional output route for proactive messages (e.g. "onebot:group:12345", "cli").
+    /// When None, routing is determined by the input source.
+    #[serde(default)]
+    pub route: Option<String>,
 }
 
 impl ReasoningOutput {
@@ -372,6 +376,7 @@ impl ReasoningOutput {
             modality,
             emotion: Emotion::from_affect(&affect),
             affect,
+            route: None,
         }
     }
 }

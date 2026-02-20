@@ -761,6 +761,7 @@ impl ReasoningEngine {
             modality: ResponseModality::Text,
             emotion,
             affect,
+            route: None,
         })
     }
 }
@@ -782,6 +783,7 @@ impl Reasoning for ReasoningEngine {
                                 modality: ResponseModality::Text,
                                 emotion: Emotion::from_affect(&affect),
                                 affect,
+                                route: None,
                             });
                         }
                         // Direct rule response (no LLM needed)
@@ -791,6 +793,7 @@ impl Reasoning for ReasoningEngine {
                             modality: ResponseModality::Text,
                             emotion: Emotion::from_affect(&affect),
                             affect,
+                            route: None,
                         });
                     }
                     crate::decision::DecisionLevel::QuickResponse => {
@@ -950,6 +953,7 @@ impl Reasoning for ReasoningEngine {
                     modality: ResponseModality::Text,
                     emotion,
                     affect,
+                    route: None,
                 })
             }
             Event::ProactiveTrigger(trigger) => {
@@ -989,6 +993,7 @@ impl Reasoning for ReasoningEngine {
                                     modality: ResponseModality::Text,
                                     emotion: Emotion::from_affect(&affect),
                                     affect,
+                                    route: None,
                                 });
                             }
                             mneme_core::MonologueResolution::Low => {
@@ -1026,6 +1031,7 @@ impl Reasoning for ReasoningEngine {
                     modality: ResponseModality::Text,
                     emotion,
                     affect,
+                    route: None,
                 })
             }
             _ => {
@@ -1035,6 +1041,7 @@ impl Reasoning for ReasoningEngine {
                     modality: ResponseModality::Text,
                     emotion: Emotion::from_affect(&affect),
                     affect,
+                    route: None,
                 })
             }
         }

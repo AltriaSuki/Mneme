@@ -627,8 +627,48 @@ async fn main() -> anyhow::Result<()> {
                             info!("Proactive trigger fired: {:?}", t);
                             let trigger_event = Event::ProactiveTrigger(t);
                             match engine.think(trigger_event).await {
+                                Ok(response) if response.content.trim().is_empty() => {},
                                 Ok(response) => {
-                                    print_response(&response, &humanizer, Some("Proactive")).await;
+                                    // Route based on response.route field
+                                    #[allow(unused_mut, unused_assignments)]
+                                    let mut routed = false;
+
+                                    #[cfg(feature = "onebot")]
+                                    if !routed {
+                                        if let Some(ref route) = response.route {
+                                            if let Some(ref client) = onebot_client {
+                                                if let Some(gid_str) = route.strip_prefix("onebot:group:") {
+                                                    if let Ok(gid) = gid_str.parse::<i64>() {
+                                                        let parts = humanizer.split_response(&response.content);
+                                                        for part in parts {
+                                                            let delay = humanizer.typing_delay(&part, Some(response.emotion));
+                                                            tokio::time::sleep(delay).await;
+                                                            if let Err(e) = client.send_group_message(gid, &part).await {
+                                                                error!("Proactive OneBot group send failed: {}", e);
+                                                            }
+                                                        }
+                                                        routed = true;
+                                                    }
+                                                } else if let Some(uid_str) = route.strip_prefix("onebot:private:") {
+                                                    if let Ok(uid) = uid_str.parse::<i64>() {
+                                                        let parts = humanizer.split_response(&response.content);
+                                                        for part in parts {
+                                                            let delay = humanizer.typing_delay(&part, Some(response.emotion));
+                                                            tokio::time::sleep(delay).await;
+                                                            if let Err(e) = client.send_private_message(uid, &part).await {
+                                                                error!("Proactive OneBot private send failed: {}", e);
+                                                            }
+                                                        }
+                                                        routed = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if !routed {
+                                        print_response(&response, &humanizer, Some("Proactive")).await;
+                                    }
                                 }
                                 Err(e) => error!("Error processing trigger: {}", e),
                             }
