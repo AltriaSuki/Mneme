@@ -367,7 +367,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 26. 🏗️ Semantic Memory 读写闭环
+### 26. ✅ Semantic Memory 读写闭环
 **模块**: `mneme_memory/src/sqlite.rs`, `mneme_memory/src/coordinator.rs`  
 **问题**: `semantic_facts` 表已存在于 SQLite schema 中，但**没有任何代码实际读写事实三元组**。当前 `recall()` 只做 episode 向量搜索，不查询 facts、不查询 social graph、不融合 feed digest。agent 只能"检索到说过什么"，不能"知道什么"——记忆系统最核心的价值尚未兑现。
 
@@ -393,7 +393,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 27. 🧬 Persona 从记忆涌现 (ADR-002)
+### 27. ✅ Persona 从记忆涌现 (ADR-002)
 **模块**: `persona/*.md`, `mneme_core/src/persona.rs`, `mneme_memory/src/sqlite.rs`  
 **问题**: Persona 曾是静态 `.md` 文件，硬注入 system prompt。这违背了核心信念 **B-2: Persona 是输出不是输入**（见 `MANIFESTO.md`）。性格应由记忆决定，不由配置文件加载。
 
@@ -414,7 +414,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 28. 🏗️ Context Assembly 完整管道
+### 28. ✅ Context Assembly 完整管道
 **模块**: `mneme_reasoning/src/prompts.rs`, `mneme_reasoning/src/engine.rs`  
 **问题**: 设计文档 §5.2 定义了 6 层上下文优先级，当前只实现了约 2 层。这是 reasoning 质量的天花板——"The quality of the agent depends entirely on what context reaches the LLM."
 
@@ -614,7 +614,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 ---
 
-### 44. 🏗️ 动态工具 Prompt 生成（消除 prompts.rs ↔ ToolRegistry 重复）
+### 44. ✅ 动态工具 Prompt 生成（消除 prompts.rs ↔ ToolRegistry 重复）
 **模块**: `mneme_reasoning/src/prompts.rs`, `mneme_reasoning/src/tool_registry.rs`
 **优先级**: 🟡 中
 **前置**: #30 (工具注册系统)
@@ -931,7 +931,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
-### 51. 🏗️ OneBot 可靠性
+### 51. ✅ OneBot 可靠性
 **模块**: `mneme_onebot/src/client.rs`
 **优先级**: 🟡 中
 
@@ -951,7 +951,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
-### 52. 🏗️ Consolidation 原子性
+### 52. ✅ Consolidation 原子性
 **模块**: `mneme_memory/src/consolidation.rs`
 **优先级**: 🟡 中
 
