@@ -1780,7 +1780,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 
 - ~~元认知反思 (#24)~~ ✅
 - [ ] ODE 之上叠加可塑神经网络 (ADR-001/009 演进) (#14)
-- [ ] 低分辨率内心独白 (ADR-013) (#55) — 本地小模型片段式独白
+- [x] 低分辨率内心独白 (ADR-013) (#55) ✅ — low_res_client 路由到本地 Ollama 模型，fallback 到主 LLM
 - [ ] 形成性课程 — 文学管道 (ADR-011) (#56)
 - [x] 自发创造 (ADR-007) ✅ — CreativityTriggerEvaluator: boredom+curiosity 驱动自主创作，3h 冷却
 - [x] 行为阈值可学习化 ✅ — BehaviorThresholds 扩展触发器阈值字段 + nudge() 学习方法，评估器从共享阈值读取

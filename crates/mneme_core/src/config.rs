@@ -106,6 +106,9 @@ pub struct LlmConfig {
     /// HTTP request timeout in seconds for LLM API calls.
     /// Default: 120.
     pub timeout_secs: u64,
+    /// #55: Optional local model for low-resolution inner monologue (e.g. "qwen2:0.5b").
+    /// When set, uses Ollama for cheap fragment-style inner speech.
+    pub low_res_model: Option<String>,
 }
 
 impl Default for LlmConfig {
@@ -118,6 +121,7 @@ impl Default for LlmConfig {
             temperature: 0.7,
             context_budget_chars: 32_000,
             timeout_secs: 120,
+            low_res_model: None,
         }
     }
 }

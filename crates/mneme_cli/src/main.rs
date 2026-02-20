@@ -351,6 +351,18 @@ async fn main() -> anyhow::Result<()> {
     // 4a'. Context budget from config (linked to model's context window)
     engine.set_context_budget(config.llm.context_budget_chars);
 
+    // #55: Wire up local model for low-resolution inner monologue
+    if let Some(ref low_model) = config.llm.low_res_model {
+        use mneme_reasoning::providers::ollama::OllamaClient;
+        match OllamaClient::new(low_model, 30) {
+            Ok(c) => {
+                engine.set_low_res_client(Arc::new(c));
+                info!("Low-res inner monologue model: {}", low_model);
+            }
+            Err(e) => tracing::warn!("Failed to init low-res client: {}", e),
+        }
+    }
+
     // 4b. Initialize Safety Guard
     let guard = Arc::new(mneme_core::safety::CapabilityGuard::new(
         config.safety.clone(),

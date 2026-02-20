@@ -166,6 +166,9 @@ pub struct ReasoningEngine {
 
     // #58: Cancellation token — set to true to interrupt ongoing generation
     cancelled: Arc<AtomicBool>,
+
+    // #55: Optional local model for low-resolution inner monologue (ADR-013)
+    low_res_client: Option<Arc<dyn LlmClient>>,
 }
 
 impl ReasoningEngine {
@@ -200,6 +203,7 @@ impl ReasoningEngine {
             last_active_source: tokio::sync::Mutex::new(None),
             intents: tokio::sync::Mutex::new(Vec::new()),
             cancelled: Arc::new(AtomicBool::new(false)),
+            low_res_client: None,
         }
     }
 
@@ -234,7 +238,13 @@ impl ReasoningEngine {
             last_active_source: tokio::sync::Mutex::new(None),
             intents: tokio::sync::Mutex::new(Vec::new()),
             cancelled: Arc::new(AtomicBool::new(false)),
+            low_res_client: None,
         }
+    }
+
+    /// #55: Set a local model client for low-resolution inner monologue.
+    pub fn set_low_res_client(&mut self, client: Arc<dyn LlmClient>) {
+        self.low_res_client = Some(client);
     }
 
     /// Set the context budget from config (chars, ~4 chars per token)
@@ -1239,6 +1249,36 @@ impl Reasoning for ReasoningEngine {
                                 });
                             }
                             mneme_core::MonologueResolution::Low => {
+                                // #55: Route to local model if available
+                                if let Some(ref low_client) = self.low_res_client {
+                                    let prompt = format!(
+                                        "触发: {}。片段: {}。\n用一两句话表达此刻脑海中飘过的念头，不需要完整，可以是碎片。",
+                                        cause, seed
+                                    );
+                                    let params = crate::llm::CompletionParams {
+                                        max_tokens: 128,
+                                        temperature: 0.9,
+                                    };
+                                    match low_client.complete(&prompt, vec![], vec![], params).await {
+                                        Ok(resp) => {
+                                            let text: String = resp.content.iter().filter_map(|b| {
+                                                if let crate::api_types::ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                                            }).collect();
+                                            let affect = self.limbic.get_affect().await;
+                                            return Ok(ReasoningOutput {
+                                                content: text,
+                                                modality: ResponseModality::Text,
+                                                emotion: Emotion::from_affect(&affect),
+                                                affect,
+                                                route: None,
+                                            });
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Low-res client failed, falling back to primary: {}", e);
+                                            // Fall through to primary LLM
+                                        }
+                                    }
+                                }
                                 format!(
                                     "[内心独白·低分辨率] 触发: {}。片段: {}。\n\
                                      用一两句话表达此刻脑海中飘过的念头，不需要完整，可以是碎片。",
