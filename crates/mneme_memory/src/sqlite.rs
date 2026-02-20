@@ -1541,7 +1541,7 @@ impl SqliteMemory {
     /// Typical: decay_factor = 0.995 per tick (slow exponential decay).
     pub async fn decay_episode_strengths(&self, decay_factor: f32) -> Result<u64> {
         let result =
-            sqlx::query("UPDATE episodes SET strength = strength * ? WHERE strength > 0.05")
+            sqlx::query("UPDATE episodes SET strength = strength * ? WHERE strength > 0.05 AND pinned = 0")
                 .bind(decay_factor as f64)
                 .execute(&self.pool)
                 .await
@@ -1605,6 +1605,64 @@ impl SqliteMemory {
             .context("Failed to get episode strength")?;
 
         Ok(row.map(|r| r.get::<f64, _>("strength") as f32))
+    }
+
+    // === #84: Autonomous Memory Management ===
+
+    /// Pin an episode to prevent decay. Optionally boost strength.
+    pub async fn pin_episode(&self, episode_id: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE episodes SET pinned = 1, strength = MAX(strength, 0.9) WHERE id = ?",
+        )
+        .bind(episode_id)
+        .execute(&self.pool)
+        .await
+        .context("Failed to pin episode")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Unpin an episode, restoring normal decay behavior.
+    pub async fn unpin_episode(&self, episode_id: &str) -> Result<bool> {
+        let result = sqlx::query("UPDATE episodes SET pinned = 0 WHERE id = ?")
+            .bind(episode_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to unpin episode")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Actively forget an episode by setting strength to 0.
+    pub async fn forget_episode(&self, episode_id: &str) -> Result<bool> {
+        let result =
+            sqlx::query("UPDATE episodes SET strength = 0.0, pinned = 0 WHERE id = ?")
+                .bind(episode_id)
+                .execute(&self.pool)
+                .await
+                .context("Failed to forget episode")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List pinned (important) episodes.
+    pub async fn list_pinned_episodes(&self, limit: u32) -> Result<Vec<(String, String, f64)>> {
+        let rows = sqlx::query(
+            "SELECT id, substr(body, 1, 120) as summary, strength \
+             FROM episodes WHERE pinned = 1 ORDER BY timestamp DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to list pinned episodes")?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("id"),
+                    r.get::<String, _>("summary"),
+                    r.get::<f64, _>("strength"),
+                )
+            })
+            .collect())
     }
 
     // === Dream Seed Recall (ADR-008) ===

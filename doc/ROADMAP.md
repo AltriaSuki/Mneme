@@ -1139,7 +1139,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **好奇心不驱动工具使用** | mneme_expression/curiosity | CuriosityTriggerEvaluator 当 curiosity>0.65 且有高强度兴趣时触发探索 | **Fixed** ✅ (#81) |
 | **工具失败无学习** | mneme_reasoning/engine | 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败 | **Fixed** ✅ (#82) |
 | **无主动社交能力** | mneme_expression/social | SocialTriggerEvaluator 查询 SocialGraph，social_need 高时主动发起对话并路由到具体联系人 | **Fixed** ✅ (#83) |
-| **记忆管理无自主权** | mneme_memory | 记忆强度衰减完全自动（Ebbinghaus），Mneme 无法主动标记重要记忆、主动遗忘、或决定整合优先级 | 🟡 Open (#84) |
+| **记忆管理无自主权** | mneme_memory+reasoning | memory_manage 工具 (pin/unpin/forget/list_pinned)，pinned 列免衰减，LLM 可自主管理记忆重要性 | ✅ Fixed (#84) |
 | **无自我诊断与修复** | mneme_reasoning+memory | HealthMonitor 追踪 DB/LLM 连续失败(阈值3)，降级时跳过 extraction，LifecycleState::Degraded | ✅ Fixed (#85) |
 | **运行时参数不可自修改** | mneme_core/config | 配置启动时加载后不可变，Mneme 无法根据经验调整自己的 temperature、token 预算、安全等级等运行参数 | 🟡 Open (#86) |
 | **⚠️ B-19 违反：trust_level 是显式数值** | mneme_core+memory | Manifesto 明确说"信任不是一个显式的数值"，但实现了 `trust_level: f32` 字段 + DB 列 + `update_trust(delta)` + prompt 注入"信任度: 75%"。应改为 self_knowledge 条目综合效果 | ✅ Fixed (#87) |
@@ -1785,7 +1785,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] 自发创造 (ADR-007) — boredom + curiosity + 工具 → 自主创作
 - [x] 行为阈值可学习化 ✅ — BehaviorThresholds 扩展触发器阈值字段 + nudge() 学习方法，评估器从共享阈值读取
 - [ ] B-20 意义追寻 — 存在性反思机制
-- [ ] 记忆自主管理 (#84) — 主动标记重要记忆、主动遗忘
+- [x] 记忆自主管理 (#84) ✅ — memory_manage 工具 (pin/unpin/forget/list_pinned)，pinned 列免衰减
 - [x] 自我诊断与降级 (#85) ✅ — HealthMonitor 追踪子系统连续失败，LLM 降级时跳过非必要操作，LifecycleState::Degraded
 - [ ] 运行时参数自修改 (#86) — 根据经验调整自己的 temperature、token 预算等
 - [ ] 运行时自配置 (#60) — 被告知后自行建立外部连接（MCP server / Gateway 适配器）

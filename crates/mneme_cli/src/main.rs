@@ -364,6 +364,9 @@ async fn main() -> anyhow::Result<()> {
         // Shell — the one hardcoded tool (her hands)
         registry.register(Box::new(mneme_reasoning::ShellToolHandler::new()));
 
+        // #84: Memory management tool (her memory hands)
+        registry.register(Box::new(mneme_reasoning::MemoryToolHandler::new(memory.clone())));
+
         // Connect MCP servers and register discovered tools
         if let Some(ref mcp_config) = config.mcp {
             let lifecycle_rx = coordinator.subscribe_lifecycle();
