@@ -1718,7 +1718,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 跑通第一个 MCP server（shell），验证端到端调用链 ✅
 - [x] `ShellToolHandler` 硬编码为唯一内置工具（身体器官），browser 工具定义已删除 ✅
 - [x] `mneme_os` 退役 — shell 能力由 `ShellToolHandler` 直接提供（不再经 MCP） ✅
-- [x] `mneme_browser` 退役 — 浏览器能力改由 Playwright MCP server 提供 ✅
+- [x] `mneme_browser` 退役 — 浏览器能力改由 Playwright MCP server 提供，crate 目录已删除 ✅
 
 **她的耳朵 — Gateway 通讯层 (ADR-015)**:
 - [x] `mneme_gateway` crate 新建 — HTTP POST `/message` + WebSocket `/ws` 端点 ✅
@@ -1754,8 +1754,8 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 **配置与运行时**:
 - [x] `arc-swap` config hot reload — CLI `reload` 命令实时重载 TOML 配置，SharedConfig lock-free 读取 ✅
 - [x] prompt 元指令语言自适应 (#76) — meta-instruction 跟随 persona 语言 ✅
-- [x] `mneme_voice` 退役 — 从 workspace 移除，语音能力通过 STT/TTS MCP server 按需获得 ✅
-- [x] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得 ✅
+- [x] `mneme_voice` 退役 — 从 workspace 移除，crate 目录已删除，语音能力通过 STT/TTS MCP server 按需获得 ✅
+- [x] `mneme_perception` 退役 — RSS/web scrape 通过 MCP server 按需获得，crate 目录已删除 ✅
 
 ### v0.11.0 - 对话体验版本
 > **目标**: 从 request-response 变成有存在感的对话者。
