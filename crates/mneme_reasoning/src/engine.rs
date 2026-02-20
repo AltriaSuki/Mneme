@@ -32,48 +32,8 @@ static RE_INJECTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(ignore\s+(all\s+)?previous\s+instructions|system\s*:\s*you\s+are|<\s*/?\s*system\s*>)").unwrap()
 });
 
-/// Categorise tool failures so we can decide whether to retry.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ToolErrorKind {
-    /// Transient: timeout, connection reset — worth retrying.
-    Transient,
-    /// Permanent: missing param, unknown tool — retrying won't help.
-    Permanent,
-}
-
-/// Structured result from a tool execution.
-#[derive(Debug, Clone)]
-pub struct ToolOutcome {
-    pub content: String,
-    pub is_error: bool,
-    pub error_kind: Option<ToolErrorKind>,
-}
-
-impl ToolOutcome {
-    pub fn ok(content: String) -> Self {
-        Self {
-            content,
-            is_error: false,
-            error_kind: None,
-        }
-    }
-
-    pub fn transient_error(msg: String) -> Self {
-        Self {
-            content: msg,
-            is_error: true,
-            error_kind: Some(ToolErrorKind::Transient),
-        }
-    }
-
-    pub fn permanent_error(msg: String) -> Self {
-        Self {
-            content: msg,
-            is_error: true,
-            error_kind: Some(ToolErrorKind::Permanent),
-        }
-    }
-}
+// Tool types live in mneme_core::tools (v2.0.0 Phase 5a decoupling).
+pub use mneme_core::tools::{ToolErrorKind, ToolOutcome};
 
 /// Maximum number of retries for transient tool failures.
 const TOOL_MAX_RETRIES: usize = 1;

@@ -1,7 +1,7 @@
 use crate::bridge::McpToolHandler;
 use mneme_core::config::McpServerConfig;
 use mneme_memory::LifecycleState;
-use mneme_reasoning::tool_registry::ToolHandler;
+use mneme_core::tools::ToolHandler;
 use rmcp::service::{Peer, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use std::sync::Arc;

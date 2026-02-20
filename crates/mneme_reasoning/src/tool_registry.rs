@@ -1,27 +1,10 @@
-use crate::api_types::Tool;
-use crate::engine::{ToolErrorKind, ToolOutcome};
 use mneme_core::safety::CapabilityGuard;
+use mneme_core::tools::{Tool, ToolErrorKind, ToolOutcome};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
-// ToolHandler trait
-// ============================================================================
-
-#[async_trait::async_trait]
-pub trait ToolHandler: Send + Sync {
-    /// Unique name used for dispatch (must match the tool name in schema).
-    fn name(&self) -> &str;
-
-    /// Human-readable description for logging.
-    fn description(&self) -> &str;
-
-    /// JSON schema sent to the LLM so it knows how to call this tool.
-    fn schema(&self) -> Tool;
-
-    /// Execute the tool with the given JSON input.
-    async fn execute(&self, input: &serde_json::Value) -> ToolOutcome;
-}
+// ToolHandler trait lives in mneme_core::tools (v2.0.0 Phase 5a decoupling).
+pub use mneme_core::tools::ToolHandler;
 
 // ============================================================================
 // ToolRegistry

@@ -37,20 +37,8 @@ pub enum ContentBlock {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tool {
-    pub name: String,
-    pub description: String,
-    pub input_schema: ToolInputSchema,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInputSchema {
-    #[serde(rename = "type")]
-    pub schema_type: String, // usually "object"
-    pub properties: Value, // JSON Schema
-    pub required: Vec<String>,
-}
+// Tool schema types live in mneme_core::tools (v2.0.0 Phase 5a decoupling).
+pub use mneme_core::tools::{Tool, ToolInputSchema};
 
 // Request payload
 #[derive(Debug, Serialize)]

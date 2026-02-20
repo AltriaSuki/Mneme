@@ -2227,7 +2227,6 @@ dependencies = [
  "async-trait",
  "mneme_core",
  "mneme_memory",
- "mneme_reasoning",
  "rmcp",
  "serde",
  "serde_json",

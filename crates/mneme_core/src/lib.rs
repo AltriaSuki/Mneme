@@ -6,6 +6,7 @@ pub mod prelude;
 pub mod safety;
 pub mod sentiment;
 pub mod state;
+pub mod tools;
 pub mod values;
 
 pub use affect::Affect;

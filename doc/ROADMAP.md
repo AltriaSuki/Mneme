@@ -1782,7 +1782,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] 赫布学习在线权重更新 (ADR-017) — surprise/reward 调制的局部突触可塑性，每 tick 微调
 - [ ] 躯体解码器 Codebook (ADR-018) — 模糊线性映射取代显式数值注入 prompt，物理隔离情绪与语言
 - [ ] `mneme_bench` 轨迹仿真测试 — 72h 静默衰减、创伤刻印、长/短生种分化验证
-- [ ] 解耦 `mneme_mcp` 对 `mneme_reasoning` 的反向依赖 — trait 下沉到 `mneme_core`
+- [x] 解耦 `mneme_mcp` 对 `mneme_reasoning` 的反向依赖 — trait 下沉到 `mneme_core` ✅
 
 **Phase 5b — 自主性深化**:
 - [ ] LLM 自主选择 + 任务路由 (B-8 Level 2)

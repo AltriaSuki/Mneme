@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 mneme_core = { path = "../mneme_core" }
 mneme_memory = { path = "../mneme_memory" }
-mneme_reasoning = { path = "../mneme_reasoning" }
 rmcp = { version = "0.15", features = ["client", "transport-child-process"] }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
