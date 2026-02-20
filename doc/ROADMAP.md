@@ -1136,7 +1136,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **运行时自我认知缺失** | mneme_memory/self_knowledge | `self_knowledge` 无 infrastructure/capability 域种子，Mneme 不知道自己是持久进程、通过 OneBot 连 QQ、有 shell 权限等基础事实，导致 LLM 用默认"我是聊天窗口"填空 | ✅ Fixed (#78) |
 | **无时间/日期上下文** | mneme_reasoning/prompts | prompt 不注入当前时间、星期、日期，Mneme 不知道现在是凌晨三点还是下午三点，行为与时间脱节 | ✅ Fixed (#79) |
 | **资源状态对 LLM 不可见** | mneme_reasoning/engine | build_resource_status() 注入运行时间、记忆片段数、token 用量到 prompt | **Fixed** ✅ (#80) |
-| **好奇心不驱动工具使用** | mneme_reasoning/engine | `CuriosityVector` 存在但不触发自主搜索/浏览，无 `CuriosityTriggerEvaluator`，好奇心只存不用 | 🔴 Open (#81) |
+| **好奇心不驱动工具使用** | mneme_expression/curiosity | CuriosityTriggerEvaluator 当 curiosity>0.65 且有高强度兴趣时触发探索 | **Fixed** ✅ (#81) |
 | **工具失败无学习** | mneme_reasoning/engine | 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败 | **Fixed** ✅ (#82) |
 | **无主动社交能力** | mneme_expression/social | SocialTriggerEvaluator 查询 SocialGraph，social_need 高时主动发起对话并路由到具体联系人 | **Fixed** ✅ (#83) |
 | **记忆管理无自主权** | mneme_memory | 记忆强度衰减完全自动（Ebbinghaus），Mneme 无法主动标记重要记忆、主动遗忘、或决定整合优先级 | 🟡 Open (#84) |
@@ -1770,7 +1770,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] 异步对话流 (#58) — `engine.think()` 拆分为并发的生成流与接收流，新输入可中断正在生成的回复
 - [ ] 对话 agency (#59) — 对话目标系统：Mneme 在对话中维持自己的意图（追问、好奇、反驳）
 - [ ] 对话目标提取 — 从对话中自动识别并创建 Goal
-- [ ] 好奇心驱动自主探索 (#81) — CuriosityVector 触发自主搜索/浏览
+- [x] 好奇心驱动自主探索 (#81) ✅ — CuriosityTriggerEvaluator 当 curiosity 高且有具体兴趣时触发探索，LLM 用工具搜索话题
 - [x] 工具失败模式学习 (#82) ✅ — 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败并避免重复
 - [x] 主动社交触发 (#83) ✅ — SocialTriggerEvaluator 查询 SocialGraph + social_need 阈值，主动路由到具体联系人
 - [ ] LLM 工具输出诚实性 — 防止对工具返回结果进行虚构推理

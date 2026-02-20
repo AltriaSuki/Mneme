@@ -4,6 +4,7 @@ use std::time::Duration;
 
 mod attention;
 mod consciousness;
+mod curiosity;
 mod habits;
 mod metacognition;
 mod presence;
@@ -12,6 +13,7 @@ mod scheduled;
 mod social;
 pub use attention::{AttentionConfig, AttentionGate, EngagementHandle};
 pub use consciousness::{ConsciousnessConfig, ConsciousnessGate};
+pub use curiosity::CuriosityTriggerEvaluator;
 pub use habits::{HabitConfig, HabitDetector};
 pub use metacognition::{MetacognitionConfig, MetacognitionEvaluator};
 pub use presence::PresenceScheduler;
