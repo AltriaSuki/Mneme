@@ -29,6 +29,6 @@ mod system;
 
 pub use heartbeat::HeartbeatConfig;
 pub use neural::{LiquidNeuralModulator, NeuralModulator};
-pub use somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticMarker};
+pub use somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticDecoder, SomaticMarker};
 pub use surprise::{SpecialPattern, SurpriseDetector};
 pub use system::{LimbicSystem, Stimulus};

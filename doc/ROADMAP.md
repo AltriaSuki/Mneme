@@ -1780,7 +1780,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 **Phase 5a — 液体心脏 (LTC Core)**:
 - [x] NeuralModulator 升级为液体时间常数网络 (ADR-016) — τ 受输入强度动态调制，实现主观时间膨胀/收缩 ✅
 - [x] 赫布学习在线权重更新 (ADR-017) — surprise/reward 调制的局部突触可塑性，每 tick 微调 ✅
-- [ ] 躯体解码器 Codebook (ADR-018) — 模糊线性映射取代显式数值注入 prompt，物理隔离情绪与语言
+- [x] 躯体解码器 Codebook (ADR-018) — 模糊线性映射取代显式数值注入 prompt，物理隔离情绪与语言 ✅
 - [ ] `mneme_bench` 轨迹仿真测试 — 72h 静默衰减、创伤刻印、长/短生种分化验证
 - [x] 解耦 `mneme_mcp` 对 `mneme_reasoning` 的反向依赖 — trait 下沉到 `mneme_core` ✅
 

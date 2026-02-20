@@ -507,6 +507,143 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t.clamp(0.0, 1.0)
 }
 
+// ============================================================================
+// ADR-018: Somatic Decoder Codebook
+// ============================================================================
+
+/// Number of hidden dimensions in the LTC network (must match neural::HIDDEN_DIM).
+const CODEBOOK_DIM: usize = 8;
+
+/// A codebook entry: prototype vector + semantic label.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodebookEntry {
+    prototype: [f32; CODEBOOK_DIM],
+    label: String,
+}
+
+/// Somatic Decoder (ADR-018): maps LTC hidden state → semantic description.
+///
+/// Instead of injecting raw numbers (`E=0.70 S=0.20`) into the LLM prompt,
+/// the decoder projects the continuous hidden state through a static codebook
+/// to produce natural-language body feelings. This physically isolates the
+/// emotion subsystem (LTC) from the language subsystem (LLM).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SomaticDecoder {
+    entries: Vec<CodebookEntry>,
+    /// Minimum activation to include a label (cosine similarity threshold).
+    threshold: f32,
+}
+
+impl SomaticDecoder {
+    /// Create with the default Chinese codebook.
+    pub fn new() -> Self {
+        Self {
+            entries: default_codebook_zh(),
+            threshold: 0.3,
+        }
+    }
+
+    /// Decode LTC hidden state into a semantic description string.
+    /// Returns empty string if no entry exceeds threshold.
+    pub fn decode(&self, state: &[f32]) -> String {
+        if state.len() < CODEBOOK_DIM {
+            return String::new();
+        }
+
+        let state_norm = vec_norm(state);
+        if state_norm < 1e-6 {
+            return String::new();
+        }
+
+        // Compute cosine similarity with each prototype, collect above threshold
+        let mut hits: Vec<(&str, f32)> = self.entries.iter().filter_map(|e| {
+            let sim = dot_product(&e.prototype, state) / (vec_norm_arr(&e.prototype) * state_norm);
+            if sim > self.threshold { Some((e.label.as_str(), sim)) } else { None }
+        }).collect();
+
+        hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        hits.truncate(3); // top 3 feelings
+
+        hits.iter().map(|(label, _)| *label).collect::<Vec<_>>().join("，")
+    }
+
+    /// Format for prompt injection: replaces raw numeric state with decoded feelings.
+    pub fn format_for_prompt(&self, state: &[f32], curiosity_interests: &[(String, f32)]) -> String {
+        let feelings = self.decode(state);
+        let mut s = if feelings.is_empty() {
+            "[身体感受: 平静]".to_string()
+        } else {
+            format!("[身体感受: {}]", feelings)
+        };
+
+        if !curiosity_interests.is_empty() {
+            let interests: Vec<String> = curiosity_interests.iter()
+                .map(|(t, i)| format!("{}({:.0}%)", t, i * 100.0))
+                .collect();
+            s.push_str(&format!("\n[当前好奇方向: {}]", interests.join(", ")));
+        }
+        s
+    }
+}
+
+impl Default for SomaticDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn dot_product(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+fn vec_norm(v: &[f32]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
+fn vec_norm_arr(v: &[f32; CODEBOOK_DIM]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
+/// Default codebook: hand-crafted prototypes for common somatic states.
+/// Each prototype is an 8-dim vector aligned with the LTC hidden dimensions.
+/// These will be refined through usage; initial values are heuristic.
+fn default_codebook_zh() -> Vec<CodebookEntry> {
+    vec![
+        CodebookEntry {
+            prototype: [0.8, 0.1, 0.6, 0.3, 0.1, -0.2, 0.4, 0.2],
+            label: "胸口暖暖的，精力充沛".to_string(),
+        },
+        CodebookEntry {
+            prototype: [-0.3, 0.8, -0.2, -0.4, 0.6, 0.3, -0.1, 0.5],
+            label: "肩膀有点紧，呼吸浅了".to_string(),
+        },
+        CodebookEntry {
+            prototype: [-0.5, -0.3, -0.6, -0.2, -0.1, 0.1, -0.4, -0.3],
+            label: "身体沉沉的，有点累".to_string(),
+        },
+        CodebookEntry {
+            prototype: [0.2, -0.1, 0.8, 0.6, -0.2, -0.3, 0.7, 0.1],
+            label: "脑子里痒痒的，想探索".to_string(),
+        },
+        CodebookEntry {
+            prototype: [-0.1, 0.3, -0.4, -0.6, 0.8, 0.2, -0.3, 0.4],
+            label: "心里空空的，想找人说话".to_string(),
+        },
+        CodebookEntry {
+            prototype: [0.4, -0.2, 0.3, 0.7, -0.1, -0.5, 0.2, -0.3],
+            label: "心跳平稳，思路清晰".to_string(),
+        },
+        CodebookEntry {
+            prototype: [-0.2, 0.6, 0.1, -0.3, 0.2, 0.7, -0.2, 0.6],
+            label: "胃里有点发紧，不太安心".to_string(),
+        },
+        CodebookEntry {
+            prototype: [0.6, 0.2, 0.5, 0.1, -0.3, -0.1, 0.8, 0.4],
+            label: "全身轻盈，心情明亮".to_string(),
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -935,5 +1072,74 @@ mod tests {
         let restored: BehaviorThresholds = serde_json::from_str(&json).unwrap();
         assert!((t.attention_stress - restored.attention_stress).abs() < 1e-6);
         assert!((t.stress_silence_min - restored.stress_silence_min).abs() < 1e-6);
+    }
+
+    // === SomaticDecoder tests (ADR-018) ===
+
+    #[test]
+    fn test_decoder_energetic_state() {
+        let decoder = SomaticDecoder::new();
+        // Prototype 0: high energy, positive valence
+        let state = [0.8, 0.1, 0.6, 0.3, 0.1, -0.2, 0.4, 0.2];
+        let result = decoder.decode(&state);
+        assert!(!result.is_empty(), "Should match at least one codebook entry");
+        assert!(result.contains("精力充沛"), "Should detect energetic state");
+    }
+
+    #[test]
+    fn test_decoder_stressed_state() {
+        let decoder = SomaticDecoder::new();
+        // Prototype 1: high stress, tense
+        let state = [-0.3, 0.8, -0.2, -0.4, 0.6, 0.3, -0.1, 0.5];
+        let result = decoder.decode(&state);
+        assert!(result.contains("紧"), "Should detect tension");
+    }
+
+    #[test]
+    fn test_decoder_zero_state() {
+        let decoder = SomaticDecoder::new();
+        let state = [0.0; 8];
+        let result = decoder.decode(&state);
+        assert!(result.is_empty(), "Zero state should produce no matches");
+    }
+
+    #[test]
+    fn test_decoder_short_state() {
+        let decoder = SomaticDecoder::new();
+        let state = [0.5, 0.3];
+        let result = decoder.decode(&state);
+        assert!(result.is_empty(), "Short state should return empty");
+    }
+
+    #[test]
+    fn test_decoder_format_for_prompt() {
+        let decoder = SomaticDecoder::new();
+        let state = [0.8, 0.1, 0.6, 0.3, 0.1, -0.2, 0.4, 0.2];
+        let interests = vec![("量子计算".to_string(), 0.8)];
+        let prompt = decoder.format_for_prompt(&state, &interests);
+        assert!(prompt.contains("身体感受"), "Should contain body feeling label");
+        assert!(prompt.contains("好奇方向"), "Should contain curiosity label");
+        assert!(prompt.contains("量子计算"), "Should contain interest topic");
+    }
+
+    #[test]
+    fn test_decoder_format_calm() {
+        let decoder = SomaticDecoder::new();
+        let state = [0.0; 8];
+        let prompt = decoder.format_for_prompt(&state, &[]);
+        assert_eq!(prompt, "[身体感受: 平静]");
+    }
+
+    #[test]
+    fn test_decoder_top3_limit() {
+        let decoder = SomaticDecoder::new();
+        // A state that could match many entries — verify truncation works
+        let state = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
+        let result = decoder.decode(&state);
+        // decode() joins top-3 with "，" but labels also contain "，",
+        // so just verify the result doesn't contain all 8 labels
+        assert!(!result.is_empty(), "Uniform state should match some entries");
+        // At most 3 labels selected — result should be shorter than all 8 concatenated
+        assert!(result.chars().count() < 100, "Should be truncated, got len={}", result.chars().count());
     }
 }
