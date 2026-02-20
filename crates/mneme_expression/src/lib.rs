@@ -15,7 +15,7 @@ pub use habits::{HabitConfig, HabitDetector};
 pub use metacognition::{MetacognitionConfig, MetacognitionEvaluator};
 pub use presence::PresenceScheduler;
 pub use rumination::{RuminationConfig, RuminationEvaluator};
-pub use scheduled::{ScheduleEntry, ScheduledTriggerEvaluator};
+pub use scheduled::{ScheduleEntry, ScheduleHandle, ScheduledTriggerEvaluator};
 
 pub struct Humanizer {
     read_speed_cpm: u32,

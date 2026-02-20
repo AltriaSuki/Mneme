@@ -235,10 +235,12 @@ mod tests {
                 Trigger::Scheduled {
                     name: "morning".into(),
                     schedule: "08:00".into(),
+                    route: None,
                 },
                 Trigger::Scheduled {
                     name: "evening".into(),
                     schedule: "22:00".into(),
+                    route: None,
                 },
             ],
         };
@@ -258,6 +260,7 @@ mod tests {
             triggers: vec![Trigger::Scheduled {
                 name: "ok".into(),
                 schedule: "08:00".into(),
+                route: None,
             }],
         };
         let (agent, _rx) = AgentLoop::new(
@@ -277,6 +280,7 @@ mod tests {
             triggers: vec![Trigger::Scheduled {
                 name: "ok".into(),
                 schedule: "08:00".into(),
+                route: None,
             }],
         };
         let (agent, _rx) = AgentLoop::new(
@@ -315,6 +319,7 @@ mod tests {
             triggers: vec![Trigger::Scheduled {
                 name: "test".into(),
                 schedule: "08:00".into(),
+                route: None,
             }],
         };
         let (agent, mut rx) = AgentLoop::new(
@@ -348,6 +353,7 @@ mod tests {
             triggers: vec![Trigger::Scheduled {
                 name: "test".into(),
                 schedule: "08:00".into(),
+                route: None,
             }],
         };
         let (agent, rx) = AgentLoop::new(

@@ -957,6 +957,11 @@ impl Reasoning for ReasoningEngine {
                 })
             }
             Event::ProactiveTrigger(trigger) => {
+                // Extract route before consuming trigger in match
+                let trigger_route = match &trigger {
+                    Trigger::Scheduled { route, .. } => route.clone(),
+                    _ => None,
+                };
                 let prompt_text = match trigger {
                     Trigger::Scheduled { name, .. } => format!(
                         "It is time for the {}. Please initiate this interaction.",
@@ -1031,7 +1036,7 @@ impl Reasoning for ReasoningEngine {
                     modality: ResponseModality::Text,
                     emotion,
                     affect,
-                    route: None,
+                    route: trigger_route,
                 })
             }
             _ => {

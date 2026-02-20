@@ -1723,6 +1723,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 冷启动 seed 数据化 — infrastructure/system_knowledge/somatic seeds 从 main.rs 硬编码迁移到 persona/*.md ✅
 - [x] 自主工具获取 — ToolRegistry 改为 RwLock，McpManager.connect_one() 运行时连接，reload 自动 diff+连接新 MCP server ✅
 - [x] 主动输出路由 — ReasoningOutput.route 字段，proactive trigger 可路由到 OneBot group/private，不再只输出到 CLI ✅
+- [x] Plan-as-default 日程机制 — ScheduledTriggerEvaluator 从 TOML 配置读取 [[organism.schedules]]，支持 name/hour/minute/tolerance/route，热重载，空配置回退默认晨/晚 ✅
 
 **她的耳朵 — Gateway 通讯层 (ADR-015)**:
 - [x] `mneme_gateway` crate 新建 — HTTP POST `/message` + WebSocket `/ws` 端点 ✅

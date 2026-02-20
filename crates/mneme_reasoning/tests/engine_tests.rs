@@ -299,7 +299,7 @@ fn build_engine_with_tool(
     );
     let mut registry = ToolRegistry::new();
     registry.register(tool_handler);
-    engine.set_registry(Arc::new(registry));
+    engine.set_registry(Arc::new(tokio::sync::RwLock::new(registry)));
     engine
 }
 
@@ -608,6 +608,7 @@ async fn test_proactive_trigger_scheduled() {
     let event = Event::ProactiveTrigger(mneme_core::Trigger::Scheduled {
         name: "morning_greeting".into(),
         schedule: "0 8 * * *".into(),
+        route: None,
     });
 
     let result = engine.think(event).await.unwrap();

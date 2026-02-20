@@ -1,9 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{Local, Timelike};
+use mneme_core::config::ScheduleEntryConfig;
 use mneme_core::{Trigger, TriggerEvaluator};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Entry in the schedule
 #[derive(Debug, Clone)]
@@ -16,6 +17,8 @@ pub struct ScheduleEntry {
     pub minute: u32,
     /// Tolerance window in minutes (triggers if within this window)
     pub tolerance_minutes: u32,
+    /// Optional output route
+    pub route: Option<String>,
 }
 
 impl ScheduleEntry {
@@ -32,13 +35,26 @@ impl ScheduleEntry {
             name: name.to_string(),
             hour,
             minute,
-            tolerance_minutes: 5, // Default 5 minute window
+            tolerance_minutes: 5,
+            route: None,
         })
     }
 
-    /// Check if current time matches this entry
-    pub fn matches_now(&self) -> bool {
-        self.matches_at(&Local::now())
+    /// Create from config entry
+    pub fn from_config(cfg: &ScheduleEntryConfig) -> Result<Self> {
+        if cfg.hour >= 24 {
+            anyhow::bail!("Invalid hour: {}", cfg.hour);
+        }
+        if cfg.minute >= 60 {
+            anyhow::bail!("Invalid minute: {}", cfg.minute);
+        }
+        Ok(Self {
+            name: cfg.name.clone(),
+            hour: cfg.hour,
+            minute: cfg.minute,
+            tolerance_minutes: cfg.tolerance_minutes,
+            route: cfg.route.clone(),
+        })
     }
 
     /// Check if specific time matches this entry (for testing)
@@ -46,7 +62,6 @@ impl ScheduleEntry {
         let current_seconds = time.num_seconds_from_midnight();
         let target_seconds = (self.hour * 3600 + self.minute * 60) as i32;
 
-        // Handle wrap-around for midnight boundary if needed (simplified here)
         let diff_seconds = (current_seconds as i32 - target_seconds).abs();
         let tolerance_seconds = (self.tolerance_minutes * 60) as i32;
 
@@ -54,11 +69,32 @@ impl ScheduleEntry {
     }
 }
 
+/// Handle for hot-reloading schedules from outside the evaluator.
+#[derive(Clone)]
+pub struct ScheduleHandle(Arc<Mutex<Vec<ScheduleEntry>>>);
+
+impl ScheduleHandle {
+    /// Replace schedules with new config. Falls back to defaults if empty.
+    pub fn reload(&self, configs: &[ScheduleEntryConfig]) {
+        let new = if configs.is_empty() {
+            vec![
+                ScheduleEntry::new("morning_greeting", 8, 0).unwrap(),
+                ScheduleEntry::new("evening_summary", 21, 0).unwrap(),
+            ]
+        } else {
+            configs
+                .iter()
+                .filter_map(|c| ScheduleEntry::from_config(c).ok())
+                .collect()
+        };
+        *self.0.lock().unwrap() = new;
+    }
+}
+
 /// Evaluator for scheduled time-based triggers
 pub struct ScheduledTriggerEvaluator {
-    schedules: Vec<ScheduleEntry>,
+    schedules: Arc<Mutex<Vec<ScheduleEntry>>>,
     /// Track which schedules have fired recently to avoid duplicates
-    /// Wrap in Mutex for interior mutability since evaluate takes &self
     last_fired: Mutex<HashMap<String, i64>>,
 }
 
@@ -66,25 +102,46 @@ impl ScheduledTriggerEvaluator {
     /// Create a new evaluator with default schedules (morning/evening)
     pub fn new() -> Self {
         Self {
-            schedules: vec![
+            schedules: Arc::new(Mutex::new(vec![
                 ScheduleEntry::new("morning_greeting", 8, 0).unwrap(),
                 ScheduleEntry::new("evening_summary", 21, 0).unwrap(),
-            ],
+            ])),
             last_fired: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Create from config entries. Falls back to defaults if empty.
+    pub fn from_config(configs: &[ScheduleEntryConfig]) -> Self {
+        if configs.is_empty() {
+            return Self::new();
+        }
+        let schedules: Vec<ScheduleEntry> = configs
+            .iter()
+            .filter_map(|c| match ScheduleEntry::from_config(c) {
+                Ok(e) => Some(e),
+                Err(e) => {
+                    tracing::warn!("Invalid schedule entry '{}': {}", c.name, e);
+                    None
+                }
+            })
+            .collect();
+        Self {
+            schedules: Arc::new(Mutex::new(schedules)),
+            last_fired: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get a handle for hot-reloading schedules.
+    pub fn schedule_handle(&self) -> ScheduleHandle {
+        ScheduleHandle(self.schedules.clone())
     }
 
     /// Create with custom schedules
     pub fn with_schedules(schedules: Vec<ScheduleEntry>) -> Self {
         Self {
-            schedules,
+            schedules: Arc::new(Mutex::new(schedules)),
             last_fired: Mutex::new(HashMap::new()),
         }
-    }
-
-    /// Add a schedule entry
-    pub fn add_schedule(&mut self, entry: ScheduleEntry) {
-        self.schedules.push(entry);
     }
 
     /// Helper to evaluate at a specific time (for testing)
@@ -95,8 +152,9 @@ impl ScheduledTriggerEvaluator {
     ) -> Result<Vec<Trigger>> {
         let mut triggers = Vec::new();
         let mut last_fired = self.last_fired.lock().unwrap();
+        let schedules = self.schedules.lock().unwrap();
 
-        for entry in &self.schedules {
+        for entry in schedules.iter() {
             // Skip if already fired within the last hour
             if let Some(&last) = last_fired.get(&entry.name) {
                 if now_timestamp - last < 3600 {
@@ -105,12 +163,12 @@ impl ScheduledTriggerEvaluator {
             }
 
             if entry.matches_at(&time_struct) {
-                // Update last_fired to prevent duplicate firing
                 last_fired.insert(entry.name.clone(), now_timestamp);
 
                 triggers.push(Trigger::Scheduled {
                     name: entry.name.clone(),
                     schedule: format!("{}:{:02}", entry.hour, entry.minute),
+                    route: entry.route.clone(),
                 });
             }
         }

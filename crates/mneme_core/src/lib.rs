@@ -79,6 +79,9 @@ pub enum Trigger {
         name: String,
         /// Cron expression or simple schedule identifier
         schedule: String,
+        /// Optional output route (e.g. "onebot:group:12345")
+        #[serde(default)]
+        route: Option<String>,
     },
     /// Content from a source matches user interests
     ContentRelevance {

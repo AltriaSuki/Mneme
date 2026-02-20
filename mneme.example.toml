@@ -35,6 +35,19 @@ persona_dir = "persona"
 tick_interval_secs = 10
 trigger_interval_secs = 60
 
+# 日程计划（可选，不配置则默认 morning_greeting 8:00 + evening_summary 21:00）
+# [[organism.schedules]]
+# name = "morning_greeting"
+# hour = 8
+# minute = 0
+# tolerance_minutes = 5
+# # route = "onebot:group:12345"  # 可选：指定输出渠道
+
+# [[organism.schedules]]
+# name = "evening_summary"
+# hour = 21
+# minute = 0
+
 # [onebot]
 # ws_url = "ws://localhost:8080"
 # access_token = "your-token-here"

@@ -248,6 +248,7 @@ mod tests {
         Trigger::Scheduled {
             name: "morning".to_string(),
             schedule: "0 8 * * *".to_string(),
+            route: None,
         }
     }
 

@@ -209,6 +209,33 @@ pub struct OrganismDefaults {
     /// Persona content (self_knowledge) is always in its original language;
     /// this only affects structural headers and meta-instructions.
     pub language: String,
+    /// Daily schedule entries. If empty, defaults to morning_greeting(8:00) + evening_summary(21:00).
+    pub schedules: Vec<ScheduleEntryConfig>,
+}
+
+/// A single scheduled event in the daily plan.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ScheduleEntryConfig {
+    pub name: String,
+    pub hour: u32,
+    pub minute: u32,
+    /// Tolerance window in minutes (default 5).
+    pub tolerance_minutes: u32,
+    /// Optional output route (e.g. "onebot:group:12345").
+    pub route: Option<String>,
+}
+
+impl Default for ScheduleEntryConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            hour: 0,
+            minute: 0,
+            tolerance_minutes: 5,
+            route: None,
+        }
+    }
 }
 
 impl Default for OrganismDefaults {
@@ -219,6 +246,7 @@ impl Default for OrganismDefaults {
             tick_interval_secs: 10,
             trigger_interval_secs: 60,
             language: "zh".to_string(),
+            schedules: Vec::new(),
         }
     }
 }

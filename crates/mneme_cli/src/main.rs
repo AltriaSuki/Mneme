@@ -410,8 +410,10 @@ async fn main() -> anyhow::Result<()> {
 
     // 5. Initialize Proactive Triggers via AgentLoop
     info!("Initializing proactive triggers...");
+    let scheduled_eval = ScheduledTriggerEvaluator::from_config(&config.organism.schedules);
+    let schedule_handle = scheduled_eval.schedule_handle();
     let inner_evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![
-        Box::new(ScheduledTriggerEvaluator::new()),
+        Box::new(scheduled_eval),
         Box::new(RuminationEvaluator::new(coordinator.state())),
         Box::new(ConsciousnessGate::new(coordinator.state())),
         Box::new(MetacognitionEvaluator::new(
@@ -698,6 +700,8 @@ async fn main() -> anyhow::Result<()> {
                 match shared_config.reload() {
                     Ok(new_cfg) => {
                         engine.set_context_budget(new_cfg.llm.context_budget_chars);
+                        // Hot-reload daily schedules
+                        schedule_handle.reload(&new_cfg.organism.schedules);
                         // Connect newly-added MCP servers
                         if let Some(ref mcp) = new_cfg.mcp {
                             for server_cfg in &mcp.servers {
