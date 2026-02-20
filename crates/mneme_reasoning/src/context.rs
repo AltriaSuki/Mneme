@@ -121,11 +121,16 @@ impl<'a> ContextBuilder<'a> {
         let resource_status = self.build_resource_status().await;
 
         // 2. Tool definitions — passed via API native tool_use (ADR-014)
-        let tool_instructions = String::new();
         let api_tools = if let Some(ref registry) = self.registry {
             registry.read().await.available_tools()
         } else {
             vec![]
+        };
+        // Tool output honesty guard — only injected when tools are available
+        let tool_instructions = if !api_tools.is_empty() {
+            format_tool_honesty_guard(self.psyche.language.as_str())
+        } else {
+            String::new()
         };
 
         // 3. Assemble 6-layer context with modulated budget
@@ -257,5 +262,19 @@ impl<'a> ContextBuilder<'a> {
         }
 
         parts.join("\n")
+    }
+}
+
+/// Tool output honesty guard — prevents LLM from fabricating tool result details.
+fn format_tool_honesty_guard(lang: &str) -> String {
+    match lang {
+        "en" => "== Tool Output Honesty ==\n\
+            When using tools: only state information that actually appears in the tool result.\n\
+            If a result is truncated, empty, or unclear, say so honestly. Never fabricate details."
+            .to_string(),
+        _ => "== 工具输出诚实性 ==\n\
+            使用工具时：只陈述工具结果中实际出现的信息。\n\
+            如果结果被截断、为空或不明确，请如实说明。绝不捏造细节。"
+            .to_string(),
     }
 }

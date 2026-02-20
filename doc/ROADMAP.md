@@ -1773,7 +1773,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 好奇心驱动自主探索 (#81) ✅ — CuriosityTriggerEvaluator 当 curiosity 高且有具体兴趣时触发探索，LLM 用工具搜索话题
 - [x] 工具失败模式学习 (#82) ✅ — 永久失败记录到 self_knowledge(domain=tool_experience)，LLM 自然看到历史失败并避免重复
 - [x] 主动社交触发 (#83) ✅ — SocialTriggerEvaluator 查询 SocialGraph + social_need 阈值，主动路由到具体联系人
-- [ ] LLM 工具输出诚实性 — 防止对工具返回结果进行虚构推理
+- [x] LLM 工具输出诚实性 ✅ — 工具可用时注入诚实性守卫到系统提示，禁止捏造工具结果细节
 
 ### v1.0.0 - 成熟版本
 > **目标**: 完整的自主数字生命。
