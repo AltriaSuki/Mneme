@@ -1911,6 +1911,39 @@ impl SqliteMemory {
         }
     }
 
+    /// Save learned dynamics parameters (upsert — always id=1).
+    pub async fn save_learned_dynamics(&self, ld: &mneme_core::LearnableDynamics) -> Result<()> {
+        let json = serde_json::to_string(ld).context("Failed to serialize learnable dynamics")?;
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO learned_dynamics (id, dynamics_json, updated_at) VALUES (1, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET dynamics_json = excluded.dynamics_json, updated_at = excluded.updated_at"
+        )
+        .bind(&json)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save learned dynamics")?;
+        Ok(())
+    }
+
+    /// Load previously learned dynamics parameters from DB.
+    pub async fn load_learned_dynamics(&self) -> Result<Option<mneme_core::LearnableDynamics>> {
+        let row = sqlx::query("SELECT dynamics_json FROM learned_dynamics WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to load learned dynamics")?;
+        match row {
+            Some(r) => {
+                let json_str: String = r.get("dynamics_json");
+                let ld = serde_json::from_str(&json_str)
+                    .context("Failed to deserialize learned dynamics")?;
+                Ok(Some(ld))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Save learned BehaviorThresholds (upsert — always id=1).
     pub async fn save_learned_thresholds(
         &self,

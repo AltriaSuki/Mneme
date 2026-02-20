@@ -8,6 +8,7 @@
 //! The dynamics are separated by time-scale to ensure stability.
 
 use crate::state::{FastState, MediumState, OrganismState, SensoryInput, SlowState};
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Trait for implementing state dynamics
@@ -16,20 +17,67 @@ pub trait Dynamics: Send + Sync {
     fn step(&self, state: &mut OrganismState, input: &SensoryInput, dt: Duration);
 }
 
+/// Learnable dynamics parameters — individualized through feedback.
+///
+/// These start at sensible defaults but drift per-instance based on
+/// interaction feedback during sleep consolidation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearnableDynamics {
+    pub energy_target: f32,
+    pub stress_decay_rate: f32,
+}
+
+impl Default for LearnableDynamics {
+    fn default() -> Self {
+        Self {
+            energy_target: 0.7,
+            stress_decay_rate: 0.005,
+        }
+    }
+}
+
+impl LearnableDynamics {
+    /// Adjust parameters from interaction samples: (energy, stress, feedback_valence).
+    /// Returns true if an update was applied.
+    pub fn learn_from_samples(&mut self, samples: &[(f32, f32, f32)]) -> bool {
+        if samples.len() < 3 {
+            return false;
+        }
+        let lr = 0.005;
+        let n = samples.len() as f32;
+
+        // Energy target: move toward energy levels that got positive feedback
+        let energy_signal: f32 = samples
+            .iter()
+            .map(|(e, _, fv)| fv * (e - self.energy_target))
+            .sum::<f32>()
+            / n;
+        self.energy_target = (self.energy_target + lr * energy_signal).clamp(0.3, 0.9);
+
+        // Stress decay: increase if high stress correlates with negative feedback
+        let stress_signal: f32 = samples.iter().map(|(_, s, fv)| -fv * s).sum::<f32>() / n;
+        self.stress_decay_rate =
+            (self.stress_decay_rate + lr * 0.001 * stress_signal).clamp(0.001, 0.02);
+
+        true
+    }
+}
+
 /// Default ODE-based dynamics implementation
 ///
 /// Uses simple exponential decay/growth models. Can be replaced with
 /// neural network (Burn/Candle) for learned dynamics.
 #[derive(Debug, Clone)]
 pub struct DefaultDynamics {
-    /// Homeostatic targets
-    pub energy_target: f32,
+    /// Learnable parameters (persisted per-instance)
+    pub learnable: LearnableDynamics,
+
+    /// Homeostatic targets (fixed)
     pub stress_target: f32,
     pub social_need_target: f32,
 
     /// Decay/recovery rates (per second)
     pub energy_recovery_rate: f32,
-    pub stress_decay_rate: f32,
     pub social_need_growth_rate: f32,
 
     /// Stimulus sensitivity
@@ -43,12 +91,12 @@ pub struct DefaultDynamics {
 impl Default for DefaultDynamics {
     fn default() -> Self {
         Self {
-            energy_target: 0.7,
+            learnable: LearnableDynamics::default(),
+
             stress_target: 0.2,
             social_need_target: 0.5,
 
             energy_recovery_rate: 0.003, // ~0.18/min — recovers from 0→0.7 in ~5 min
-            stress_decay_rate: 0.005,    // ~0.30/min — decays from 1.0→0.2 in ~3 min
             social_need_growth_rate: 0.0001, // Slow growth when alone
 
             stress_sensitivity: 0.5,
@@ -99,7 +147,7 @@ impl DefaultDynamics {
             0.0
         };
         let d_energy =
-            self.energy_recovery_rate * (self.energy_target - fast.energy) - activity_cost;
+            self.energy_recovery_rate * (self.learnable.energy_target - fast.energy) - activity_cost;
         fast.energy += d_energy * dt;
 
         // === Stress dynamics ===
@@ -114,7 +162,7 @@ impl DefaultDynamics {
             0.0
         };
 
-        let d_stress = -self.stress_decay_rate * (fast.stress - self.stress_target)
+        let d_stress = -self.learnable.stress_decay_rate * (fast.stress - self.stress_target)
             + self.stress_sensitivity * (negative_stimulus + surprise_stress + moral_stress);
         fast.stress += d_stress * dt;
 
@@ -280,7 +328,7 @@ impl DefaultDynamics {
 
 /// Compute homeostatic error (how far from equilibrium)
 pub fn homeostatic_error(state: &OrganismState, dynamics: &DefaultDynamics) -> f32 {
-    let e_err = (state.fast.energy - dynamics.energy_target).abs();
+    let e_err = (state.fast.energy - dynamics.learnable.energy_target).abs();
     let s_err = (state.fast.stress - dynamics.stress_target).abs();
     let sn_err = (state.fast.social_need - dynamics.social_need_target).abs();
 
@@ -567,7 +615,7 @@ mod tests {
 
         // At equilibrium, error should be near zero
         let mut state = OrganismState::default();
-        state.fast.energy = dynamics.energy_target;
+        state.fast.energy = dynamics.learnable.energy_target;
         state.fast.stress = dynamics.stress_target;
         state.fast.social_need = dynamics.social_need_target;
         let err = homeostatic_error(&state, &dynamics);

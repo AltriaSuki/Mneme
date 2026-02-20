@@ -143,7 +143,7 @@ pub struct OrganismCoordinator {
     state: Arc<RwLock<OrganismState>>,
 
     /// State dynamics (ODE-based updates)
-    dynamics: DefaultDynamics,
+    dynamics: RwLock<DefaultDynamics>,
 
     /// System 1: Fast intuitive processing
     limbic: Arc<LimbicSystem>,
@@ -220,7 +220,7 @@ impl OrganismCoordinator {
 
         Self {
             state: Arc::new(RwLock::new(OrganismState::default())),
-            dynamics: DefaultDynamics::default(),
+            dynamics: RwLock::new(DefaultDynamics::default()),
             limbic,
             feedback_buffer,
             consolidator,
@@ -282,6 +282,15 @@ impl OrganismCoordinator {
         if let Ok(Some(nn)) = db.load_learned_neural().await {
             tracing::info!("Loaded learned NeuralModulator (blend={:.2})", nn.blend);
             coordinator.limbic.set_neural(Some(nn)).await;
+        }
+
+        // Load learned dynamics parameters
+        if let Ok(Some(ld)) = db.load_learned_dynamics().await {
+            tracing::info!(
+                "Loaded learned dynamics (energy_target={:.3}, stress_decay={:.4})",
+                ld.energy_target, ld.stress_decay_rate
+            );
+            coordinator.dynamics.write().await.learnable = ld;
         }
 
         // Load behavior rule engine (ADR-004)
@@ -419,7 +428,7 @@ impl OrganismCoordinator {
         {
             let mut state = self.state.write().await;
             let medium_clone = state.medium.clone();
-            self.dynamics
+            self.dynamics.read().await
                 .step_fast(&mut state.fast, &medium_clone, &sensory, 1.0);
             state.last_updated = Utc::now().timestamp();
         }
@@ -517,7 +526,7 @@ impl OrganismCoordinator {
 
             drop(state);
             let mut state = self.state.write().await;
-            self.dynamics.apply_moral_cost(&mut state.fast, moral_cost);
+            self.dynamics.read().await.apply_moral_cost(&mut state.fast, moral_cost);
         }
 
         Ok(ActionEvaluation {
@@ -646,7 +655,7 @@ impl OrganismCoordinator {
         // Handle crisis if detected
         if let Some(ref crisis) = result.crisis {
             let mut state = self.state.write().await;
-            let collapsed = SleepConsolidator::handle_crisis(&mut state, crisis, &self.dynamics);
+            let collapsed = SleepConsolidator::handle_crisis(&mut state, crisis, &*self.dynamics.read().await);
             if collapsed {
                 tracing::warn!("Narrative collapse occurred during sleep");
             }
@@ -819,6 +828,22 @@ impl OrganismCoordinator {
                 self.limbic.set_neural(Some(nn)).await;
                 tracing::info!("Trained NeuralModulator on {} samples", samples.len());
 
+                // Learn dynamics parameters from the same samples
+                let dyn_samples: Vec<_> = samples.iter()
+                    .map(|s| (s.energy, s.stress, s.feedback_valence))
+                    .collect();
+                {
+                    let mut dyn_guard = self.dynamics.write().await;
+                    if dyn_guard.learnable.learn_from_samples(&dyn_samples) {
+                        let _ = db.save_learned_dynamics(&dyn_guard.learnable).await;
+                        tracing::info!(
+                            "Adjusted dynamics: energy_target={:.3}, stress_decay={:.4}",
+                            dyn_guard.learnable.energy_target,
+                            dyn_guard.learnable.stress_decay_rate,
+                        );
+                    }
+                }
+
                 let ids: Vec<i64> = samples.iter().map(|s| s.id).collect();
                 let _ = db.mark_samples_consumed(&ids).await;
             }
@@ -904,7 +929,7 @@ impl OrganismCoordinator {
                 let input = SensoryInput::default();
                 let fast_clone = state.fast.clone();
                 let slow_clone = state.slow.clone();
-                self.dynamics.step_medium(
+                self.dynamics.read().await.step_medium(
                     &mut state.medium,
                     &fast_clone,
                     &slow_clone,

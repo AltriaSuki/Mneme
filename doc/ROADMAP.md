@@ -49,8 +49,8 @@
 
 | 位置 | 硬编码内容 | 目标 | 优先级 |
 |------|-----------|------|--------|
-| `dynamics.rs` | `energy_target: 0.7` | 从反馈中学习最优目标 | 🟡 |
-| `dynamics.rs` | `stress_decay_rate: 0.002` | 个体化的压力恢复速度 | 🟡 |
+| `dynamics.rs` | `energy_target: 0.7` | 从反馈中学习最优目标 | ✅ `LearnableDynamics` |
+| `dynamics.rs` | `stress_decay_rate: 0.005` | 个体化的压力恢复速度 | ✅ `LearnableDynamics` |
 | `somatic.rs` | `energy < 0.3 → 简洁回复` | 学习什么状态下该简洁 | ✅ `BehaviorThresholds` |
 | `somatic.rs` | `stress > 0.7 → 语气略急` | 学习压力如何影响表达 | ✅ `BehaviorThresholds` |
 | `state.rs` | 行为指导文本 `describe_for_context()` | 删除（ModulationVector 已替代）→ 审计 B-1 | ✅ |

@@ -9,7 +9,7 @@ pub mod state;
 pub mod values;
 
 pub use affect::Affect;
-pub use dynamics::{DefaultDynamics, Dynamics};
+pub use dynamics::{DefaultDynamics, Dynamics, LearnableDynamics};
 pub use persona::{Psyche, SeedPersona};
 pub use state::{
     AttachmentStyle, CuriosityVector, FastState, MediumState, OrganismState, SensoryInput,
