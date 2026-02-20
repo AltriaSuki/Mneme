@@ -1,11 +1,14 @@
-use crate::api_types::{Tool, ToolInputSchema};
+use crate::api_types::{ContentBlock, Message, Role, Tool, ToolInputSchema};
 use crate::engine::{RuntimeParams, ToolErrorKind, ToolOutcome};
+use crate::llm::{CompletionParams, LlmClient};
 use crate::tool_registry::ToolHandler;
+use mneme_core::OrganismState;
 use mneme_memory::SqliteMemory;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::RwLock;
 
 /// JSON schema for the shell tool.
 pub fn shell_tool() -> Tool {
@@ -290,5 +293,108 @@ impl ToolHandler for ConfigToolHandler {
             }
             _ => ToolOutcome::permanent_error(format!("Unknown action: {action}")),
         }
+    }
+}
+
+/// #56: Literary reading pipeline — lets Mneme read material and generate state-dependent reflections.
+pub struct ReadingToolHandler {
+    llm: Arc<dyn LlmClient>,
+    db: Arc<SqliteMemory>,
+    state: Arc<RwLock<OrganismState>>,
+}
+
+impl ReadingToolHandler {
+    pub fn new(
+        llm: Arc<dyn LlmClient>,
+        db: Arc<SqliteMemory>,
+        state: Arc<RwLock<OrganismState>>,
+    ) -> Self {
+        Self { llm, db, state }
+    }
+
+    async fn reflect_and_store(&self, title: &str, text: &str) -> ToolOutcome {
+        let st = self.state.read().await;
+        let mood = st.fast.affect.describe();
+        let prompt = format!(
+            "你正在阅读「{}」。你当前的内心状态：情绪={}，精力={:.0}%，压力={:.0}%。\n\n\
+             以下是阅读材料（节选）：\n{}\n\n\
+             请写出你的阅读感想。不需要总结内容，而是写出这段文字让你联想到什么、触动了什么、\
+             与你自身经历或价值观的共鸣或冲突。用第一人称，简短真实。",
+            title, mood, st.fast.energy * 100.0, st.fast.stress * 100.0,
+            &text[..text.len().min(6000)]
+        );
+        drop(st);
+
+        let messages = vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text { text: prompt }],
+        }];
+        let params = CompletionParams { max_tokens: 512, temperature: 0.9 };
+
+        let resp = match self.llm.complete("", messages, vec![], params).await {
+            Ok(r) => r,
+            Err(e) => return ToolOutcome::transient_error(format!("LLM reflection failed: {e}")),
+        };
+
+        let reflection: String = resp.content.iter().filter_map(|b| {
+            if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+        }).collect();
+
+        if reflection.trim().is_empty() {
+            return ToolOutcome::ok("（阅读后没有特别的感想）".into());
+        }
+
+        let claim = format!("读「{}」后的感想：{}", title, reflection.trim());
+        if let Err(e) = self.db.store_self_knowledge("reading", &claim, 0.5, "self:reading", None).await {
+            tracing::warn!("Failed to store reading reflection: {}", e);
+        }
+
+        ToolOutcome::ok(reflection)
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolHandler for ReadingToolHandler {
+    fn name(&self) -> &str { "read_literature" }
+    fn description(&self) -> &str { "Read literary material and reflect on it" }
+
+    fn schema(&self) -> Tool {
+        Tool {
+            name: "read_literature".to_string(),
+            description: "阅读文学作品并生成反思。path: 本地文件路径；text: 直接提供文本；title: 作品标题。".to_string(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".to_string(),
+                properties: json!({
+                    "path": { "type": "string", "description": "Local file path to read" },
+                    "text": { "type": "string", "description": "Text content to reflect on (alternative to path)" },
+                    "title": { "type": "string", "description": "Title of the work" }
+                }),
+                required: vec!["title".to_string()],
+            },
+        }
+    }
+
+    async fn execute(&self, input: &serde_json::Value) -> ToolOutcome {
+        let title = match input.get("title").and_then(|v| v.as_str()) {
+            Some(t) => t,
+            None => return ToolOutcome::permanent_error("Missing: title".into()),
+        };
+
+        let text = if let Some(path) = input.get("path").and_then(|v| v.as_str()) {
+            match tokio::fs::read_to_string(path).await {
+                Ok(c) => c,
+                Err(e) => return ToolOutcome::permanent_error(format!("Cannot read file: {e}")),
+            }
+        } else if let Some(t) = input.get("text").and_then(|v| v.as_str()) {
+            t.to_string()
+        } else {
+            return ToolOutcome::permanent_error("Provide either 'path' or 'text'".into());
+        };
+
+        if text.trim().is_empty() {
+            return ToolOutcome::permanent_error("Empty text".into());
+        }
+
+        self.reflect_and_store(title, &text).await
     }
 }

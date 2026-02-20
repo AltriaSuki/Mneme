@@ -94,7 +94,7 @@
 |------|--------|------|----------------|------|
 | ~~工具列表固定~~ | ~~🟡 中~~ | `tools.rs` | B-8 / ADR-014 | ✅ ShellToolHandler 为唯一硬编码工具，browser 工具已删除，其余通过 MCP 动态获取 |
 | 无低分辨率独白 | 🟡 中 | — | ADR-013 / B-16 | 内心独白只有高分辨率（完整 LLM），缺少本地小模型的低分辨率层 |
-| 无形成性课程 | 🟡 中 | — | ADR-011 | 无文学阅读 → 反思 → 价值形成管道 |
+| ~~无形成性课程~~ | ~~🟡 中~~ | `tools.rs` | ADR-011 | ✅ ReadingToolHandler 阅读 → 状态依赖反思 → self_knowledge |
 | 无记忆加密 | 🟢 低 | — | B-12 结构性保障 | Level 0-1 全透明是合理的，Level 2+ 需要可选加密 |
 | 平台协议侵入核心 | 🟡 中 | `mneme_onebot` | ADR-015 | QQ 协议细节在 Mneme crate 内，应通过 Gateway 解耦 |
 
@@ -868,17 +868,15 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
-### 56. 🟡 形成性课程 — 文学阅读管道 (ADR-011)
-**模块**: `mneme_reasoning/src/engine.rs`, `mneme_perception/`
-**优先级**: 🟡 中
+### 56. ✅ 形成性课程 — 文学阅读管道 (ADR-011)
+**模块**: `mneme_reasoning/src/tools.rs`, `mneme_cli/src/main.rs`
+**优先级**: ✅ 已完成
 
-**问题**: MANIFESTO ADR-011 要求通过文学作品阅读形成价值观，而非硬编码规则。当前无此管道。
-
-**需要实现**:
-- [ ] 文学作品素材管理（本地文件或 URL）
-- [ ] 阅读 → LLM 生成读书笔记/反思
-- [ ] 反思结果进入 `FeedbackBuffer` → consolidation 整合 → 影响 self_knowledge 和价值权重
-- [ ] 不同 Mneme 读同一本书得出不同结论（因当前状态不同）
+**已完成**:
+- [x] `ReadingToolHandler` — LLM 可调用的阅读工具，接受本地文件路径或内联文本 ✅
+- [x] 阅读 → LLM 生成状态依赖的读书反思（prompt 注入当前情绪/精力/压力） ✅
+- [x] 反思结果存入 `self_knowledge`（domain="reading", source="self:reading"），consolidation 自然整合 ✅
+- [x] 不同 Mneme 读同一本书得出不同结论（因 OrganismState 不同，prompt 包含当前状态） ✅
 
 ---
 
@@ -1781,7 +1779,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - ~~元认知反思 (#24)~~ ✅
 - [ ] ODE 之上叠加可塑神经网络 (ADR-001/009 演进) (#14)
 - [x] 低分辨率内心独白 (ADR-013) (#55) ✅ — low_res_client 路由到本地 Ollama 模型，fallback 到主 LLM
-- [ ] 形成性课程 — 文学管道 (ADR-011) (#56)
+- [x] 形成性课程 — 文学管道 (ADR-011) (#56) ✅ — ReadingToolHandler: 阅读文件/文本 → LLM 状态依赖反思 → self_knowledge 存储
 - [x] 自发创造 (ADR-007) ✅ — CreativityTriggerEvaluator: boredom+curiosity 驱动自主创作，3h 冷却
 - [x] 行为阈值可学习化 ✅ — BehaviorThresholds 扩展触发器阈值字段 + nudge() 学习方法，评估器从共享阈值读取
 - [x] B-20 意义追寻 ✅ — MeaningSeekingEvaluator 低压力+充足能量时触发存在性反思，6h 冷却

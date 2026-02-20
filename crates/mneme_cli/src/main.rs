@@ -383,6 +383,19 @@ async fn main() -> anyhow::Result<()> {
         // #86: Runtime parameter self-modification tool
         registry.register(Box::new(mneme_reasoning::ConfigToolHandler::new(engine.runtime_params())));
 
+        // #56: Literary reading pipeline tool
+        {
+            let reading_client: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
+                "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+                "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout)?),
+                "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
+                _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+            };
+            registry.register(Box::new(mneme_reasoning::ReadingToolHandler::new(
+                reading_client, memory.clone(), coordinator.state(),
+            )));
+        }
+
         // Connect MCP servers and register discovered tools
         if let Some(ref mcp_config) = config.mcp {
             let lifecycle_rx = coordinator.subscribe_lifecycle();

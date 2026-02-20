@@ -22,4 +22,4 @@ pub use engine::LlmDreamNarrator;
 pub use scheduler::PresenceScheduler;
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use engine::RuntimeParams;
-pub use tools::{ConfigToolHandler, MemoryToolHandler, ShellToolHandler};
+pub use tools::{ConfigToolHandler, MemoryToolHandler, ReadingToolHandler, ShellToolHandler};
