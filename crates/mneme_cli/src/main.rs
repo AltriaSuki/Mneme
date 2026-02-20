@@ -396,7 +396,10 @@ async fn main() -> anyhow::Result<()> {
         use mneme_reasoning::ToolRegistry;
         let mut registry = ToolRegistry::with_guard(guard);
 
-        // 4f. Connect MCP servers and register discovered tools
+        // Shell — the one hardcoded tool (her hands)
+        registry.register(Box::new(mneme_reasoning::ShellToolHandler::new()));
+
+        // Connect MCP servers and register discovered tools
         if let Some(ref mcp_config) = config.mcp {
             let lifecycle_rx = coordinator.subscribe_lifecycle();
             let mut mcp_manager =

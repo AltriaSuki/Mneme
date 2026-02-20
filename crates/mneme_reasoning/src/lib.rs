@@ -21,3 +21,4 @@ pub use engine::{ToolErrorKind, ToolOutcome};
 pub use engine::LlmDreamNarrator;
 pub use scheduler::PresenceScheduler;
 pub use tool_registry::{ToolHandler, ToolRegistry};
+pub use tools::ShellToolHandler;
