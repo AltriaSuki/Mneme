@@ -1725,6 +1725,9 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 统一 `GatewayMessage` → `Event::UserMessage(Content)` 转换 ✅
 - [ ] OneBot 适配器外部化 — 从 Mneme crate 变为独立脚本，通过 Gateway 接入
 - [x] CLI 保持直连模式，Gateway 作为可选组件启动 ✅
+- [x] `mneme_onebot` 降级为可选 feature（`cargo build --no-default-features` 可不编译） ✅
+- [x] `mneme_gateway` 降级为可选 feature ✅
+- [x] Response routing 重构为 routed-flag 模式，各通道独立 cfg-gate ✅
 
 **工程清理**:
 - [x] `<emotion>` tag 机制移除 (#70) — 删除 `parse_emotion_tags` + `emotion_regex`，情绪统一由 limbic ODE 驱动 ✅

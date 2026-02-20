@@ -13,6 +13,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use mneme_core::ReasoningOutput;
+#[cfg(feature = "onebot")]
 use mneme_onebot::OneBotClient;
 use mneme_reasoning::{
     llm::LlmClient,
@@ -479,10 +480,11 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
 
-    // --- ONEBOT MODE ---
-    // Channel for events from stdin (CLI) or OneBot
+    // Channel for events from stdin, OneBot, Gateway, etc.
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(100);
 
+    // --- ONEBOT MODE ---
+    #[cfg(feature = "onebot")]
     let onebot_client = if let Some(ref onebot_cfg) = config.onebot {
         tracing::info!("Initializing OneBot at {}", onebot_cfg.ws_url);
         match OneBotClient::new(&onebot_cfg.ws_url, onebot_cfg.access_token.as_deref()) {
@@ -506,6 +508,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // --- GATEWAY MODE ---
+    #[cfg(feature = "gateway")]
     let (gateway_response_tx, gateway_active_ws) = if let Some(ref gw_cfg) = config.gateway {
         let gw_server =
             mneme_gateway::GatewayServer::new(event_tx.clone(), &gw_cfg.host, gw_cfg.port);
@@ -735,6 +738,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("Token usage (today): {}", daily);
                 println!("Token usage (month): {}", monthly);
                 // Connection status
+                #[cfg(feature = "onebot")]
                 if let Some(ref client) = onebot_client {
                     let connected = if client.is_connected() { "Connected" } else { "Disconnected" };
                     let pending = client.pending_count();
@@ -744,6 +748,7 @@ async fn main() -> anyhow::Result<()> {
                         println!("OneBot: {}", connected);
                     }
                 }
+                #[cfg(feature = "gateway")]
                 if let Some(ref ws_count) = gateway_active_ws {
                     println!("Gateway: {} active WebSocket(s)", ws_count.load(std::sync::atomic::Ordering::Relaxed));
                 }
@@ -802,9 +807,13 @@ async fn main() -> anyhow::Result<()> {
                     continue;
                 }
 
+                #[allow(unused_variables)]
                 if let Event::UserMessage(input_content) = &event {
-                    if input_content.source.contains("|req:") {
-                        // Reply via Gateway — extract request_id from source tag
+                    #[allow(unused_mut, unused_assignments)]
+                    let mut routed = false;
+
+                    #[cfg(feature = "gateway")]
+                    if !routed && input_content.source.contains("|req:") {
                         if let Some(ref gw_tx) = gateway_response_tx {
                             if let Some(req_str) = input_content.source.split("|req:").last() {
                                 if let Ok(request_id) = req_str.parse::<Uuid>() {
@@ -819,60 +828,44 @@ async fn main() -> anyhow::Result<()> {
                                 }
                             }
                         }
-                    } else if input_content.source.starts_with("onebot") {
-                        // Reply via OneBot
+                        routed = true;
+                    }
+
+                    #[cfg(feature = "onebot")]
+                    if !routed && input_content.source.starts_with("onebot") {
                         if let Some(client) = &onebot_client {
                             let parts = humanizer.split_response(&response.content);
                             for part in parts {
                                 let delay = humanizer.typing_delay(&part, Some(response.emotion));
                                 tokio::time::sleep(delay).await;
-
-                                // Check routing
                                 if let Some(group_str) =
                                     input_content.source.strip_prefix("onebot:group:")
                                 {
                                     match group_str.parse::<i64>() {
-                                        Ok(group_id) => {
-                                            if let Err(e) =
-                                                client.send_group_message(group_id, &part).await
-                                            {
-                                                error!(
-                                                    "Failed to send OneBot Group message: {}",
-                                                    e
-                                                );
+                                        Ok(gid) => {
+                                            if let Err(e) = client.send_group_message(gid, &part).await {
+                                                error!("Failed to send OneBot Group message: {}", e);
                                             }
                                         }
-                                        Err(e) => {
-                                            error!(
-                                                "OneBot: invalid group_id '{}': {}",
-                                                group_str, e
-                                            );
-                                        }
+                                        Err(e) => error!("OneBot: invalid group_id '{}': {}", group_str, e),
                                     }
                                 } else {
                                     match input_content.author.parse::<i64>() {
-                                        Ok(user_id) => {
-                                            if let Err(e) =
-                                                client.send_private_message(user_id, &part).await
-                                            {
-                                                error!(
-                                                    "Failed to send OneBot Private message: {}",
-                                                    e
-                                                );
+                                        Ok(uid) => {
+                                            if let Err(e) = client.send_private_message(uid, &part).await {
+                                                error!("Failed to send OneBot Private message: {}", e);
                                             }
                                         }
-                                        Err(e) => {
-                                            error!(
-                                                "OneBot: invalid user_id '{}': {}",
-                                                input_content.author, e
-                                            );
-                                        }
+                                        Err(e) => error!("OneBot: invalid user_id '{}': {}", input_content.author, e),
                                     }
                                 }
                             }
                         }
-                    } else {
-                        // Reply via CLI
+                        routed = true;
+                    }
+
+                    if !routed {
+                        // Reply via CLI (default)
                         print_response(&response, &humanizer, None).await;
                     }
                     // Update prompt with current state, then signal stdin loop

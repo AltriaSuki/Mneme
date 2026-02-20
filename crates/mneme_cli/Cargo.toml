@@ -16,9 +16,9 @@ tracing-appender = "0.2"
 anyhow = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 mneme_expression = { path = "../mneme_expression" }
-mneme_onebot = { path = "../mneme_onebot" }
+mneme_onebot = { path = "../mneme_onebot", optional = true }
 mneme_mcp = { path = "../mneme_mcp" }
-mneme_gateway = { path = "../mneme_gateway" }
+mneme_gateway = { path = "../mneme_gateway", optional = true }
 chrono = "0.4"
 dotenv = "0.15"
 rustyline = { version = "14.0", features = ["derive"] }
@@ -29,5 +29,7 @@ opentelemetry-otlp = { version = "0.27", optional = true }
 tracing-opentelemetry = { version = "0.28", optional = true }
 
 [features]
-default = []
+default = ["onebot", "gateway"]
+onebot = ["dep:mneme_onebot"]
+gateway = ["dep:mneme_gateway"]
 otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry"]
