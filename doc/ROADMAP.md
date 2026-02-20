@@ -1109,7 +1109,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | API 超时硬编码不一致 | mneme_reasoning/providers | Anthropic 120s vs OpenAI 60s，不可配置 | **Fixed** ✅ |
 | Episode buffer 无上限 | mneme_memory/coordinator | buffer 到 1000 才 drain，`trigger_sleep` 不调用则无限增长 | **Fixed** ✅ |
 | Browser session lost | mneme_browser | 长时间不用后会话丢失 | **N/A** — crate retired (v0.9.0), 浏览器能力通过 MCP server 提供 |
-| Shell timeout recovery | mneme_os | 命令超时后无法恢复 | **N/A** — crate retired (v0.9.0), shell 能力通过 MCP server 提供 |
+| Shell timeout recovery | ~~mneme_os~~ | 命令超时后无法恢复 | **N/A** — crate 已删除，shell 能力由 `ShellToolHandler`（30s timeout）直接提供 |
 | Memory leak in history | mneme_reasoning | history 有 20 条硬上限 prune，无持久泄漏；ReAct scratchpad 有 5 轮上限，风险低 | **Verified OK** ✅ |
 | **People 表始终为空** | mneme_reasoning/engine | CLI/OneBot 交互时自动 `upsert_person()` + `record_interaction()`，UUID v5 确定性 ID | **Fixed** ✅ (#53) |
 | **Mneme 猜错自己的表名** | mneme_reasoning/prompts | 启动时种子 10 条 system_knowledge 条目描述全部表结构，DB schema 自我认知完整 | **Fixed** ✅ (#54) |
@@ -1505,7 +1505,7 @@ CREATE TABLE self_knowledge (
 | Crate | 问题 | 内聚度 | 耦合度 |
 |-------|------|--------|--------|
 | `mneme_reasoning` | 上帝对象：LLM 调用 + 工具执行 + 上下文组装 + 反馈记录 + 浏览器管理，20+ 字段 | 🔴 低 | 🔴 高 |
-| `mneme_os` | 外部库薄包装，无 Mneme 特有逻辑 | 🟡 中 | 🟡 中 |
+| ~~mneme_os~~ | ~~外部库薄包装~~ → 已删除，`ShellToolHandler` 内置于 mneme_reasoning | — | — |
 | `mneme_browser` | 外部库薄包装，headless_chrome 细节泄漏到 engine | 🟡 中 | 🔴 高 |
 | `mneme_voice` | 空 trait，无实现 | — | — |
 | `mneme_perception` | RSS fetch 薄包装 | 🟡 中 | 🟢 低 |
@@ -1532,7 +1532,7 @@ CREATE TABLE self_knowledge (
   mneme_gateway    — HTTP/WS 通讯端点，平台无关的消息入口
 
 退役（能力通过 MCP 按需获得）:
-  mneme_os         → shell MCP server（社区已有）
+  mneme_os         → 已删除（ShellToolHandler 内置于 mneme_reasoning）
   mneme_browser    → Playwright MCP server（社区已有）
   mneme_voice      → STT/TTS MCP server（社区已有）
   mneme_perception → RSS/web scrape MCP server
