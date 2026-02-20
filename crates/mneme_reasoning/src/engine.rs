@@ -1264,26 +1264,56 @@ impl Reasoning for ReasoningEngine {
                                             let text: String = resp.content.iter().filter_map(|b| {
                                                 if let crate::api_types::ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
                                             }).collect();
-                                            let affect = self.limbic.get_affect().await;
-                                            return Ok(ReasoningOutput {
-                                                content: text,
-                                                modality: ResponseModality::Text,
-                                                emotion: Emotion::from_affect(&affect),
-                                                affect,
-                                                route: None,
-                                            });
+
+                                            // #55: Store low-res episode with lower strength (易遗忘)
+                                            let episode = mneme_core::Content {
+                                                id: uuid::Uuid::new_v4(),
+                                                source: "self:monologue:low".to_string(),
+                                                author: "Mneme".to_string(),
+                                                body: text.clone(),
+                                                timestamp: chrono::Utc::now().timestamp(),
+                                                modality: mneme_core::Modality::Text,
+                                            };
+                                            let _ = self.memory.memorize_with_strength(&episode, 0.2).await;
+
+                                            // #55: Surprise detection → upgrade to High
+                                            let (_, surprise_intensity) = mneme_core::sentiment::analyze_sentiment(&text);
+                                            if surprise_intensity > 0.7 {
+                                                tracing::info!("Low-res monologue surprise={:.2}, upgrading to High", surprise_intensity);
+                                                let upgrade_prompt = format!(
+                                                    "[内心独白·升级] 刚才脑海中闪过：「{}」\n这个念头让你意外。认真想一想它意味着什么。",
+                                                    text
+                                                );
+                                                // Fall through to primary LLM with upgrade prompt
+                                                upgrade_prompt
+                                            } else {
+                                                let affect = self.limbic.get_affect().await;
+                                                return Ok(ReasoningOutput {
+                                                    content: text,
+                                                    modality: ResponseModality::Text,
+                                                    emotion: Emotion::from_affect(&affect),
+                                                    affect,
+                                                    route: None,
+                                                });
+                                            }
                                         }
                                         Err(e) => {
                                             tracing::warn!("Low-res client failed, falling back to primary: {}", e);
                                             // Fall through to primary LLM
+                                            format!(
+                                                "[内心独白·低分辨率] 触发: {}。片段: {}。\n\
+                                                 用一两句话表达此刻脑海中飘过的念头，不需要完整，可以是碎片。",
+                                                cause, seed
+                                            )
                                         }
                                     }
+                                } else {
+                                    format!(
+                                        "[内心独白·低分辨率] 触发: {}。片段: {}。\n\
+                                         用一两句话表达此刻脑海中飘过的念头，不需要完整，可以是碎片。",
+                                        cause, seed
+                                    )
                                 }
-                                format!(
-                                    "[内心独白·低分辨率] 触发: {}。片段: {}。\n\
-                                     用一两句话表达此刻脑海中飘过的念头，不需要完整，可以是碎片。",
-                                    cause, seed
-                                )
                             }
                             mneme_core::MonologueResolution::High => {
                                 format!(

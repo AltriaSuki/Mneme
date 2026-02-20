@@ -191,7 +191,13 @@ impl TriggerEvaluator for ConsciousnessGate {
         let resolution = if max_intensity > self.config.high_intensity_threshold
             || feeling_count >= self.config.high_feeling_count
         {
-            MonologueResolution::High
+            // #55: Budget-aware — low energy caps resolution at Low (conserve tokens)
+            if curr.energy < 0.4 {
+                tracing::debug!("ConsciousnessGate: energy={:.2} too low for High, capping at Low", curr.energy);
+                MonologueResolution::Low
+            } else {
+                MonologueResolution::High
+            }
         } else {
             MonologueResolution::Low
         };

@@ -828,15 +828,34 @@ Web UI       ──┘
 | 好奇心向量化 (ADR-007) | `mneme_core/src/state.rs` | ✅ 已实施 |
 | 自发创造 (ADR-007) | rumination + 工具调度 | 🟡 基础机制已有，完整自主创作循环待 v1.0.0 |
 
-### Phase 4 — 远景
+### Phase 4 — 自主性
 
 | 任务 | 状态 |
 |------|------|
-| ODE 之上叠加可塑神经网络 (ADR-001) | 构想阶段 |
+| ODE 之上叠加可塑神经网络 (ADR-001) | ✅ 已实施（NeuralModulator MLP 5→8→6，#14） |
 | 声明式行为规则引擎 (ADR-004) | ✅ 已实施（v0.6.0） |
+| 低分辨率内心独白 (ADR-013) | ✅ 已实施（Ollama 本地模型路由，#55） |
+| 形成性课程 (ADR-011) | ✅ 已实施（ReadingToolHandler，#56） |
+| 运行时自配置 MCP (ADR-014) | ✅ 已实施（ConnectToolHandler，#60） |
+| 自发创造 (ADR-007) | ✅ 已实施（CreativityTriggerEvaluator） |
+| 意义追寻 (B-20) | ✅ 已实施（MeaningSeekingEvaluator） |
+| 自我诊断与降级 | ✅ 已实施（HealthMonitor，#85） |
+| 运行时参数自修改 | ✅ 已实施（RuntimeParams，#86） |
 | LLM 自主选择 + 任务路由 (B-8) | 已决策，待设计 |
 | 多 Mneme 种群通信 (ADR-005) | 已讨论，远景 |
-| 工具自主发现与组合 (ADR-014) | 已决策，三层架构设计完成 |
+
+### Phase 5 — 液体神经架构 (Neural Dynamics)
+
+| 任务 | 位置 | 状态 |
+|------|------|------|
+| NeuralModulator 升级为液体时间常数网络 (ADR-016) | `mneme_core` 或 `mneme_limbic` | 🔲 下一步 |
+| 赫布学习在线权重更新 (ADR-017) | `mneme_core` 或 `mneme_limbic` | 🔲 依赖 ADR-016 |
+| 躯体解码器 Codebook (ADR-018) | `mneme_limbic/src/somatic.rs` | 🔲 依赖 ADR-016 |
+| 轨迹仿真测试 (`mneme_bench`) | 新 crate 或测试模块 | 🔲 依赖 ADR-016 |
+| 解耦 `mneme_mcp` 对 `mneme_reasoning` 的反向依赖 | `mneme_mcp` + `mneme_core` | 🔲 架构优化 |
+| 数字本体感受：系统指标作为环境输入 (ADR-019 候选) | `mneme_limbic` | 🔲 远景 |
+| 情绪驱动的物理干涉 (ADR-020 候选) | `mneme_expression` + MCP | 🔲 远景 |
+| 多模态感官受体接口预留（触觉/BCI） | 架构设计 | 🔲 远景，留待后人 |
 
 ---
 

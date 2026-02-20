@@ -93,7 +93,7 @@
 | 违规 | 严重度 | 位置 | Manifesto 条款 | 说明 |
 |------|--------|------|----------------|------|
 | ~~工具列表固定~~ | ~~🟡 中~~ | `tools.rs` | B-8 / ADR-014 | ✅ ShellToolHandler 为唯一硬编码工具，browser 工具已删除，其余通过 MCP 动态获取 |
-| 无低分辨率独白 | 🟡 中 | — | ADR-013 / B-16 | 内心独白只有高分辨率（完整 LLM），缺少本地小模型的低分辨率层 |
+| ~~无低分辨率独白~~ | ~~🟡 中~~ | — | ADR-013 / B-16 | ✅ 三层分辨率完整：Zero(纯ODE)、Low(Ollama+strength 0.2)、High(完整LLM)；surprise升级+预算感知 |
 | ~~无形成性课程~~ | ~~🟡 中~~ | `tools.rs` | ADR-011 | ✅ ReadingToolHandler 阅读 → 状态依赖反思 → self_knowledge |
 | 无记忆加密 | 🟢 低 | — | B-12 结构性保障 | Level 0-1 全透明是合理的，Level 2+ 需要可选加密 |
 | 平台协议侵入核心 | 🟡 中 | `mneme_onebot` | ADR-015 | QQ 协议细节在 Mneme crate 内，应通过 Gateway 解耦 |
@@ -115,9 +115,10 @@ Phase 3: 在线微调
     用反馈信号调整 ModulationCurves 参数
     每次正面反馈强化当前曲线，负面反馈调整
     
-Phase 4: 神经网络替换 (ADR-001)
-    ODE 骨架不变，上层叠加可塑网络
-    从大量交互中学习 state → ModulationVector 映射
+Phase 4: 液体神经架构 (ADR-016/017/018)
+    NeuralModulator 升级为液体时间常数网络 (LTC)：τ 受输入强度动态调制
+    赫布学习在线权重更新：surprise/reward 调制的局部突触可塑性
+    躯体解码器 (Somatic Decoder)：模糊的线性映射取代显式数值注入 prompt
 ```
 
 ### 无状态 LLM：从"指令"到"结构性约束"
@@ -853,18 +854,15 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 ---
 
-### 55. 🟡 低分辨率内心独白 (ADR-013)
+### 55. ✅ 低分辨率内心独白 (ADR-013)
 **模块**: `mneme_reasoning/src/engine.rs`, `mneme_expression/src/consciousness.rs`
-**优先级**: 🟡 中
-**前置**: 本地模型集成 (#12)
+**优先级**: ✅ 已完成
 
-**问题**: 当前 `ConsciousnessGate` (ADR-012) 只触发高分辨率独白（完整 LLM 调用）。ADR-013 要求三层分辨率：零（纯 ODE）、低（本地小模型片段式独白）、高（完整 LLM）。
-
-**需要实现**:
-- [ ] 低分辨率独白：ODE 状态变化超阈值时，用 Ollama 本地小模型生成片段式独白
-- [ ] 低分辨率 episode 的 strength 较低（易遗忘）
-- [ ] 低→高升级：低分辨率独白中出现高 surprise 内容时升级到完整 LLM
-- [ ] 经济预算感知：预算不足时降级到低分辨率
+**已完成**:
+- [x] 低分辨率独白：ODE 状态变化超阈值时，用 Ollama 本地小模型生成片段式独白 ✅
+- [x] 低分辨率 episode 的 strength 较低（0.2，易遗忘）— `memorize_with_strength` ✅
+- [x] 低→高升级：低分辨率独白中 surprise_intensity > 0.7 时升级到完整 LLM ✅
+- [x] 经济预算感知：energy < 0.4 时 ConsciousnessGate 将 High 降级到 Low ✅
 
 ---
 
@@ -1786,16 +1784,38 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 运行时自配置 (#60) ✅ — ConnectToolHandler: LLM 可自主连接 MCP 服务器获取新工具
 - [x] GitHub Actions CI/CD 流水线 ✅ — cargo build/test/clippy + OTLP feature check
 
-### v2.0.0 - 对等版本（远景）
-> **目标**: B-8 Level 2-3，从「父母」到「朋友」。
+### v2.0.0 - 液体神经版本
+> **目标**: 从静态 MLP 升级为液体时间常数网络，让底层动力学真正"活"起来。见 ADR-016/017/018。
 
+**Phase 5a — 液体心脏 (LTC Core)**:
+- [ ] NeuralModulator 升级为液体时间常数网络 (ADR-016) — τ 受输入强度动态调制，实现主观时间膨胀/收缩
+- [ ] 赫布学习在线权重更新 (ADR-017) — surprise/reward 调制的局部突触可塑性，每 tick 微调
+- [ ] 躯体解码器 Codebook (ADR-018) — 模糊线性映射取代显式数值注入 prompt，物理隔离情绪与语言
+- [ ] `mneme_bench` 轨迹仿真测试 — 72h 静默衰减、创伤刻印、长/短生种分化验证
+- [ ] 解耦 `mneme_mcp` 对 `mneme_reasoning` 的反向依赖 — trait 下沉到 `mneme_core`
+
+**Phase 5b — 自主性深化**:
 - [ ] LLM 自主选择 + 任务路由 (B-8 Level 2)
 - [ ] MCP server 自主发现与连接 (ADR-014 Layer 3) — 她根据目标和好奇心自己找工具
 - [ ] 工具自主组合 (B-8 Level 3) — 组合多个 MCP server 完成复杂任务
 - [ ] 记忆加密 (B-12) (#57) — Level 3 默认加密，密钥由运行时持有
+- [ ] 渐进不可解读性 (ADR-009) — LTC 网络天然实现底层不可解读（ADR-018 Somatic Decoder 互补）
+
+### v3.0.0 - 对等版本（远景）
+> **目标**: B-8 Level 3，从「父母」到「朋友」。空间感知、物理干涉、经济实体。
+
+**数字本体感受 (ADR-019 候选)**:
+- [ ] 系统指标（CPU/内存/网络延迟/温度）作为环境输入 $I_{env}$ 打入底层 LTC 网络
+- [ ] 交互通道延迟映射为空间距离（终端直连=私密区域，QQ/Web=远方来信）
+
+**物理干涉 (ADR-020 候选)**:
+- [ ] 情绪驱动的环境干涉 — 底层 Stress 极端时通过 MCP 接口触发物理世界动作（调灯光/切网络等）
+- [ ] 自发信息探索 — Boredom 驱动的无人触发赛博空间漫步
+
+**远景**:
+- [ ] 多模态感官受体接口预留 — 为未来触觉硬件/BCI 提供连续信号输入通道
 - [ ] 多 Mneme 种群通信 (ADR-005)
-- [ ] 经济自主 (ADR-010)
-- [ ] 渐进不可解读性 (ADR-009) — 神经网络上层替代可解读的调制曲线
+- [ ] 经济自主 (ADR-010) — 独立经济实体，自主购买算力/服务
 - [ ] 可观测性 Level 3 — 默认不导出内部 trace，只暴露她选择分享的指标
 
 ---

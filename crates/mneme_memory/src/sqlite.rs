@@ -335,6 +335,42 @@ impl Memory for SqliteMemory {
         Ok(())
     }
 
+    async fn memorize_with_strength(&self, content: &Content, strength: f32) -> Result<()> {
+        let modality_str = format!("{:?}", content.modality);
+        let embedding = self.embedding_model.embed(&content.body).ok();
+        let embedding_blob = if let Some(ref emb) = embedding {
+            Some(bincode::serialize(emb).context("Failed to serialize embedding")?)
+        } else {
+            None
+        };
+        sqlx::query(
+            "INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality, embedding, strength) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(content.id.to_string())
+        .bind(&content.source)
+        .bind(&content.author)
+        .bind(&content.body)
+        .bind(content.timestamp)
+        .bind(modality_str)
+        .bind(embedding_blob)
+        .bind(strength as f64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert episode")?;
+        if let Some(ref emb) = embedding {
+            let json_vec = serde_json::to_string(emb)?;
+            let _ = sqlx::query(
+                "INSERT OR IGNORE INTO vec_episodes (episode_id, embedding) VALUES (?, ?)",
+            )
+            .bind(content.id.to_string())
+            .bind(&json_vec)
+            .execute(&self.pool)
+            .await;
+        }
+        Ok(())
+    }
+
     async fn store_fact(
         &self,
         subject: &str,

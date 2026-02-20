@@ -197,6 +197,10 @@ pub trait Memory: Send + Sync {
     async fn recall(&self, query: &str) -> anyhow::Result<String>;
     /// Store a new content item.
     async fn memorize(&self, content: &Content) -> anyhow::Result<()>;
+    /// Store with explicit strength (0.0–1.0). Default delegates to `memorize()`.
+    async fn memorize_with_strength(&self, content: &Content, _strength: f32) -> anyhow::Result<()> {
+        self.memorize(content).await
+    }
     /// Recall with mood-congruent bias. Default: ignores bias.
     /// mood_bias > 0: favor recent memories (positive mood → recency boost)
     /// mood_bias < 0: favor older memories (negative mood → rumination bias)
