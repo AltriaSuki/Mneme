@@ -252,6 +252,23 @@ impl OneBotClient {
         Ok(())
     }
 
+    /// Route a message based on Content source/author strings.
+    ///
+    /// Encapsulates QQ protocol routing so callers don't need to parse
+    /// "onebot:group:NNN" or "onebot:private:NNN" themselves.
+    pub async fn route_message(&self, source: &str, author: &str, message: &str) -> Result<()> {
+        if let Some(group_str) = source.strip_prefix("onebot:group:") {
+            let gid: i64 = group_str.parse().context("invalid group_id")?;
+            self.send_group_message(gid, message).await
+        } else if let Some(uid_str) = source.strip_prefix("onebot:private:") {
+            let uid: i64 = uid_str.parse().context("invalid user_id")?;
+            self.send_private_message(uid, message).await
+        } else {
+            let uid: i64 = author.parse().context("invalid user_id")?;
+            self.send_private_message(uid, message).await
+        }
+    }
+
     /// Try to send via the mpsc channel; if full or closed, buffer in the pending queue.
     fn try_send_or_queue(&self, json: String) {
         match self.tx.try_send(json) {

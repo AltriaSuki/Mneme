@@ -692,31 +692,17 @@ async fn main() -> anyhow::Result<()> {
                                     #[cfg(feature = "onebot")]
                                     if !routed {
                                         if let Some(ref route) = response.route {
-                                            if let Some(ref client) = onebot_client {
-                                                if let Some(gid_str) = route.strip_prefix("onebot:group:") {
-                                                    if let Ok(gid) = gid_str.parse::<i64>() {
-                                                        let parts = humanizer.split_response(&response.content);
-                                                        for part in parts {
-                                                            let delay = humanizer.typing_delay(&part, Some(response.emotion));
-                                                            tokio::time::sleep(delay).await;
-                                                            if let Err(e) = client.send_group_message(gid, &part).await {
-                                                                error!("Proactive OneBot group send failed: {}", e);
-                                                            }
+                                            if route.starts_with("onebot:") {
+                                                if let Some(ref client) = onebot_client {
+                                                    let parts = humanizer.split_response(&response.content);
+                                                    for part in parts {
+                                                        let delay = humanizer.typing_delay(&part, Some(response.emotion));
+                                                        tokio::time::sleep(delay).await;
+                                                        if let Err(e) = client.route_message(route, "", &part).await {
+                                                            error!("Proactive OneBot send failed: {}", e);
                                                         }
-                                                        routed = true;
                                                     }
-                                                } else if let Some(uid_str) = route.strip_prefix("onebot:private:") {
-                                                    if let Ok(uid) = uid_str.parse::<i64>() {
-                                                        let parts = humanizer.split_response(&response.content);
-                                                        for part in parts {
-                                                            let delay = humanizer.typing_delay(&part, Some(response.emotion));
-                                                            tokio::time::sleep(delay).await;
-                                                            if let Err(e) = client.send_private_message(uid, &part).await {
-                                                                error!("Proactive OneBot private send failed: {}", e);
-                                                            }
-                                                        }
-                                                        routed = true;
-                                                    }
+                                                    routed = true;
                                                 }
                                             }
                                         }
@@ -944,26 +930,12 @@ async fn main() -> anyhow::Result<()> {
                             for part in parts {
                                 let delay = humanizer.typing_delay(&part, Some(response.emotion));
                                 tokio::time::sleep(delay).await;
-                                if let Some(group_str) =
-                                    input_content.source.strip_prefix("onebot:group:")
-                                {
-                                    match group_str.parse::<i64>() {
-                                        Ok(gid) => {
-                                            if let Err(e) = client.send_group_message(gid, &part).await {
-                                                error!("Failed to send OneBot Group message: {}", e);
-                                            }
-                                        }
-                                        Err(e) => error!("OneBot: invalid group_id '{}': {}", group_str, e),
-                                    }
-                                } else {
-                                    match input_content.author.parse::<i64>() {
-                                        Ok(uid) => {
-                                            if let Err(e) = client.send_private_message(uid, &part).await {
-                                                error!("Failed to send OneBot Private message: {}", e);
-                                            }
-                                        }
-                                        Err(e) => error!("OneBot: invalid user_id '{}': {}", input_content.author, e),
-                                    }
+                                if let Err(e) = client.route_message(
+                                    &input_content.source,
+                                    &input_content.author,
+                                    &part,
+                                ).await {
+                                    error!("OneBot route_message failed: {}", e);
                                 }
                             }
                         }
