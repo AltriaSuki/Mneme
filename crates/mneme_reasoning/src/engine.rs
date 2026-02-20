@@ -12,6 +12,7 @@ use mneme_core::{
 use mneme_limbic::LimbicSystem;
 use mneme_memory::{LifecycleState, OrganismCoordinator, SignalType};
 use regex::Regex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
 
@@ -127,6 +128,9 @@ pub struct ReasoningEngine {
 
     // Conversation intents: ephemeral goals Mneme wants to pursue (#59)
     intents: tokio::sync::Mutex<Vec<mneme_core::ConversationIntent>>,
+
+    // #58: Cancellation token — set to true to interrupt ongoing generation
+    cancelled: Arc<AtomicBool>,
 }
 
 impl ReasoningEngine {
@@ -159,6 +163,7 @@ impl ReasoningEngine {
             last_user_topic: tokio::sync::Mutex::new(None),
             last_active_source: tokio::sync::Mutex::new(None),
             intents: tokio::sync::Mutex::new(Vec::new()),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -191,6 +196,7 @@ impl ReasoningEngine {
             last_user_topic: tokio::sync::Mutex::new(None),
             last_active_source: tokio::sync::Mutex::new(None),
             intents: tokio::sync::Mutex::new(Vec::new()),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -217,6 +223,16 @@ impl ReasoningEngine {
     /// Set the streaming text callback (invoked for each text chunk during streaming)
     pub fn set_on_text_chunk(&mut self, callback: Arc<dyn Fn(&str) + Send + Sync>) {
         self.on_text_chunk = Some(callback);
+    }
+
+    /// #58: Cancel the currently running think() call. Safe to call from another task.
+    pub fn cancel_current(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// #58: Get a clone of the cancellation token for external use.
+    pub fn cancel_token(&self) -> Arc<AtomicBool> {
+        self.cancelled.clone()
     }
 
     /// Set the social graph for person context injection
@@ -264,6 +280,72 @@ impl ReasoningEngine {
         Ok(triggers)
     }
 
+    /// #58: Consume a stream into ContentBlocks, checking cancellation and firing text callbacks.
+    /// Returns (content_blocks, was_cancelled).
+    async fn consume_stream(
+        &self,
+        mut rx: tokio::sync::mpsc::Receiver<crate::api_types::StreamEvent>,
+    ) -> (Vec<crate::api_types::ContentBlock>, bool) {
+        use crate::api_types::{ContentBlock, StreamEvent};
+
+        let mut blocks: Vec<ContentBlock> = Vec::new();
+        let mut current_text = String::new();
+        let mut current_tool_id = String::new();
+        let mut current_tool_name = String::new();
+        let mut current_tool_input = String::new();
+
+        while let Some(event) = rx.recv().await {
+            if self.cancelled.load(Ordering::Acquire) {
+                // Flush accumulated text before returning
+                if !current_text.is_empty() {
+                    blocks.push(ContentBlock::Text { text: std::mem::take(&mut current_text) });
+                }
+                return (blocks, true);
+            }
+
+            match event {
+                StreamEvent::TextDelta(delta) => {
+                    if let Some(ref cb) = self.on_text_chunk {
+                        cb(&delta);
+                    }
+                    current_text.push_str(&delta);
+                }
+                StreamEvent::ToolUseStart { id, name } => {
+                    if !current_text.is_empty() {
+                        blocks.push(ContentBlock::Text { text: std::mem::take(&mut current_text) });
+                    }
+                    current_tool_id = id;
+                    current_tool_name = name;
+                    current_tool_input.clear();
+                }
+                StreamEvent::ToolInputDelta(delta) => {
+                    current_tool_input.push_str(&delta);
+                }
+                StreamEvent::Done { .. } => break,
+                StreamEvent::Error(e) => {
+                    tracing::warn!("Stream error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        // Flush remaining text
+        if !current_text.is_empty() {
+            blocks.push(ContentBlock::Text { text: current_text });
+        }
+        // Flush remaining tool call
+        if !current_tool_name.is_empty() {
+            let input = serde_json::from_str(&current_tool_input).unwrap_or(serde_json::json!({}));
+            blocks.push(ContentBlock::ToolUse {
+                id: current_tool_id,
+                name: current_tool_name,
+                input,
+            });
+        }
+
+        (blocks, false)
+    }
+
     #[tracing::instrument(skip(self, input_text), fields(is_user_message))]
     async fn process_thought_loop(
         &self,
@@ -272,6 +354,9 @@ impl ReasoningEngine {
         speaker: Option<(&str, &str)>,
     ) -> Result<(String, Emotion, mneme_core::Affect)> {
         use crate::api_types::{ContentBlock, Message, Role};
+
+        // #58: Reset cancellation flag at start of each think cycle
+        self.cancelled.store(false, Ordering::Release);
 
         // Check token budget before calling LLM
         let mut budget_degraded = false;
@@ -411,9 +496,16 @@ impl ReasoningEngine {
         for _iteration in 0..5 {
             final_content.clear();
 
-            let response = self
+            // #58: Check cancellation before each LLM call
+            if self.cancelled.load(Ordering::Acquire) {
+                tracing::info!("Think cancelled before LLM call");
+                break;
+            }
+
+            // #58: Use streaming for real-time output + cancellation support
+            let rx = self
                 .client
-                .complete(
+                .stream_complete(
                     &system_prompt,
                     scratchpad_messages.clone(),
                     api_tools.clone(),
@@ -421,24 +513,17 @@ impl ReasoningEngine {
                 )
                 .await?;
 
-            // Record token usage for budget tracking
-            if let Some(ref budget) = self.token_budget {
-                if let Some(ref usage) = response.usage {
-                    budget
-                        .record_usage(usage.input_tokens, usage.output_tokens)
-                        .await;
-                }
-            }
+            let (content_blocks, was_cancelled) = self.consume_stream(rx).await;
 
             let assistant_msg = Message {
                 role: Role::Assistant,
-                content: response.content.clone(),
+                content: content_blocks.clone(),
             };
             scratchpad_messages.push(assistant_msg);
 
-            // Extract text and collect tool_use blocks from response
+            // Extract text and collect tool_use blocks from streamed response
             let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
-            for block in &response.content {
+            for block in &content_blocks {
                 match block {
                     ContentBlock::Text { text } => {
                         tracing::debug!("LLM Text: {}", text);
@@ -449,6 +534,12 @@ impl ReasoningEngine {
                     }
                     _ => {}
                 }
+            }
+
+            // #58: If cancelled mid-stream, keep partial content and exit loop
+            if was_cancelled {
+                tracing::info!("Think cancelled during streaming, keeping partial content");
+                break;
             }
 
             // --- API native tool_use dispatch ---

@@ -1767,7 +1767,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 ### v0.11.0 - 对话体验版本
 > **目标**: 从 request-response 变成有存在感的对话者。
 
-- [ ] 异步对话流 (#58) — `engine.think()` 拆分为并发的生成流与接收流，新输入可中断正在生成的回复
+- [x] 异步对话流 (#58) ✅ — stream_complete() + consume_stream() 实时流式输出，AtomicBool 取消令牌支持中断生成
 - [x] 对话 agency (#59) ✅ — ConversationIntent 意图标记系统，LLM 可追问/好奇/反驳/分享，意图注入系统提示自然融入对话
 - [x] 对话目标提取 ✅ — extract_all() 单次 LLM 调用同时提取事实与目标，自动创建 Goal
 - [x] 好奇心驱动自主探索 (#81) ✅ — CuriosityTriggerEvaluator 当 curiosity 高且有具体兴趣时触发探索，LLM 用工具搜索话题
