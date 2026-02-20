@@ -87,8 +87,8 @@ pub struct ReasoningEngine {
     // Safety guard for tool execution
     guard: Option<Arc<CapabilityGuard>>,
 
-    // Tool registry for dynamic dispatch
-    registry: Option<Arc<crate::tool_registry::ToolRegistry>>,
+    // Tool registry for dynamic dispatch (RwLock allows runtime tool registration)
+    registry: Option<Arc<tokio::sync::RwLock<crate::tool_registry::ToolRegistry>>>,
 
     // Token budget tracking
     token_budget: Option<Arc<crate::token_budget::TokenBudget>>,
@@ -195,7 +195,7 @@ impl ReasoningEngine {
     }
 
     /// Set the tool registry for dynamic dispatch
-    pub fn set_registry(&mut self, registry: Arc<crate::tool_registry::ToolRegistry>) {
+    pub fn set_registry(&mut self, registry: Arc<tokio::sync::RwLock<crate::tool_registry::ToolRegistry>>) {
         self.registry = Some(registry);
     }
 
@@ -628,7 +628,7 @@ impl ReasoningEngine {
     async fn execute_tool(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
         // All tools dispatch through registry (MCP or otherwise)
         if let Some(ref registry) = self.registry {
-            return registry.dispatch(name, input).await;
+            return registry.read().await.dispatch(name, input).await;
         }
 
         ToolOutcome::permanent_error(format!(

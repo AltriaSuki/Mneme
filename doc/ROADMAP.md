@@ -1721,6 +1721,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] `mneme_browser` 退役 — 浏览器能力改由 Playwright MCP server 提供，crate 目录已删除 ✅
 - [x] `SeedPersona` 重构为目录扫描模式 — 自动加载 persona/ 下所有 .md 文件，文件名→domain ✅
 - [x] 冷启动 seed 数据化 — infrastructure/system_knowledge/somatic seeds 从 main.rs 硬编码迁移到 persona/*.md ✅
+- [x] 自主工具获取 — ToolRegistry 改为 RwLock，McpManager.connect_one() 运行时连接，reload 自动 diff+连接新 MCP server ✅
 
 **她的耳朵 — Gateway 通讯层 (ADR-015)**:
 - [x] `mneme_gateway` crate 新建 — HTTP POST `/message` + WebSocket `/ws` 端点 ✅

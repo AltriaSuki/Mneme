@@ -129,6 +129,46 @@ impl McpManager {
         }
     }
 
+    /// Connect a single MCP server at runtime and return its tool handlers.
+    /// Used by config reload to add newly-configured servers without restarting.
+    pub async fn connect_one(config: &McpServerConfig) -> anyhow::Result<Vec<Box<dyn ToolHandler>>> {
+        let mut cmd = Command::new(&config.command);
+        cmd.args(&config.args);
+        for (k, v) in &config.env {
+            cmd.env(k, v);
+        }
+
+        let transport = TokioChildProcess::new(cmd)?;
+        let service = ().serve(transport).await.map_err(|e| {
+            anyhow::anyhow!("MCP handshake failed for '{}': {}", config.name, e)
+        })?;
+
+        let tools = service.peer().list_all_tools().await.map_err(|e| {
+            anyhow::anyhow!("list_tools failed for '{}': {}", config.name, e)
+        })?;
+
+        let peer = Arc::new(RwLock::new(Some(service.peer().clone())));
+
+        let handlers: Vec<Box<dyn ToolHandler>> = tools
+            .iter()
+            .map(|t| {
+                Box::new(McpToolHandler::from_mcp_tool(t, peer.clone(), &config.name))
+                    as Box<dyn ToolHandler>
+            })
+            .collect();
+
+        // Leak the service so the child process stays alive.
+        // Full lifecycle management for runtime-added servers is a future enhancement.
+        std::mem::forget(service);
+
+        tracing::info!(
+            "Runtime MCP server '{}': {} tool(s) discovered",
+            config.name,
+            handlers.len()
+        );
+        Ok(handlers)
+    }
+
     /// Spawn a background task that watches lifecycle changes and
     /// disconnects/reconnects MCP servers accordingly.
     pub fn spawn_lifecycle_watcher(self) -> tokio::task::JoinHandle<()> {

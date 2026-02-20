@@ -26,7 +26,7 @@ pub struct ContextBuilder<'a> {
     feed_cache: &'a Arc<tokio::sync::RwLock<String>>,
     social_graph: &'a Option<Arc<dyn SocialGraph>>,
     token_budget: &'a Option<Arc<crate::token_budget::TokenBudget>>,
-    registry: &'a Option<Arc<crate::tool_registry::ToolRegistry>>,
+    registry: &'a Option<Arc<tokio::sync::RwLock<crate::tool_registry::ToolRegistry>>>,
     context_budget_chars: usize,
     start_time: std::time::Instant,
 }
@@ -38,7 +38,7 @@ impl<'a> ContextBuilder<'a> {
         feed_cache: &'a Arc<tokio::sync::RwLock<String>>,
         social_graph: &'a Option<Arc<dyn SocialGraph>>,
         token_budget: &'a Option<Arc<crate::token_budget::TokenBudget>>,
-        registry: &'a Option<Arc<crate::tool_registry::ToolRegistry>>,
+        registry: &'a Option<Arc<tokio::sync::RwLock<crate::tool_registry::ToolRegistry>>>,
         context_budget_chars: usize,
         start_time: std::time::Instant,
     ) -> Self {
@@ -123,7 +123,7 @@ impl<'a> ContextBuilder<'a> {
         // 2. Tool definitions — passed via API native tool_use (ADR-014)
         let tool_instructions = String::new();
         let api_tools = if let Some(ref registry) = self.registry {
-            registry.available_tools()
+            registry.read().await.available_tools()
         } else {
             vec![]
         };

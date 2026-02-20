@@ -355,7 +355,7 @@ async fn main() -> anyhow::Result<()> {
     engine.set_guard(guard.clone());
 
     // 4c. Initialize Tool Registry + MCP tools
-    {
+    let registry = {
         use mneme_reasoning::ToolRegistry;
         let mut registry = ToolRegistry::with_guard(guard);
 
@@ -382,8 +382,16 @@ async fn main() -> anyhow::Result<()> {
             mcp_manager.spawn_lifecycle_watcher();
         }
 
-        engine.set_registry(Arc::new(registry));
-    }
+        Arc::new(tokio::sync::RwLock::new(registry))
+    };
+    engine.set_registry(registry.clone());
+
+    // Track connected MCP server names for reload diffing
+    let mut known_mcp_servers: std::collections::HashSet<String> = config
+        .mcp
+        .as_ref()
+        .map(|m| m.servers.iter().filter(|s| s.auto_connect).map(|s| s.name.clone()).collect())
+        .unwrap_or_default();
 
     // 4d. Initialize Token Budget
     let token_budget = Arc::new(mneme_reasoning::token_budget::TokenBudget::new(
@@ -650,6 +658,28 @@ async fn main() -> anyhow::Result<()> {
                 match shared_config.reload() {
                     Ok(new_cfg) => {
                         engine.set_context_budget(new_cfg.llm.context_budget_chars);
+                        // Connect newly-added MCP servers
+                        if let Some(ref mcp) = new_cfg.mcp {
+                            for server_cfg in &mcp.servers {
+                                if !server_cfg.auto_connect || known_mcp_servers.contains(&server_cfg.name) {
+                                    continue;
+                                }
+                                match mneme_mcp::McpManager::connect_one(server_cfg).await {
+                                    Ok(tools) => {
+                                        let count = tools.len();
+                                        let mut reg = registry.write().await;
+                                        for tool in tools {
+                                            reg.register(tool);
+                                        }
+                                        known_mcp_servers.insert(server_cfg.name.clone());
+                                        println!("MCP server '{}': {} tool(s) connected", server_cfg.name, count);
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to connect MCP server '{}': {}", server_cfg.name, e);
+                                    }
+                                }
+                            }
+                        }
                         println!(
                             "Config reloaded. context_budget={}, temperature={}, max_tokens={}",
                             new_cfg.llm.context_budget_chars,
