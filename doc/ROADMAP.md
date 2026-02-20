@@ -1784,7 +1784,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] 形成性课程 — 文学管道 (ADR-011) (#56)
 - [ ] 自发创造 (ADR-007) — boredom + curiosity + 工具 → 自主创作
 - [x] 行为阈值可学习化 ✅ — BehaviorThresholds 扩展触发器阈值字段 + nudge() 学习方法，评估器从共享阈值读取
-- [ ] B-20 意义追寻 — 存在性反思机制
+- [x] B-20 意义追寻 ✅ — MeaningSeekingEvaluator 低压力+充足能量时触发存在性反思，6h 冷却
 - [x] 记忆自主管理 (#84) ✅ — memory_manage 工具 (pin/unpin/forget/list_pinned)，pinned 列免衰减
 - [x] 自我诊断与降级 (#85) ✅ — HealthMonitor 追踪子系统连续失败，LLM 降级时跳过非必要操作，LifecycleState::Degraded
 - [x] 运行时参数自修改 (#86) ✅ — RuntimeParams 无锁共享 + config 工具，LLM 可自主调整 temperature/max_tokens

@@ -156,6 +156,8 @@ pub struct BehaviorThresholds {
     pub curiosity_interest: f32,
     /// SocialTrigger: social need threshold for outreach
     pub social_trigger: f32,
+    /// MeaningSeeking: minimum energy to engage in existential reflection
+    pub meaning_energy_min: f32,
 }
 
 impl Default for BehaviorThresholds {
@@ -179,6 +181,7 @@ impl Default for BehaviorThresholds {
             curiosity_trigger: 0.65,
             curiosity_interest: 0.4,
             social_trigger: 0.7,
+            meaning_energy_min: 0.4,
         }
     }
 }
@@ -200,6 +203,7 @@ impl BehaviorThresholds {
             "attention_energy" => &mut self.attention_energy,
             "social_need_high" => &mut self.social_need_high,
             "curiosity_high" => &mut self.curiosity_high,
+            "meaning_energy_min" => &mut self.meaning_energy_min,
             _ => return false,
         };
         *val = (*val + delta).clamp(0.05, 0.95);
