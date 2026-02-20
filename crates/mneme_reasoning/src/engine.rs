@@ -78,6 +78,38 @@ impl ToolOutcome {
 /// Maximum number of retries for transient tool failures.
 const TOOL_MAX_RETRIES: usize = 1;
 
+/// #86: Shared runtime-adjustable LLM parameters.
+/// Wrapped in Arc so both the engine and tool handlers can access them.
+pub struct RuntimeParams {
+    pub base_temperature: std::sync::atomic::AtomicU32,
+    pub base_max_tokens: std::sync::atomic::AtomicU32,
+}
+
+impl RuntimeParams {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            base_temperature: std::sync::atomic::AtomicU32::new(0.7f32.to_bits()),
+            base_max_tokens: std::sync::atomic::AtomicU32::new(4096),
+        })
+    }
+
+    pub fn temperature(&self) -> f32 {
+        f32::from_bits(self.base_temperature.load(Ordering::Relaxed))
+    }
+
+    pub fn max_tokens(&self) -> u32 {
+        self.base_max_tokens.load(Ordering::Relaxed)
+    }
+
+    pub fn set_temperature(&self, temp: f32) {
+        self.base_temperature.store(temp.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn set_max_tokens(&self, tokens: u32) {
+        self.base_max_tokens.store(tokens.max(256), Ordering::Relaxed);
+    }
+}
+
 pub struct ReasoningEngine {
     psyche: Psyche,
     memory: Arc<dyn Memory>,
@@ -115,6 +147,9 @@ pub struct ReasoningEngine {
 
     // Context budget in chars for system prompt assembly (from config)
     context_budget_chars: usize,
+
+    // #86: Runtime-adjustable LLM parameters (shared with tool handlers)
+    runtime_params: Arc<RuntimeParams>,
 
     // Process start time for uptime tracking (#80)
     start_time: std::time::Instant,
@@ -158,6 +193,7 @@ impl ReasoningEngine {
             decision_router: crate::decision::DecisionRouter::with_defaults(),
             social_graph: None,
             context_budget_chars: 32_000,
+            runtime_params: RuntimeParams::new(),
             start_time: std::time::Instant::now(),
             last_response_ts: tokio::sync::Mutex::new(None),
             last_user_topic: tokio::sync::Mutex::new(None),
@@ -191,6 +227,7 @@ impl ReasoningEngine {
             decision_router: crate::decision::DecisionRouter::with_defaults(),
             social_graph: None,
             context_budget_chars: 32_000,
+            runtime_params: RuntimeParams::new(),
             start_time: std::time::Instant::now(),
             last_response_ts: tokio::sync::Mutex::new(None),
             last_user_topic: tokio::sync::Mutex::new(None),
@@ -203,6 +240,31 @@ impl ReasoningEngine {
     /// Set the context budget from config (chars, ~4 chars per token)
     pub fn set_context_budget(&mut self, budget_chars: usize) {
         self.context_budget_chars = budget_chars;
+    }
+
+    /// #86: Set base temperature (before limbic modulation). Thread-safe.
+    pub fn set_base_temperature(&self, temp: f32) {
+        self.runtime_params.set_temperature(temp);
+    }
+
+    /// #86: Set base max_tokens (before limbic modulation). Thread-safe.
+    pub fn set_base_max_tokens(&self, tokens: u32) {
+        self.runtime_params.set_max_tokens(tokens);
+    }
+
+    /// #86: Get current base temperature.
+    pub fn get_base_temperature(&self) -> f32 {
+        self.runtime_params.temperature()
+    }
+
+    /// #86: Get current base max_tokens.
+    pub fn get_base_max_tokens(&self) -> u32 {
+        self.runtime_params.max_tokens()
+    }
+
+    /// #86: Get shared runtime params handle (for tool handlers).
+    pub fn runtime_params(&self) -> Arc<RuntimeParams> {
+        self.runtime_params.clone()
     }
 
     /// Set the safety guard for tool execution
@@ -429,9 +491,9 @@ impl ReasoningEngine {
             modulation.silence_inclination,
         );
 
-        // Apply modulation to LLM parameters
-        let base_max_tokens: u32 = 4096;
-        let base_temperature: f32 = 0.7;
+        // Apply modulation to LLM parameters (#86: read from runtime-adjustable fields)
+        let base_max_tokens = self.runtime_params.max_tokens();
+        let base_temperature = self.runtime_params.temperature();
         let mut modulated_max_tokens =
             ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32).max(256);
 

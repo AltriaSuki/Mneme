@@ -367,6 +367,9 @@ async fn main() -> anyhow::Result<()> {
         // #84: Memory management tool (her memory hands)
         registry.register(Box::new(mneme_reasoning::MemoryToolHandler::new(memory.clone())));
 
+        // #86: Runtime parameter self-modification tool
+        registry.register(Box::new(mneme_reasoning::ConfigToolHandler::new(engine.runtime_params())));
+
         // Connect MCP servers and register discovered tools
         if let Some(ref mcp_config) = config.mcp {
             let lifecycle_rx = coordinator.subscribe_lifecycle();

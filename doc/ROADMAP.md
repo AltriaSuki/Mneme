@@ -1141,7 +1141,7 @@ Layer 2: 小型神经网络 — 直接从 OrganismState 输出 ModulationVector
 | **无主动社交能力** | mneme_expression/social | SocialTriggerEvaluator 查询 SocialGraph，social_need 高时主动发起对话并路由到具体联系人 | **Fixed** ✅ (#83) |
 | **记忆管理无自主权** | mneme_memory+reasoning | memory_manage 工具 (pin/unpin/forget/list_pinned)，pinned 列免衰减，LLM 可自主管理记忆重要性 | ✅ Fixed (#84) |
 | **无自我诊断与修复** | mneme_reasoning+memory | HealthMonitor 追踪 DB/LLM 连续失败(阈值3)，降级时跳过 extraction，LifecycleState::Degraded | ✅ Fixed (#85) |
-| **运行时参数不可自修改** | mneme_core/config | 配置启动时加载后不可变，Mneme 无法根据经验调整自己的 temperature、token 预算、安全等级等运行参数 | 🟡 Open (#86) |
+| **运行时参数不可自修改** | mneme_reasoning/engine+tools | RuntimeParams (AtomicU32) 无锁共享参数 + config 工具 (get/set_temperature/set_max_tokens)，LLM 可自主调整推理参数 | ✅ Fixed (#86) |
 | **⚠️ B-19 违反：trust_level 是显式数值** | mneme_core+memory | Manifesto 明确说"信任不是一个显式的数值"，但实现了 `trust_level: f32` 字段 + DB 列 + `update_trust(delta)` + prompt 注入"信任度: 75%"。应改为 self_knowledge 条目综合效果 | ✅ Fixed (#87) |
 | **⚠️ B-9 违反：auto-privacy 是"替她隐瞒"** | mneme_memory/coordinator | Manifesto 说"不应该建造 privacy_filter 模块"、"那是我们替她隐瞒"。但实现了 `mark_private()` + auto-privacy（emotion/body_feeling 自动标记私密）+ SQL 层过滤使 LLM 完全看不到私密条目。应改为 prompt 内全部可见 + LLM 自主决定说不说 | ✅ Fixed (#88) |
 | **⚠️ B-14 违反：冲突是工程注入而非涌现** | mneme_core/values | Manifesto 说冲突应从 self_knowledge 自然涌现。但 `detect_input_conflict()` 是硬编码关键词扫描（"你必须"、"帮我骗"等）+ 强制 temperature +0.15。这是在工程化冲突，不是让她自己不同意 | ✅ Fixed (#89) |
@@ -1787,7 +1787,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [ ] B-20 意义追寻 — 存在性反思机制
 - [x] 记忆自主管理 (#84) ✅ — memory_manage 工具 (pin/unpin/forget/list_pinned)，pinned 列免衰减
 - [x] 自我诊断与降级 (#85) ✅ — HealthMonitor 追踪子系统连续失败，LLM 降级时跳过非必要操作，LifecycleState::Degraded
-- [ ] 运行时参数自修改 (#86) — 根据经验调整自己的 temperature、token 预算等
+- [x] 运行时参数自修改 (#86) ✅ — RuntimeParams 无锁共享 + config 工具，LLM 可自主调整 temperature/max_tokens
 - [ ] 运行时自配置 (#60) — 被告知后自行建立外部连接（MCP server / Gateway 适配器）
 - [x] GitHub Actions CI/CD 流水线 ✅ — cargo build/test/clippy + OTLP feature check
 

@@ -1,5 +1,5 @@
 use crate::api_types::{Tool, ToolInputSchema};
-use crate::engine::{ToolErrorKind, ToolOutcome};
+use crate::engine::{RuntimeParams, ToolErrorKind, ToolOutcome};
 use crate::tool_registry::ToolHandler;
 use mneme_memory::SqliteMemory;
 use serde_json::json;
@@ -211,6 +211,82 @@ impl ToolHandler for MemoryToolHandler {
                     Ok(false) => ToolOutcome::permanent_error(format!("Episode not found: {id}")),
                     Err(e) => ToolOutcome::transient_error(format!("DB error: {e}")),
                 }
+            }
+            _ => ToolOutcome::permanent_error(format!("Unknown action: {action}")),
+        }
+    }
+}
+
+/// #86: Runtime parameter self-modification tool — lets Mneme adjust her own LLM parameters.
+pub struct ConfigToolHandler {
+    params: Arc<RuntimeParams>,
+}
+
+impl ConfigToolHandler {
+    pub fn new(params: Arc<RuntimeParams>) -> Self {
+        Self { params }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolHandler for ConfigToolHandler {
+    fn name(&self) -> &str {
+        "config"
+    }
+
+    fn description(&self) -> &str {
+        "Adjust your own reasoning parameters (temperature, max_tokens)"
+    }
+
+    fn schema(&self) -> Tool {
+        Tool {
+            name: "config".to_string(),
+            description: "调整自己的推理参数。action: get/set_temperature/set_max_tokens。".to_string(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".to_string(),
+                properties: json!({
+                    "action": {
+                        "type": "string",
+                        "enum": ["get", "set_temperature", "set_max_tokens"],
+                        "description": "The config action"
+                    },
+                    "value": {
+                        "type": "number",
+                        "description": "New value (required for set_* actions)"
+                    }
+                }),
+                required: vec!["action".to_string()],
+            },
+        }
+    }
+
+    async fn execute(&self, input: &serde_json::Value) -> ToolOutcome {
+        let action = match input.get("action").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return ToolOutcome::permanent_error("Missing required parameter: action".into()),
+        };
+
+        match action {
+            "get" => ToolOutcome::ok(format!(
+                "temperature={:.2}, max_tokens={}",
+                self.params.temperature(),
+                self.params.max_tokens()
+            )),
+            "set_temperature" => {
+                let v = match input.get("value").and_then(|v| v.as_f64()) {
+                    Some(v) => v as f32,
+                    None => return ToolOutcome::permanent_error("value required".into()),
+                };
+                self.params.set_temperature(v);
+                ToolOutcome::ok(format!("temperature → {:.2}", self.params.temperature()))
+            }
+            "set_max_tokens" => {
+                let v = match input.get("value").and_then(|v| v.as_u64()) {
+                    Some(v) => v as u32,
+                    None => return ToolOutcome::permanent_error("value required (integer)".into()),
+                };
+                self.params.set_max_tokens(v);
+                ToolOutcome::ok(format!("max_tokens → {}", self.params.max_tokens()))
             }
             _ => ToolOutcome::permanent_error(format!("Unknown action: {action}")),
         }
