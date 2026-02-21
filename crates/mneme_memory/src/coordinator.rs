@@ -690,21 +690,42 @@ impl OrganismCoordinator {
         modulation: &mneme_limbic::ModulationVector,
         feedback_valence: f32,
     ) {
+        let state = self.state.read().await;
+        let energy = state.fast.energy;
+        let stress = state.fast.stress;
+        let arousal = state.fast.affect.arousal;
+        let mood_bias = state.medium.mood_bias;
+        let social_need = state.fast.social_need;
+        drop(state);
+
+        // Persist sample for batch learning during sleep
         if let Some(ref db) = self.db {
-            let state = self.state.read().await;
             let sample = crate::learning::ModulationSample {
-                id: 0,
-                energy: state.fast.energy,
-                stress: state.fast.stress,
-                arousal: state.fast.affect.arousal,
-                mood_bias: state.medium.mood_bias,
-                social_need: state.fast.social_need,
+                id: 0, energy, stress, arousal, mood_bias, social_need,
                 modulation: modulation.clone(),
                 feedback_valence,
                 timestamp: chrono::Utc::now().timestamp(),
             };
             if let Err(e) = db.save_modulation_sample(&sample).await {
                 tracing::warn!("Failed to save modulation sample: {}", e);
+            }
+        }
+
+        // #983: Incremental learning — micro-update on significant feedback
+        if feedback_valence.abs() > 0.2 {
+            let features = mneme_limbic::neural::StateFeatures {
+                energy, stress, arousal, mood_bias, social_need,
+                cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            };
+            // Online NeuralModulator update (small learning rate)
+            if let Some(mut nn) = self.limbic.get_neural().await {
+                nn.train(&[(features.clone(), modulation.clone(), feedback_valence)], 0.002);
+                self.limbic.set_neural(Some(nn)).await;
+            }
+            // Online LTC Hebbian update
+            if let Some(mut ltc) = self.limbic.get_ltc().await {
+                ltc.hebbian_update(arousal, feedback_valence, 0.005);
+                self.limbic.set_ltc(Some(ltc)).await;
             }
         }
     }
