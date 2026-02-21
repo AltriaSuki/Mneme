@@ -48,6 +48,70 @@ impl MnemeConfig {
         }
     }
 
+    /// Validate config values after loading. Returns a list of warnings/errors.
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+
+        // LLM config
+        if self.llm.model.is_empty() {
+            issues.push("llm.model is empty".into());
+        }
+        if self.llm.max_tokens == 0 {
+            issues.push("llm.max_tokens must be > 0".into());
+        }
+        if !(0.0..=2.0).contains(&self.llm.temperature) {
+            issues.push(format!("llm.temperature {} out of range [0.0, 2.0]", self.llm.temperature));
+        }
+        if self.llm.context_budget_chars < 1000 {
+            issues.push(format!("llm.context_budget_chars {} too small (min 1000)", self.llm.context_budget_chars));
+        }
+
+        // Token budget
+        if self.token_budget.warning_threshold <= 0.0 || self.token_budget.warning_threshold > 1.0 {
+            issues.push(format!("token_budget.warning_threshold {} out of range (0.0, 1.0]", self.token_budget.warning_threshold));
+        }
+
+        // Organism
+        if self.organism.tick_interval_secs == 0 {
+            issues.push("organism.tick_interval_secs must be > 0".into());
+        }
+        if self.organism.trigger_interval_secs == 0 {
+            issues.push("organism.trigger_interval_secs must be > 0".into());
+        }
+        if !(0.0..=1.0).contains(&self.organism.proactivity) {
+            issues.push(format!("organism.proactivity {} out of range [0.0, 1.0]", self.organism.proactivity));
+        }
+        for entry in &self.organism.schedules {
+            if entry.hour > 23 {
+                issues.push(format!("schedule '{}': hour {} > 23", entry.name, entry.hour));
+            }
+            if entry.minute > 59 {
+                issues.push(format!("schedule '{}': minute {} > 59", entry.name, entry.minute));
+            }
+        }
+
+        // MCP servers
+        if let Some(ref mcp) = self.mcp {
+            for s in &mcp.servers {
+                if s.name.is_empty() {
+                    issues.push("mcp server with empty name".into());
+                }
+                if s.command.is_empty() {
+                    issues.push(format!("mcp server '{}': command is empty", s.name));
+                }
+            }
+        }
+
+        // Gateway
+        if let Some(ref gw) = self.gateway {
+            if gw.port == 0 {
+                issues.push("gateway.port must be > 0".into());
+            }
+        }
+
+        issues
+    }
+
     /// Apply environment variable overrides on top of file-based config.
     fn apply_env_overrides(&mut self) {
         if let Ok(v) = std::env::var("LLM_PROVIDER") {
@@ -552,5 +616,23 @@ degradation_strategy = { degrade = { max_tokens_cap = 1024 } }
         std::env::remove_var("LLM_TEMPERATURE");
         std::env::remove_var("LLM_MAX_TOKENS");
         std::env::remove_var("LLM_CONTEXT_BUDGET");
+    }
+
+    #[test]
+    fn test_validate_default_is_clean() {
+        let cfg = MnemeConfig::default();
+        assert!(cfg.validate().is_empty(), "default config should have no issues");
+    }
+
+    #[test]
+    fn test_validate_catches_bad_values() {
+        let mut cfg = MnemeConfig::default();
+        cfg.llm.model = String::new();
+        cfg.llm.max_tokens = 0;
+        cfg.organism.tick_interval_secs = 0;
+        cfg.organism.proactivity = 2.0;
+        cfg.token_budget.warning_threshold = 0.0;
+        let issues = cfg.validate();
+        assert!(issues.len() >= 4, "expected multiple issues, got: {:?}", issues);
     }
 }

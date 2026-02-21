@@ -228,6 +228,12 @@ async fn main() -> anyhow::Result<()> {
     // Load unified config (file + env overrides)
     let mut config = MnemeConfig::load_or_default(&args.config);
 
+    // Schema-level validation
+    let issues = config.validate();
+    for issue in &issues {
+        tracing::warn!("Config issue: {}", issue);
+    }
+
     // CLI args override config file
     if let Some(ref model) = args.model {
         config.llm.model = model.clone();
