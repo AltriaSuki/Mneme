@@ -1066,7 +1066,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] Coordinator 集成测试 ✅ — 5 个测试（并发安全、生命周期转换、反馈持久化、状态持久化、规则引擎加载）
 - [x] CLI smoke tests ✅ — 3 个测试（--help、--version、无效配置不 panic）
 - [ ] 集成测试补充
-- [ ] Mock 基础设施完善
+- [x] Mock 基础设施完善 ✅ — tests/common/mod.rs 共享 MockLlmClient/MockMemory/MockToolHandler/FailingToolHandler + response builders
 - [x] CI/CD 配置 ✅ — GitHub Actions: cargo build/test/clippy + OTLP feature check
 - [ ] 代码覆盖率报告
 
