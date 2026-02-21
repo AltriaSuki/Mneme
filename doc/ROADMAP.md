@@ -1388,6 +1388,7 @@ CREATE TABLE self_knowledge (
 - [x] `decay_episode_strengths(factor)` — 批量衰减 ✅
 - [x] recall 时：`score = similarity × strength`，`WHERE strength > 0.05` 过滤已遗忘记忆 ✅
 - [x] `boost_episode_on_recall()` — rehearsal effect + 可选 body 覆写（B-10 直接覆写） ✅
+- [x] ACT-R 检索强化闭环 ✅ — `recall()` / `recall_with_bias()` 实际调用 `boost_episode_on_recall(+0.02)`，常回忆的记忆越来越强
 - [x] strength < 0.05 的记忆在 recall 中被过滤（"模糊了"） ✅
 - [x] 4 个测试：default_strength, update_strength, decay, rehearsal_boost ✅
 
