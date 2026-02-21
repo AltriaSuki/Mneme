@@ -954,13 +954,23 @@ impl ReasoningEngine {
         // Parse insights from LLM response
         let insights = crate::metacognition::parse_metacognition_response(&response_text);
 
-        // Store each insight as self-knowledge
+        // Store each insight as self-knowledge + push to feedback buffer for consolidation
         for insight in &insights {
             self.coordinator
                 .store_metacognition_insight(
                     &insight.domain,
                     &insight.content,
                     insight.confidence,
+                )
+                .await;
+
+            // Close the feedback loop: insights → FeedbackBuffer → SleepConsolidation → state
+            self.coordinator
+                .record_feedback(
+                    mneme_memory::SignalType::SelfReflection,
+                    format!("[{}] {}", insight.domain, insight.content),
+                    insight.confidence,
+                    0.0, // neutral emotional context for self-reflection
                 )
                 .await;
         }
