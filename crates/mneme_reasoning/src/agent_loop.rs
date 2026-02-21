@@ -8,6 +8,7 @@ use std::time::Duration;
 // AgentAction
 // ============================================================================
 
+/// Actions emitted by the background [`AgentLoop`] for the main event loop to handle.
 #[derive(Debug, Clone)]
 pub enum AgentAction {
     /// A proactive trigger fired — caller should process via engine.think()
@@ -28,6 +29,7 @@ pub enum AgentAction {
 // AgentLoop
 // ============================================================================
 
+/// Background loop that periodically ticks organism state and evaluates proactive triggers.
 pub struct AgentLoop {
     coordinator: Arc<OrganismCoordinator>,
     evaluators: Vec<Box<dyn TriggerEvaluator>>,

@@ -19,6 +19,7 @@ pub struct ModelRouter {
 }
 
 impl ModelRouter {
+    /// Create a router with the given primary (fallback) client and no additional profiles.
     pub fn new(primary: Arc<dyn LlmClient>) -> Self {
         Self {
             primary,

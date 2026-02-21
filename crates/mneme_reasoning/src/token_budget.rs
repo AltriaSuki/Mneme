@@ -21,12 +21,14 @@ pub enum BudgetStatus {
 // TokenBudget
 // ============================================================================
 
+/// Tracks daily/monthly token consumption and enforces budget limits.
 pub struct TokenBudget {
     config: TokenBudgetConfig,
     db: Arc<SqliteMemory>,
 }
 
 impl TokenBudget {
+    /// Create a new budget tracker backed by the given database.
     pub fn new(config: TokenBudgetConfig, db: Arc<SqliteMemory>) -> Self {
         Self { config, db }
     }
@@ -124,6 +126,7 @@ impl TokenBudget {
         remaining > threshold
     }
 
+    /// Access the underlying budget configuration.
     pub fn config(&self) -> &TokenBudgetConfig {
         &self.config
     }

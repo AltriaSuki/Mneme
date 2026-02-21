@@ -10,6 +10,7 @@ pub use mneme_core::tools::ToolHandler;
 // ToolRegistry
 // ============================================================================
 
+/// Central registry mapping tool names to their handlers, with optional safety guard.
 pub struct ToolRegistry {
     handlers: HashMap<String, Box<dyn ToolHandler>>,
     guard: Option<Arc<CapabilityGuard>>,
@@ -22,6 +23,7 @@ impl Default for ToolRegistry {
 }
 
 impl ToolRegistry {
+    /// Create an empty registry with no safety guard.
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
@@ -29,6 +31,7 @@ impl ToolRegistry {
         }
     }
 
+    /// Create an empty registry with a [`CapabilityGuard`] for destructive-op gating.
     pub fn with_guard(guard: Arc<CapabilityGuard>) -> Self {
         Self {
             handlers: HashMap::new(),
