@@ -208,6 +208,7 @@ impl LimbicSystem {
                             response_delay_factor: 1.0,
                             violated_values: stimulus.violated_values,
                             topic_hint: None,
+                            env: Default::default(),
                         };
 
                         // Update state
@@ -276,6 +277,9 @@ impl LimbicSystem {
             arousal: marker.affect.arousal,
             mood_bias: marker.mood_bias,
             social_need: marker.social_need,
+            cpu_load: marker.cpu_load,
+            memory_pressure: marker.memory_pressure,
+            channel_distance: marker.channel_distance,
         };
 
         let raw = if let Some(ref mut ltc) = *self.ltc.write().await {

@@ -15,8 +15,8 @@ pub use config::{ModelProfile, TaskType};
 pub use dynamics::{DefaultDynamics, Dynamics, LearnableDynamics};
 pub use persona::{Psyche, SeedPersona};
 pub use state::{
-    AttachmentStyle, CuriosityVector, FastState, MediumState, OrganismState, SensoryInput,
-    SlowState, ValueNetwork,
+    AttachmentStyle, CuriosityVector, EnvironmentMetrics, FastState, MediumState, OrganismState,
+    SensoryInput, SlowState, ValueNetwork,
 };
 pub use values::{
     HierarchicalValueNetwork, JudgmentResult, RuleBasedJudge, Situation,

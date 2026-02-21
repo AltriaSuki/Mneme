@@ -446,7 +446,8 @@ impl ReasoningEngine {
         let interaction_result = if is_user_message {
             self.coordinator
                 .process_interaction(
-                    "user", input_text, 1.0, // Normal response delay
+                    "user", input_text, 1.0,
+                    speaker.map(|(s, _)| s).unwrap_or("cli"),
                 )
                 .await?
         } else {

@@ -7,7 +7,7 @@
 use crate::somatic::ModulationVector;
 use serde::{Deserialize, Serialize};
 
-const INPUT_DIM: usize = 5;
+const INPUT_DIM: usize = 8;
 const HIDDEN_DIM: usize = 8;
 const OUTPUT_DIM: usize = 6;
 
@@ -34,11 +34,20 @@ pub struct StateFeatures {
     pub arousal: f32,
     pub mood_bias: f32,
     pub social_need: f32,
+    /// ADR-019: CPU load (0.0–1.0)
+    pub cpu_load: f32,
+    /// ADR-019: Memory pressure (0.0–1.0)
+    pub memory_pressure: f32,
+    /// ADR-019: Channel distance (0.0–1.0)
+    pub channel_distance: f32,
 }
 
 impl StateFeatures {
     fn as_array(&self) -> [f32; INPUT_DIM] {
-        [self.energy, self.stress, self.arousal, self.mood_bias, self.social_need]
+        [
+            self.energy, self.stress, self.arousal, self.mood_bias, self.social_need,
+            self.cpu_load, self.memory_pressure, self.channel_distance,
+        ]
     }
 }
 
@@ -426,6 +435,7 @@ mod tests {
         let nn = NeuralModulator::new();
         let features = StateFeatures {
             energy: 0.5, stress: 0.3, arousal: 0.4, mood_bias: 0.0, social_need: 0.2,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let mv = nn.predict(&features);
         assert!(mv.max_tokens_factor >= 0.3 && mv.max_tokens_factor <= 1.5);
@@ -442,6 +452,7 @@ mod tests {
         let curves_mv = ModulationVector::default();
         let features = StateFeatures {
             energy: 0.7, stress: 0.1, arousal: 0.3, mood_bias: 0.2, social_need: 0.1,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let result = nn.blend_with(&curves_mv, &features);
         assert!((result.max_tokens_factor - curves_mv.max_tokens_factor).abs() < 1e-6);
@@ -453,6 +464,7 @@ mod tests {
         nn.blend = 1.0;
         let features = StateFeatures {
             energy: 0.8, stress: 0.1, arousal: 0.5, mood_bias: 0.3, social_need: 0.2,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let target = ModulationVector {
             max_tokens_factor: 1.2,
@@ -494,6 +506,7 @@ mod tests {
         ltc.blend = 1.0;
         let features = StateFeatures {
             energy: 0.5, stress: 0.3, arousal: 0.4, mood_bias: 0.0, social_need: 0.2,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let mv = ltc.step(&features, 1.0);
         assert!(mv.max_tokens_factor >= 0.3 && mv.max_tokens_factor <= 1.5);
@@ -507,6 +520,7 @@ mod tests {
         let mut ltc = LiquidNeuralModulator::new();
         let features = StateFeatures {
             energy: 0.8, stress: 0.1, arousal: 0.7, mood_bias: 0.5, social_need: 0.1,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         // Step once — state should change from zero
         ltc.step(&features, 1.0);
@@ -522,25 +536,21 @@ mod tests {
 
     #[test]
     fn test_ltc_idle_decay() {
+        // Verify the ODE leak term: an artificially inflated state decays toward equilibrium.
         let mut ltc = LiquidNeuralModulator::new();
-        let active = StateFeatures {
-            energy: 0.8, stress: 0.1, arousal: 0.9, mood_bias: 0.5, social_need: 0.1,
-        };
-        // Drive state with active input
-        for _ in 0..20 {
-            ltc.step(&active, 1.0);
-        }
-        let active_norm: f32 = ltc.state.iter().map(|x| x * x).sum();
+        // Inflate hidden state to clamp boundary
+        for x in ltc.state.iter_mut() { *x = 4.5; }
+        let inflated_norm: f32 = ltc.state.iter().map(|x| x * x).sum();
 
-        // Now idle — state should decay toward zero
         let idle = StateFeatures {
-            energy: 0.7, stress: 0.0, arousal: 0.0, mood_bias: 0.0, social_need: 0.0,
+            energy: 0.0, stress: 0.0, arousal: 0.0, mood_bias: 0.0, social_need: 0.0,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
-        for _ in 0..100 {
+        for _ in 0..200 {
             ltc.step(&idle, 1.0);
         }
-        let idle_norm: f32 = ltc.state.iter().map(|x| x * x).sum();
-        assert!(idle_norm < active_norm, "State should decay during idle");
+        let decayed_norm: f32 = ltc.state.iter().map(|x| x * x).sum();
+        assert!(decayed_norm < inflated_norm * 0.5, "Inflated state should decay significantly");
     }
 
     #[test]
@@ -548,6 +558,7 @@ mod tests {
         let mut ltc = LiquidNeuralModulator::new();
         let features = StateFeatures {
             energy: 0.5, stress: 0.5, arousal: 0.5, mood_bias: 0.0, social_need: 0.5,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         // Drive state so Hebbian has something to work with
         for _ in 0..10 {

@@ -245,6 +245,16 @@ pub struct SomaticMarker {
     /// ADR-009: Maturity level (0.0–1.0) for progressive opacity.
     #[serde(default)]
     pub maturity: f32,
+
+    /// ADR-019: CPU load (0.0–1.0)
+    #[serde(default)]
+    pub cpu_load: f32,
+    /// ADR-019: Memory pressure (0.0–1.0)
+    #[serde(default)]
+    pub memory_pressure: f32,
+    /// ADR-019: Channel distance (0.0–1.0)
+    #[serde(default)]
+    pub channel_distance: f32,
 }
 
 impl SomaticMarker {
@@ -268,6 +278,9 @@ impl SomaticMarker {
             openness: state.medium.openness,
             curiosity_interests: interests,
             maturity: state.slow.maturity,
+            cpu_load: state.fast.env.cpu_load,
+            memory_pressure: state.fast.env.memory_pressure,
+            channel_distance: state.fast.env.channel_distance,
         }
     }
 

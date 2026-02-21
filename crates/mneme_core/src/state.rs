@@ -130,6 +130,10 @@ pub struct FastState {
     /// ADR-007: Curiosity vectorization — scalar curiosity + topic interests.
     #[serde(default)]
     pub curiosity_vector: CuriosityVector,
+
+    /// ADR-019: Latest environment metrics snapshot.
+    #[serde(default)]
+    pub env: EnvironmentMetrics,
 }
 
 /// Directional curiosity: tracks *what* she's curious about.
@@ -196,6 +200,7 @@ impl Default for FastState {
             social_need: 0.4, // Moderate social need
             boredom: 0.2,     // Low baseline boredom
             curiosity_vector: CuriosityVector::default(),
+            env: EnvironmentMetrics::default(),
         }
     }
 }
@@ -464,6 +469,86 @@ impl ValueNetwork {
 }
 
 // =============================================================================
+// Environment Metrics (ADR-019: Digital Proprioception)
+// =============================================================================
+
+/// System-level metrics that form the organism's sense of its own "body".
+///
+/// Maps host resource pressure into continuous signals fed to the LTC network,
+/// giving Mneme awareness of computational load, memory pressure, and
+/// spatial distance to the interlocutor.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct EnvironmentMetrics {
+    /// CPU load (0.0–1.0). Mapped from system load average / num_cpus.
+    pub cpu_load: f32,
+    /// Memory pressure (0.0–1.0). Mapped from used/total RAM.
+    pub memory_pressure: f32,
+    /// Spatial distance of the interaction channel (0.0–1.0).
+    /// 0.0 = CLI (intimate/local), 0.5 = gateway/WebSocket, 1.0 = remote platform.
+    pub channel_distance: f32,
+}
+
+impl EnvironmentMetrics {
+    /// Sample current system metrics from the OS.
+    pub fn sample() -> Self {
+        Self {
+            cpu_load: Self::read_cpu_load(),
+            memory_pressure: Self::read_memory_pressure(),
+            channel_distance: 0.0,
+        }
+    }
+
+    /// Map a content source string to a spatial distance.
+    pub fn channel_distance_for(source: &str) -> f32 {
+        if source == "cli" {
+            0.0
+        } else if source.starts_with("gateway") {
+            0.3
+        } else if source.starts_with("onebot") {
+            0.7
+        } else {
+            0.5
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_cpu_load() -> f32 {
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get() as f32)
+            .unwrap_or(1.0);
+        std::fs::read_to_string("/proc/loadavg")
+            .ok()
+            .and_then(|s| s.split_whitespace().next()?.parse::<f32>().ok())
+            .map(|load1| (load1 / cpus).clamp(0.0, 1.0))
+            .unwrap_or(0.0)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn read_cpu_load() -> f32 { 0.0 }
+
+    #[cfg(target_os = "linux")]
+    fn read_memory_pressure() -> f32 {
+        std::fs::read_to_string("/proc/meminfo").ok().and_then(|s| {
+            let mut total = 0u64;
+            let mut available = 0u64;
+            for line in s.lines() {
+                if line.starts_with("MemTotal:") {
+                    total = line.split_whitespace().nth(1)?.parse().ok()?;
+                } else if line.starts_with("MemAvailable:") {
+                    available = line.split_whitespace().nth(1)?.parse().ok()?;
+                }
+                if total > 0 && available > 0 { break; }
+            }
+            if total == 0 { return None; }
+            Some((1.0 - available as f32 / total as f32).clamp(0.0, 1.0))
+        }).unwrap_or(0.0)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn read_memory_pressure() -> f32 { 0.0 }
+}
+
+// =============================================================================
 // Sensory Input (for dynamics computation)
 // =============================================================================
 
@@ -491,6 +576,9 @@ pub struct SensoryInput {
     /// Topic hint for curiosity vectorization (ADR-007).
     /// When present, tags the curiosity vector with this topic.
     pub topic_hint: Option<String>,
+
+    /// ADR-019: Environment metrics (digital proprioception).
+    pub env: EnvironmentMetrics,
 }
 
 #[cfg(test)]

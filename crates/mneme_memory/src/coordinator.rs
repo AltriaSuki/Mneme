@@ -414,6 +414,7 @@ impl OrganismCoordinator {
         author: &str,
         content: &str,
         response_delay_secs: f32,
+        source: &str,
     ) -> Result<InteractionResult> {
         let _guard = self.state_mutation_lock.lock().await;
 
@@ -431,7 +432,7 @@ impl OrganismCoordinator {
         let soma = self.limbic.get_somatic_marker().await;
 
         // 3. Update fast state based on stimulus
-        let sensory = self.create_sensory_input(content, &soma, response_delay_secs);
+        let sensory = self.create_sensory_input(content, &soma, response_delay_secs, source);
         {
             let mut state = self.state.write().await;
             let medium_clone = state.medium.clone();
@@ -897,6 +898,9 @@ impl OrganismCoordinator {
                             arousal: s.arousal,
                             mood_bias: s.mood_bias,
                             social_need: s.social_need,
+                            cpu_load: 0.0,
+                            memory_pressure: 0.0,
+                            channel_distance: 0.0,
                         },
                         s.modulation.clone(),
                         s.feedback_valence,
@@ -1007,7 +1011,8 @@ impl OrganismCoordinator {
             LifecycleState::Awake => {
                 // Update medium state periodically
                 let mut state = self.state.write().await;
-                let input = SensoryInput::default();
+                let mut input = SensoryInput::default();
+                input.env = mneme_core::EnvironmentMetrics::sample();
                 let fast_clone = state.fast.clone();
                 let slow_clone = state.slow.clone();
                 self.dynamics.read().await.step_medium(
@@ -1099,9 +1104,12 @@ impl OrganismCoordinator {
         content: &str,
         soma: &SomaticMarker,
         response_delay: f32,
+        source: &str,
     ) -> SensoryInput {
         // ADR-007: Extract topic hint for curiosity vectorization
         let topic_hint = extract_topic_hint(content);
+        let mut env = mneme_core::EnvironmentMetrics::sample();
+        env.channel_distance = mneme_core::EnvironmentMetrics::channel_distance_for(source);
         SensoryInput {
             content_valence: soma.affect.valence,
             content_intensity: soma.affect.arousal,
@@ -1110,6 +1118,7 @@ impl OrganismCoordinator {
             response_delay_factor: response_delay,
             violated_values: vec![],
             topic_hint,
+            env,
         }
     }
 
@@ -1225,7 +1234,7 @@ mod tests {
         let coordinator = OrganismCoordinator::new(limbic);
 
         let result = coordinator
-            .process_interaction("user", "你好！今天心情怎么样？", 1.0)
+            .process_interaction("user", "你好！今天心情怎么样？", 1.0, "cli")
             .await
             .unwrap();
 

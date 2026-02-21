@@ -34,12 +34,12 @@ async fn test_concurrent_interaction_and_sleep() {
     // Populate episodes via interactions (public API)
     for i in 0..15 {
         let _ = coord
-            .process_interaction("user", &format!("msg {}", i), 1.0)
+            .process_interaction("user", &format!("msg {}", i), 1.0, "cli")
             .await;
     }
 
     let c1 = coord.clone();
-    let h1 = tokio::spawn(async move { c1.process_interaction("user", "hello world", 1.0).await });
+    let h1 = tokio::spawn(async move { c1.process_interaction("user", "hello world", 1.0, "cli").await });
 
     let c2 = coord.clone();
     let h2 = tokio::spawn(async move { c2.trigger_sleep().await });
@@ -66,7 +66,7 @@ async fn test_lifecycle_transitions() {
     // Populate episodes via interactions
     for i in 0..15 {
         let _ = coord
-            .process_interaction("user", &format!("msg {}", i), 1.0)
+            .process_interaction("user", &format!("msg {}", i), 1.0, "cli")
             .await;
     }
 

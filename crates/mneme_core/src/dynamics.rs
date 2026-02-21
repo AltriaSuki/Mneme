@@ -228,6 +228,9 @@ impl DefaultDynamics {
             - fast.stress * 0.01; // Stress also suppresses boredom
         fast.boredom += d_boredom * dt;
 
+        // ADR-019: Propagate environment metrics into fast state
+        fast.env = input.env.clone();
+
         // Normalize
         fast.normalize();
     }
