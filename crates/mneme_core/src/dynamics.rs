@@ -11,6 +11,59 @@ use crate::state::{FastState, MediumState, OrganismState, SensoryInput, SlowStat
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+// === Learnable dynamics bounds ===
+const LEARNING_RATE: f32 = 0.005;
+const ENERGY_TARGET_MIN: f32 = 0.3;
+const ENERGY_TARGET_MAX: f32 = 0.9;
+const STRESS_DECAY_MIN: f32 = 0.001;
+const STRESS_DECAY_MAX: f32 = 0.02;
+
+// === Fast dynamics: activity costs ===
+const SOCIAL_ACTIVITY_COST: f32 = 0.01;
+const STIMULUS_ACTIVITY_COST: f32 = 0.002;
+
+// === Fast dynamics: stress ===
+const SURPRISE_STRESS_FACTOR: f32 = 0.3;
+const MORAL_COST_BASE: f32 = 0.5;
+
+// === Fast dynamics: affect ===
+const MOOD_INFLUENCE_FACTOR: f32 = 0.3;
+const AROUSAL_INTENSITY_WEIGHT: f32 = 0.5;
+const AROUSAL_SURPRISE_WEIGHT: f32 = 0.3;
+const AROUSAL_BASELINE: f32 = 0.2;
+const AFFECT_RATE: f32 = 0.1;
+const STRESS_VALENCE_COUPLING: f32 = 0.1;
+
+// === Fast dynamics: curiosity ===
+const CURIOSITY_SURPRISE_FACTOR: f32 = 0.1;
+const CURIOSITY_STRESS_DRAG: f32 = 0.05;
+const CURIOSITY_OPENNESS_BOOST: f32 = 0.02;
+const CURIOSITY_BOREDOM_BOOST: f32 = 0.03;
+const CURIOSITY_DECAY_RATE: f32 = 0.001;
+
+// === Fast dynamics: social ===
+const SOCIAL_SATISFACTION_FACTOR: f32 = 0.1;
+
+// === Fast dynamics: boredom ===
+const BOREDOM_MONOTONY_RATE: f32 = 0.01;
+const BOREDOM_NOVELTY_SUPPRESSION: f32 = 0.15;
+const BOREDOM_STRESS_SUPPRESSION: f32 = 0.01;
+const NOVELTY_INTENSITY_WEIGHT: f32 = 0.3;
+
+// === Medium dynamics ===
+const IDLE_TAU_MULTIPLIER: f32 = 0.3;
+
+// === Slow dynamics ===
+const COLLAPSE_BASE_THRESHOLD: f32 = 0.5;
+const COLLAPSE_RIGIDITY_WEIGHT: f32 = 0.4;
+const RIGIDITY_COLLAPSE_FACTOR: f32 = 0.7;
+const RIGIDITY_GROWTH_RATE: f32 = 0.001;
+
+// === Moral cost distribution ===
+const MORAL_STRESS_FACTOR: f32 = 0.5;
+const MORAL_ENERGY_FACTOR: f32 = 0.3;
+const MORAL_VALENCE_FACTOR: f32 = 0.2;
+
 /// Trait for implementing state dynamics
 pub trait Dynamics: Send + Sync {
     /// Advance the state by dt given sensory input
@@ -43,7 +96,7 @@ impl LearnableDynamics {
         if samples.len() < 3 {
             return false;
         }
-        let lr = 0.005;
+        let lr = LEARNING_RATE;
         let n = samples.len() as f32;
 
         // Energy target: move toward energy levels that got positive feedback
@@ -52,12 +105,12 @@ impl LearnableDynamics {
             .map(|(e, _, fv)| fv * (e - self.energy_target))
             .sum::<f32>()
             / n;
-        self.energy_target = (self.energy_target + lr * energy_signal).clamp(0.3, 0.9);
+        self.energy_target = (self.energy_target + lr * energy_signal).clamp(ENERGY_TARGET_MIN, ENERGY_TARGET_MAX);
 
         // Stress decay: increase if high stress correlates with negative feedback
         let stress_signal: f32 = samples.iter().map(|(_, s, fv)| -fv * s).sum::<f32>() / n;
         self.stress_decay_rate =
-            (self.stress_decay_rate + lr * 0.001 * stress_signal).clamp(0.001, 0.02);
+            (self.stress_decay_rate + lr * 0.001 * stress_signal).clamp(STRESS_DECAY_MIN, STRESS_DECAY_MAX);
 
         true
     }
@@ -140,9 +193,9 @@ impl DefaultDynamics {
         // otherwise energy drains to 0 and can never recover (death spiral).
         let has_stimulus = input.is_social || input.content_intensity > 0.01;
         let activity_cost = if input.is_social {
-            0.01
+            SOCIAL_ACTIVITY_COST
         } else if has_stimulus {
-            0.002
+            STIMULUS_ACTIVITY_COST
         } else {
             0.0
         };
@@ -153,11 +206,11 @@ impl DefaultDynamics {
         // === Stress dynamics ===
         // dS/dt = -decay_rate * (S - target) + sensitivity * negative_stimulus
         let negative_stimulus = (-input.content_valence).max(0.0) * input.content_intensity;
-        let surprise_stress = input.surprise * 0.3;
+        let surprise_stress = input.surprise * SURPRISE_STRESS_FACTOR;
 
         // Moral cost from value violations creates direct stress
         let moral_stress = if !input.violated_values.is_empty() {
-            0.5 // Base moral cost, refined in state.rs
+            MORAL_COST_BASE // Base moral cost, refined in state.rs
         } else {
             0.0
         };
@@ -173,14 +226,14 @@ impl DefaultDynamics {
         // a negative mood creates a feedback loop: negative affect → stress ↑ →
         // more negative affect → stress ↑↑ (death spiral).
         let mood_influence = if has_stimulus {
-            medium.mood_bias * 0.3
+            medium.mood_bias * MOOD_INFLUENCE_FACTOR
         } else {
             0.0
         };
         let target_valence = input.content_valence * self.affect_sensitivity + mood_influence;
-        let target_arousal = input.content_intensity * 0.5 + input.surprise * 0.3 + 0.2;
+        let target_arousal = input.content_intensity * AROUSAL_INTENSITY_WEIGHT + input.surprise * AROUSAL_SURPRISE_WEIGHT + AROUSAL_BASELINE;
 
-        let affect_rate = 0.1; // How quickly affect changes
+        let affect_rate = AFFECT_RATE;
         fast.affect.valence += affect_rate * (target_valence - fast.affect.valence) * dt;
         fast.affect.arousal += affect_rate * (target_arousal - fast.affect.arousal) * dt;
 
@@ -188,16 +241,16 @@ impl DefaultDynamics {
         // During idle, this coupling creates a positive feedback loop that
         // prevents homeostatic recovery.
         if has_stimulus {
-            fast.affect.valence -= fast.stress * 0.1 * dt;
+            fast.affect.valence -= fast.stress * STRESS_VALENCE_COUPLING * dt;
         }
 
         // === Curiosity dynamics ===
         // Curiosity increases with positive surprise, decreases with stress
         // Boredom also drives curiosity up (seeking novelty)
-        let d_curiosity = input.surprise * 0.1 * input.content_valence.max(0.0)
-            - fast.stress * 0.05
-            + medium.openness * 0.02
-            + fast.boredom * 0.03;
+        let d_curiosity = input.surprise * CURIOSITY_SURPRISE_FACTOR * input.content_valence.max(0.0)
+            - fast.stress * CURIOSITY_STRESS_DRAG
+            + medium.openness * CURIOSITY_OPENNESS_BOOST
+            + fast.boredom * CURIOSITY_BOREDOM_BOOST;
         fast.curiosity += d_curiosity * dt;
 
         // ADR-007: Curiosity vectorization — tag with topic when curiosity rises
@@ -208,12 +261,12 @@ impl DefaultDynamics {
             }
         }
         // Decay existing interests slowly
-        fast.curiosity_vector.decay(1.0 - 0.001 * dt);
+        fast.curiosity_vector.decay(1.0 - CURIOSITY_DECAY_RATE * dt);
 
         // === Social need dynamics ===
         // Increases when alone, decreases after social interaction
         let d_social = if input.is_social {
-            -0.1 * fast.social_need // Satisfied by interaction
+            -SOCIAL_SATISFACTION_FACTOR * fast.social_need // Satisfied by interaction
         } else {
             self.social_need_growth_rate * (self.social_need_target - fast.social_need)
         };
@@ -222,10 +275,10 @@ impl DefaultDynamics {
         // === Boredom dynamics ===
         // Increases with low-surprise, low-intensity input (monotony).
         // Decreases sharply with novel/surprising stimuli.
-        let novelty = input.surprise * 0.5 + input.content_intensity * 0.3;
-        let d_boredom = 0.01 * (1.0 - novelty)  // Monotony accumulation
-            - novelty * 0.15                      // Novelty suppression
-            - fast.stress * 0.01; // Stress also suppresses boredom
+        let novelty = input.surprise * AROUSAL_INTENSITY_WEIGHT + input.content_intensity * NOVELTY_INTENSITY_WEIGHT;
+        let d_boredom = BOREDOM_MONOTONY_RATE * (1.0 - novelty)  // Monotony accumulation
+            - novelty * BOREDOM_NOVELTY_SUPPRESSION                      // Novelty suppression
+            - fast.stress * BOREDOM_STRESS_SUPPRESSION; // Stress also suppresses boredom
         fast.boredom += d_boredom * dt;
 
         // ADR-019: Propagate environment metrics into fast state
@@ -253,7 +306,7 @@ impl DefaultDynamics {
         // During idle (no stimulus), mood decays faster toward neutral — the
         // organism shouldn't stay sad for hours just because of one bad interaction.
         let has_stimulus = input.is_social || input.content_intensity > 0.01;
-        let effective_tau = if has_stimulus { tau } else { tau * 0.3 }; // 3x faster idle recovery
+        let effective_tau = if has_stimulus { tau } else { tau * IDLE_TAU_MULTIPLIER }; // 3x faster idle recovery
         let d_mood = (fast.affect.valence - medium.mood_bias) / effective_tau;
         medium.mood_bias += d_mood * dt_hours;
         medium.mood_bias = medium.mood_bias.clamp(-1.0, 1.0);
@@ -293,13 +346,13 @@ impl DefaultDynamics {
         crisis_intensity: f32,
     ) -> bool {
         // Narrative collapse threshold depends on rigidity
-        let collapse_threshold = 0.5 + slow.rigidity * 0.4;
+        let collapse_threshold = COLLAPSE_BASE_THRESHOLD + slow.rigidity * COLLAPSE_RIGIDITY_WEIGHT;
 
         if crisis_intensity > collapse_threshold {
             // Narrative collapse! Major personality shift possible
 
             // Reduce rigidity temporarily (plasticity window)
-            slow.rigidity *= 0.7;
+            slow.rigidity *= RIGIDITY_COLLAPSE_FACTOR;
 
             // Narrative bias shifts based on crisis nature
             // (In real implementation, this would be determined by the crisis content)
@@ -309,7 +362,7 @@ impl DefaultDynamics {
         }
 
         // Normal slow update: rigidity increases over time (belief solidification)
-        slow.rigidity += 0.001 * (1.0 - slow.rigidity);
+        slow.rigidity += RIGIDITY_GROWTH_RATE * (1.0 - slow.rigidity);
         slow.rigidity = slow.rigidity.clamp(0.0, 1.0);
         slow.narrative_bias = slow.narrative_bias.clamp(-1.0, 1.0);
 
@@ -319,11 +372,11 @@ impl DefaultDynamics {
     /// Apply moral cost from value violation
     pub fn apply_moral_cost(&self, fast: &mut FastState, cost: f32) {
         // Moral violations create immediate stress and energy depletion
-        fast.stress += cost * 0.5;
-        fast.energy -= cost * 0.3;
+        fast.stress += cost * MORAL_STRESS_FACTOR;
+        fast.energy -= cost * MORAL_ENERGY_FACTOR;
 
         // Also affects valence (guilt)
-        fast.affect.valence -= cost * 0.2;
+        fast.affect.valence -= cost * MORAL_VALENCE_FACTOR;
 
         fast.normalize();
     }
