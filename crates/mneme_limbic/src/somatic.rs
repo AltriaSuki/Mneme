@@ -298,8 +298,13 @@ impl SomaticMarker {
     }
 
     /// ADR-009: Format with progressive opacity based on maturity level.
-    /// maturity 0.0 = fully transparent (exact numbers), 1.0 = opaque (qualitative only).
+    /// maturity 0.0 = fully transparent (exact numbers), 1.0 = opaque (no text hints).
     pub fn format_for_prompt_opacity(&self, lang: &str, maturity: f32) -> String {
+        // Level 4 (maturity >= 0.9): no text hints — behavior 100% from structural constraints
+        if maturity >= 0.9 {
+            return String::new();
+        }
+
         let affect_desc = self.affect.describe();
         let (state_label, emotion_label, curiosity_label) = match lang {
             "en" => ("Internal State", "Current Emotion", "Current Curiosities"),
