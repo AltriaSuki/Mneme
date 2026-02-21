@@ -278,7 +278,30 @@ async fn main() -> anyhow::Result<()> {
 
     // 1. Initialize Memory (before Psyche — Psyche reads from DB)
     info!("Connecting to Memory at {}...", db_path);
-    let memory = Arc::new(SqliteMemory::new(db_path).await?);
+    let mut memory = SqliteMemory::new(db_path).await?;
+
+    // B-12 Level 3: Runtime-held encryption key — auto-generate if missing
+    {
+        let key_path = std::path::Path::new(db_path).with_extension("key");
+        let key_b64 = if key_path.exists() {
+            std::fs::read_to_string(&key_path)?
+        } else {
+            let k = mneme_core::encrypt::MemoryEncryptor::generate_key_b64();
+            std::fs::write(&key_path, &k)?;
+            // Restrict permissions (owner-only)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
+            }
+            info!("Generated new encryption key at {}", key_path.display());
+            k
+        };
+        let enc = mneme_core::encrypt::MemoryEncryptor::from_base64(key_b64.trim())?;
+        memory.set_encryptor(enc);
+    }
+
+    let memory = Arc::new(memory);
 
     // 2. Load Psyche (ADR-002: persona emerges from memory)
     info!("Loading seed persona from {}...", persona_dir);

@@ -1391,16 +1391,20 @@ impl SqliteMemory {
             );
             Ok(id)
         } else {
+            // B-12 Level 3: encrypt by default when encryptor is available
+            let has_enc = self.encryptor.is_some();
+            let stored_content = if has_enc { self.encrypt_body(content) } else { content.to_string() };
             let result = sqlx::query(
                 "INSERT INTO self_knowledge (domain, content, confidence, source, \
                  source_episode_id, is_private, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(domain)
-            .bind(content)
+            .bind(&stored_content)
             .bind(boosted_confidence)
             .bind(source)
             .bind(source_episode_id)
+            .bind(has_enc as i32)
             .bind(now)
             .bind(now)
             .execute(&self.pool)
