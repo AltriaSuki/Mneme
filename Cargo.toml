@@ -13,4 +13,5 @@ members = [
     "crates/mneme_mcp",
     "crates/mneme_gateway",
     "crates/mneme_bench",
+    "crates/mneme_onebot_bridge",
 ]
