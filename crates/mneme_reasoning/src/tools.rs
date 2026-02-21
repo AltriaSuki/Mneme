@@ -162,13 +162,13 @@ impl ToolHandler for MemoryToolHandler {
     fn schema(&self) -> Tool {
         Tool {
             name: "memory_manage".to_string(),
-            description: "管理自己的记忆。action: search/pin/unpin/forget/list_pinned。search 需要 query；pin/unpin/forget 需要 episode_id。".to_string(),
+            description: "管理自己的记忆。action: search/pin/unpin/forget/list_pinned/mark_private/mark_public。search 需要 query；pin/unpin/forget 需要 episode_id；mark_private/mark_public 需要 knowledge_id。".to_string(),
             input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties: json!({
                     "action": {
                         "type": "string",
-                        "enum": ["search", "pin", "unpin", "forget", "list_pinned"],
+                        "enum": ["search", "pin", "unpin", "forget", "list_pinned", "mark_private", "mark_public"],
                         "description": "The memory management action"
                     },
                     "episode_id": {
@@ -178,6 +178,10 @@ impl ToolHandler for MemoryToolHandler {
                     "query": {
                         "type": "string",
                         "description": "Search query (required for search action)"
+                    },
+                    "knowledge_id": {
+                        "type": "integer",
+                        "description": "Self-knowledge ID (required for mark_private/mark_public)"
                     }
                 }),
                 required: vec!["action".to_string()],
@@ -228,6 +232,18 @@ impl ToolHandler for MemoryToolHandler {
                 match result {
                     Ok(true) => ToolOutcome::ok(format!("{action} 成功: {}", &id[..id.len().min(8)])),
                     Ok(false) => ToolOutcome::permanent_error(format!("Episode not found: {id}")),
+                    Err(e) => ToolOutcome::transient_error(format!("DB error: {e}")),
+                }
+            }
+            "mark_private" | "mark_public" => {
+                let kid = match input.get("knowledge_id").and_then(|v| v.as_i64()) {
+                    Some(id) => id,
+                    None => return ToolOutcome::permanent_error("knowledge_id required".into()),
+                };
+                let private = action == "mark_private";
+                match self.db.mark_self_knowledge_private(kid, private).await {
+                    Ok(true) => ToolOutcome::ok(format!("{action} 成功: #{kid}")),
+                    Ok(false) => ToolOutcome::permanent_error(format!("Knowledge not found: {kid}")),
                     Err(e) => ToolOutcome::transient_error(format!("DB error: {e}")),
                 }
             }

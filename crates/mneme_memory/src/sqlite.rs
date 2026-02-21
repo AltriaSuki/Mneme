@@ -1481,16 +1481,64 @@ impl SqliteMemory {
         Ok(())
     }
 
+    /// B-12 Level 2: Mark a self_knowledge entry as private, encrypting its content at rest.
+    pub async fn mark_self_knowledge_private(&self, id: i64, private: bool) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT content, is_private FROM self_knowledge WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(false),
+        };
+
+        let old_private = row.get::<i32, _>("is_private") != 0;
+        if old_private == private {
+            return Ok(true); // already in desired state
+        }
+
+        let raw: String = row.get("content");
+        let new_content = if private {
+            // going private: decrypt first (in case already encrypted), then encrypt
+            let plain = if old_private { self.decrypt_body(&raw) } else { raw };
+            self.encrypt_body(&plain)
+        } else {
+            // going public: decrypt
+            let plain = self.decrypt_body(&raw);
+            plain
+        };
+
+        sqlx::query(
+            "UPDATE self_knowledge SET content = ?, is_private = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&new_content)
+        .bind(private as i32)
+        .bind(Utc::now().timestamp())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("Failed to update self_knowledge privacy")?;
+
+        Ok(true)
+    }
+
     /// Helper: convert a sqlx Row to SelfKnowledge.
     fn row_to_self_knowledge(&self, row: &sqlx::sqlite::SqliteRow) -> SelfKnowledge {
+        let is_private = row.get::<i32, _>("is_private") != 0;
+        let raw_content: String = row.get("content");
+        // B-12 Level 2: decrypt private entries at rest
+        let content = if is_private { self.decrypt_body(&raw_content) } else { raw_content };
         SelfKnowledge {
             id: row.get("id"),
             domain: row.get("domain"),
-            content: row.get("content"),
+            content,
             confidence: row.get::<f64, _>("confidence") as f32,
             source: row.get("source"),
             source_episode_id: row.get("source_episode_id"),
-            is_private: row.get::<i32, _>("is_private") != 0,
+            is_private,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         }
