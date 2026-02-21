@@ -7,6 +7,13 @@
 
 use std::collections::VecDeque;
 
+const DEFAULT_MAX_HISTORY: usize = 10;
+const DEFAULT_SURPRISE_BASELINE: f32 = 0.3;
+const DEFAULT_SMOOTHING_FACTOR: f32 = 0.2;
+/// Offset and scale for baseline-relative surprise mapping.
+const SURPRISE_OFFSET: f32 = 0.5;
+const SURPRISE_SCALE: f32 = 1.5;
+
 /// Surprise detector using simple prediction-error model
 pub struct SurpriseDetector {
     /// Last N messages for context
@@ -28,11 +35,11 @@ pub struct SurpriseDetector {
 impl SurpriseDetector {
     pub fn new() -> Self {
         Self {
-            history: VecDeque::with_capacity(10),
-            max_history: 10,
+            history: VecDeque::with_capacity(DEFAULT_MAX_HISTORY),
+            max_history: DEFAULT_MAX_HISTORY,
             current_prediction: None,
-            surprise_baseline: 0.3,
-            smoothing_factor: 0.2,
+            surprise_baseline: DEFAULT_SURPRISE_BASELINE,
+            smoothing_factor: DEFAULT_SMOOTHING_FACTOR,
         }
     }
 
@@ -63,7 +70,7 @@ impl SurpriseDetector {
         self.current_prediction = None;
 
         // Return surprise relative to baseline
-        ((surprise - self.surprise_baseline + 0.5) * 1.5).clamp(0.0, 1.0)
+        ((surprise - self.surprise_baseline + SURPRISE_OFFSET) * SURPRISE_SCALE).clamp(0.0, 1.0)
     }
 
     /// Add content to history
@@ -98,7 +105,7 @@ impl SurpriseDetector {
     /// Compute surprise based on history (no explicit prediction)
     fn history_based_surprise(&self, content: &str) -> f32 {
         if self.history.is_empty() {
-            return 0.3; // Default mild surprise for first message
+            return DEFAULT_SURPRISE_BASELINE;
         }
 
         // Compare with recent history
@@ -111,7 +118,7 @@ impl SurpriseDetector {
         }
 
         if count == 0 {
-            return 0.3;
+            return DEFAULT_SURPRISE_BASELINE;
         }
 
         total_distance / count as f32
