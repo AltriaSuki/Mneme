@@ -1313,4 +1313,96 @@ mod tests {
         // Should be back to awake
         assert_eq!(coordinator.lifecycle_state().await, LifecycleState::Awake);
     }
+
+    // === Concurrency safety tests (#536) ===
+
+    #[tokio::test]
+    async fn test_concurrent_interactions() {
+        let limbic = Arc::new(LimbicSystem::new());
+        let coordinator = Arc::new(OrganismCoordinator::new(limbic));
+        let n = 20;
+
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let coord = coordinator.clone();
+            handles.push(tokio::spawn(async move {
+                coord
+                    .process_interaction("user", &format!("msg {}", i), 0.5, "cli")
+                    .await
+                    .unwrap()
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(coordinator.interaction_count().await, n);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_feedback_recording() {
+        let limbic = Arc::new(LimbicSystem::new());
+        let coordinator = Arc::new(OrganismCoordinator::new(limbic));
+        let n = 50u32;
+
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let coord = coordinator.clone();
+            handles.push(tokio::spawn(async move {
+                coord
+                    .record_feedback(
+                        SignalType::UserEmotionalFeedback,
+                        format!("signal {}", i),
+                        0.8,
+                        0.0,
+                    )
+                    .await;
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let buffer = coordinator.feedback_buffer.read().await;
+        assert_eq!(buffer.pending_count(), n as usize);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_health_monitor() {
+        let monitor = Arc::new(RwLock::new(HealthMonitor::default()));
+        let n = 10;
+
+        let mut handles = Vec::new();
+        for _ in 0..n {
+            let m = monitor.clone();
+            handles.push(tokio::spawn(async move {
+                m.write().await.record_failure("db");
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let m = monitor.read().await;
+        assert_eq!(m.db_failures, n);
+        assert!(!m.db_healthy); // >= 3 failures
+    }
+
+    #[tokio::test]
+    async fn test_interaction_blocked_during_sleep() {
+        let limbic = Arc::new(LimbicSystem::new());
+        let coordinator = Arc::new(OrganismCoordinator::new(limbic));
+
+        // Force sleeping state
+        *coordinator.lifecycle_state.write().await = LifecycleState::Sleeping;
+
+        let result = coordinator
+            .process_interaction("user", "hello", 1.0, "cli")
+            .await
+            .unwrap();
+
+        assert_eq!(result.lifecycle, LifecycleState::Sleeping);
+        // Interaction count should NOT increment
+        assert_eq!(coordinator.interaction_count().await, 0);
+    }
 }
