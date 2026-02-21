@@ -979,7 +979,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 **长期目标**:
 - [x] 定时任务调度器 ✅ — PresenceScheduler + AgentLoop + Trigger::Scheduled 动态调度
 - [x] 批量训练数据导出 ✅ — SqliteMemory::export_training_jsonl + CLI `export` 命令
-- [ ] 外部模型训练接口
+- [x] 外部模型训练接口 ✅ — OrganismCoordinator::trigger_training() + CLI `train` 命令
 - [ ] 增量学习支持
 - [ ] A/B 测试框架（比较不同参数效果）
 
