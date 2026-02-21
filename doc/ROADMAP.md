@@ -1475,7 +1475,7 @@ CREATE TABLE self_knowledge (
 
 **Phase 2 待升级**:
 - [x] LLM 生成梦境叙述（替代模板拼接） ✅ — DreamNarrator trait + coordinator LLM 优先/模板兜底
-- [ ] 梦境与自我反思的交互（梦中领悟）
+- [x] 梦境与自我反思的交互（梦中领悟） ✅ `d3fe3c7`
 
 ---
 
