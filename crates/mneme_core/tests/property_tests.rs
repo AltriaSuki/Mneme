@@ -454,3 +454,42 @@ proptest! {
         }
     }
 }
+
+// ============================================================================
+// Serialization Roundtrip Properties (#535)
+// ============================================================================
+
+proptest! {
+    /// **OrganismState JSON roundtrip**: serialize then deserialize produces identical state.
+    #[test]
+    fn organism_state_json_roundtrip(state in arb_organism_state()) {
+        let json = serde_json::to_string(&state).unwrap();
+        let back: OrganismState = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(state.fast.energy.to_bits(), back.fast.energy.to_bits());
+        prop_assert_eq!(state.fast.stress.to_bits(), back.fast.stress.to_bits());
+        prop_assert_eq!(state.fast.affect.valence.to_bits(), back.fast.affect.valence.to_bits());
+        prop_assert_eq!(state.medium.mood_bias.to_bits(), back.medium.mood_bias.to_bits());
+    }
+
+    /// **Affect JSON roundtrip**.
+    #[test]
+    fn affect_json_roundtrip(affect in arb_affect()) {
+        let json = serde_json::to_string(&affect).unwrap();
+        let back: Affect = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(affect.valence.to_bits(), back.valence.to_bits());
+        prop_assert_eq!(affect.arousal.to_bits(), back.arousal.to_bits());
+    }
+
+    /// **Emotion string roundtrip** via serde.
+    #[test]
+    fn emotion_serde_roundtrip(idx in 0usize..7) {
+        let emotions = [
+            Emotion::Neutral, Emotion::Happy, Emotion::Sad,
+            Emotion::Excited, Emotion::Calm, Emotion::Angry, Emotion::Surprised,
+        ];
+        let e = emotions[idx];
+        let json = serde_json::to_string(&e).unwrap();
+        let back: Emotion = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(e, back);
+    }
+}
