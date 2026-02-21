@@ -48,16 +48,36 @@ impl ToolRegistry {
         self.handlers.values().map(|h| h.schema()).collect()
     }
 
-    /// Dispatch a tool call by name.
+    /// Dispatch a tool call by name. All calls are audit-logged.
     pub async fn dispatch(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
-        match self.handlers.get(name) {
+        let start = std::time::Instant::now();
+        let outcome = match self.handlers.get(name) {
             Some(handler) => handler.execute(input).await,
             None => ToolOutcome {
                 content: format!("Unknown tool: {}", name),
                 is_error: true,
                 error_kind: Some(ToolErrorKind::Permanent),
             },
+        };
+        let elapsed_ms = start.elapsed().as_millis();
+        let input_summary: String = input.to_string().chars().take(200).collect();
+        if outcome.is_error {
+            tracing::warn!(
+                tool = name,
+                elapsed_ms = elapsed_ms,
+                input = %input_summary,
+                error_kind = ?outcome.error_kind,
+                "AUDIT tool_call FAILED"
+            );
+        } else {
+            tracing::info!(
+                tool = name,
+                elapsed_ms = elapsed_ms,
+                input = %input_summary,
+                "AUDIT tool_call OK"
+            );
         }
+        outcome
     }
 
     /// Get a reference to the safety guard (if set).
