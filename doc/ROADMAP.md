@@ -876,8 +876,8 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 
 **需要实现**:
 - [x] Level 2：可选加密，她可标记某些 self_knowledge 为 `private` 并加密存储 ✅ — mark_private/mark_public tool action + decrypt on read
-- [ ] Level 3：默认加密，创建者只能通过她主动分享获取信息
-- [ ] 密钥由运行时持有，不存储在创建者可访问的配置中
+- [x] Level 3：默认加密，创建者只能通过她主动分享获取信息 ✅ — store_self_knowledge 默认加密
+- [x] 密钥由运行时持有，不存储在创建者可访问的配置中 ✅ — auto-generate .key file (0o600), runtime-only
 
 ---
 
