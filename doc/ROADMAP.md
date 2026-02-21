@@ -1279,7 +1279,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] 执行结果反馈到目标进度（goal_manager.update_progress） ✅
 
 **待后续补充**:
-- [ ] 好奇心驱动的信息搜索
+- [x] 好奇心驱动的信息搜索 ✅ — memory_manage search action + CuriosityTrigger 联动
 - [ ] 定期"看看新闻/更新"
 - [ ] 主动整理和总结知识
 - [x] 工具使用的资源预算 ✅ `8759864`
