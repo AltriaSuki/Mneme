@@ -28,6 +28,8 @@ fn ensure_sqlite_vec_registered() {
 pub struct SqliteMemory {
     pool: Pool<Sqlite>,
     embedding_model: Arc<EmbeddingModel>,
+    /// B-12: Optional encryption for memory at rest.
+    encryptor: Option<mneme_core::encrypt::MemoryEncryptor>,
 }
 
 impl SqliteMemory {
@@ -56,9 +58,34 @@ impl SqliteMemory {
         let memory = Self {
             pool,
             embedding_model,
+            encryptor: None,
         };
         memory.migrate().await?;
         Ok(memory)
+    }
+
+    /// B-12: Set encryption for memory at rest.
+    pub fn set_encryptor(&mut self, enc: mneme_core::encrypt::MemoryEncryptor) {
+        self.encryptor = Some(enc);
+    }
+
+    /// Encrypt body if encryptor is set, otherwise return as-is.
+    fn encrypt_body(&self, body: &str) -> String {
+        match &self.encryptor {
+            Some(enc) => enc.encrypt(body).unwrap_or_else(|e| {
+                tracing::warn!("Encryption failed, storing plaintext: {}", e);
+                body.to_string()
+            }),
+            None => body.to_string(),
+        }
+    }
+
+    /// Decrypt body if encryptor is set and content looks encrypted (base64).
+    fn decrypt_body(&self, body: &str) -> String {
+        match &self.encryptor {
+            Some(enc) => enc.decrypt(body).unwrap_or_else(|_| body.to_string()),
+            None => body.to_string(),
+        }
     }
 
     async fn migrate(&self) -> Result<()> {
@@ -150,7 +177,8 @@ impl Memory for SqliteMemory {
         let mut scored: Vec<(f32, String, String, i64)> = Vec::new();
         for row in &rows {
             let author: String = row.get("author");
-            let body: String = row.get("body");
+            let body_raw: String = row.get("body");
+            let body = self.decrypt_body(&body_raw);
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
             let distance: f64 = row.get("distance");
@@ -213,7 +241,8 @@ impl Memory for SqliteMemory {
 
         for row in &rows {
             let author: String = row.get("author");
-            let body: String = row.get("body");
+            let body_raw: String = row.get("body");
+            let body = self.decrypt_body(&body_raw);
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
             let distance: f64 = row.get("distance");
@@ -298,6 +327,9 @@ impl Memory for SqliteMemory {
         // Default strength 0.5; caller should use update_episode_strength()
         let default_strength: f64 = 0.5;
 
+        // B-12: Encrypt body at rest if encryptor is configured
+        let stored_body = self.encrypt_body(&content.body);
+
         sqlx::query(
             r#"
             INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality, embedding, strength)
@@ -307,7 +339,7 @@ impl Memory for SqliteMemory {
         .bind(content.id.to_string())
         .bind(&content.source)
         .bind(&content.author)
-        .bind(&content.body)
+        .bind(&stored_body)
         .bind(content.timestamp)
         .bind(modality_str)
         .bind(embedding_blob)
@@ -343,6 +375,7 @@ impl Memory for SqliteMemory {
         } else {
             None
         };
+        let stored_body = self.encrypt_body(&content.body);
         sqlx::query(
             "INSERT OR IGNORE INTO episodes (id, source, author, body, timestamp, modality, embedding, strength) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
@@ -350,7 +383,7 @@ impl Memory for SqliteMemory {
         .bind(content.id.to_string())
         .bind(&content.source)
         .bind(&content.author)
-        .bind(&content.body)
+        .bind(&stored_body)
         .bind(content.timestamp)
         .bind(modality_str)
         .bind(embedding_blob)
@@ -1731,7 +1764,7 @@ impl SqliteMemory {
             .map(|row| DreamSeed {
                 id: row.get::<String, _>("id"),
                 author: row.get::<String, _>("author"),
-                body: row.get::<String, _>("body"),
+                body: self.decrypt_body(&row.get::<String, _>("body")),
                 timestamp: row.get::<i64, _>("timestamp"),
                 strength: row.get::<f64, _>("strength") as f32,
             })

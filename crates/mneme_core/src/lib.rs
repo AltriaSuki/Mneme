@@ -1,6 +1,7 @@
 pub mod affect;
 pub mod config;
 pub mod dynamics;
+pub mod encrypt;
 pub mod persona;
 pub mod prelude;
 pub mod safety;
