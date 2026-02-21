@@ -1827,6 +1827,10 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] `evaluation.md` 风险章节同步 — Agency 已部分实现、browser 已退役、配置已改善 ✅
 - [x] `dynamics.rs` ODE 魔法数字提取为命名常量 — 30+ 系数全部具名化 ✅
 - [x] `mneme_core` 公共方法添加 `#[must_use]` — ResourceBudget/VisibilityFilter/Emotion ✅
+- [x] `attention.rs`/`consciousness.rs` 魔法数字提取为命名常量 — PRIORITY_SCORE_*/STRESS_SPIKE_THRESHOLD 等 ✅
+- [x] f32 排序统一使用 `total_cmp()` 替代 `partial_cmp().unwrap_or()` — 全代码库零残留 ✅
+- [x] `mneme_reasoning` 公共 getter 添加 `#[must_use]` — temperature/topic_overlap/ResponseCache::len ✅
+- [x] `evaluation.md` §8.7/8.8/总结表同步 — 形成性课程已部分实现、91%落地率、348测试、功能6/10 ✅
 
 ---
 
