@@ -1,0 +1,75 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Energy",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "mneme_energy", "legendFormat": "energy" }],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1, "thresholds": { "steps": [
+        { "color": "red", "value": null },
+        { "color": "orange", "value": 0.2 },
+        { "color": "green", "value": 0.5 }
+      ]}}}
+    },
+    {
+      "title": "Stress",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "mneme_stress", "legendFormat": "stress" }],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1, "thresholds": { "steps": [
+        { "color": "green", "value": null },
+        { "color": "orange", "value": 0.5 },
+        { "color": "red", "value": 0.8 }
+      ]}}}
+    },
+    {
+      "title": "Affect (Valence / Arousal)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "mneme_affect_valence", "legendFormat": "valence" },
+        { "expr": "mneme_affect_arousal", "legendFormat": "arousal" }
+      ],
+      "fieldConfig": { "defaults": { "min": -1, "max": 1 }}
+    },
+    {
+      "title": "LLM Call Latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, rate(mneme_llm_latency_ms_bucket[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(mneme_llm_latency_ms_bucket[5m]))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "title": "LLM Calls (rate/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "expr": "rate(mneme_llm_calls_total{status=\"ok\"}[5m])*60", "legendFormat": "ok" },
+        { "expr": "rate(mneme_llm_calls_total{status=\"error\"}[5m])*60", "legendFormat": "error" }
+      ]
+    },
+    {
+      "title": "Token Usage (cumulative)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "mneme_tokens_input_total", "legendFormat": "input" },
+        { "expr": "mneme_tokens_output_total", "legendFormat": "output" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["mneme"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Mneme Organism Dashboard",
+  "uid": "mneme-organism"
+}
