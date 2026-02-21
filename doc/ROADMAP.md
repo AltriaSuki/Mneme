@@ -1266,7 +1266,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 
 **待后续补充**:
 - [x] 目标冲突处理 ✅ — detect_conflicts() duplicate/priority_contention + descriptions_overlap
-- [ ] 从对话中自动提取目标（LLM extraction pass）
+- [x] 从对话中自动提取目标（LLM extraction pass） ✅ — extract_all() in engine.rs already does this
 
 ### 23. ✅ Autonomous Tool Use - 自主工具使用
 **优先级**: 🟡 中
