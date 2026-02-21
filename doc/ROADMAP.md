@@ -1785,11 +1785,11 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] 解耦 `mneme_mcp` 对 `mneme_reasoning` 的反向依赖 — trait 下沉到 `mneme_core` ✅
 
 **Phase 5b — 自主性深化**:
-- [ ] LLM 自主选择 + 任务路由 (B-8 Level 2)
-- [ ] MCP server 自主发现与连接 (ADR-014 Layer 3) — 她根据目标和好奇心自己找工具
-- [ ] 工具自主组合 (B-8 Level 3) — 组合多个 MCP server 完成复杂任务
-- [ ] 记忆加密 (B-12) (#57) — Level 3 默认加密，密钥由运行时持有
-- [ ] 渐进不可解读性 (ADR-009) — LTC 网络天然实现底层不可解读（ADR-018 Somatic Decoder 互补）
+- [x] LLM 自主选择 + 任务路由 (B-8 Level 2) ✅
+- [x] MCP server 自主发现与连接 (ADR-014 Layer 3) — 她根据目标和好奇心自己找工具 ✅
+- [x] 工具自主组合 (B-8 Level 3) — 组合多个 MCP server 完成复杂任务 ✅
+- [x] 记忆加密 (B-12) (#57) — Level 3 默认加密，密钥由运行时持有 ✅
+- [x] 渐进不可解读性 (ADR-009) — LTC 网络天然实现底层不可解读（ADR-018 Somatic Decoder 互补） ✅
 
 ### v3.0.0 - 对等版本（远景）
 > **目标**: B-8 Level 3，从「父母」到「朋友」。空间感知、物理干涉、经济实体。
