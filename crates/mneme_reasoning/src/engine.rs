@@ -136,6 +136,9 @@ pub struct ReasoningEngine {
 
     // #771: Response cache for reusing answers to similar questions
     response_cache: tokio::sync::Mutex<crate::response_cache::ResponseCache>,
+
+    // #1285: Tool use budget — limits tool calls per reasoning cycle
+    tool_call_count: std::sync::atomic::AtomicU32,
 }
 
 impl ReasoningEngine {
@@ -173,6 +176,7 @@ impl ReasoningEngine {
             low_res_client: None,
             router: None,
             response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
+            tool_call_count: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -210,6 +214,7 @@ impl ReasoningEngine {
             low_res_client: None,
             router: None,
             response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
+            tool_call_count: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -799,6 +804,16 @@ impl ReasoningEngine {
     /// Execute a tool with automatic retry for transient failures.
     #[tracing::instrument(skip(self, input), fields(tool = name))]
     async fn execute_tool_with_retry(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
+        // #1285: Tool use budget — cap at 20 tool calls per reasoning cycle
+        const TOOL_CALL_LIMIT: u32 = 20;
+        let count = self.tool_call_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count >= TOOL_CALL_LIMIT {
+            tracing::warn!("Tool budget exhausted ({}/{}), rejecting '{}'", count, TOOL_CALL_LIMIT, name);
+            return ToolOutcome::permanent_error(format!(
+                "Tool call budget exhausted ({} calls). Try again in the next cycle.", TOOL_CALL_LIMIT
+            ));
+        }
+
         let outcome = self.execute_tool(name, input).await;
 
         // Retry only transient errors
@@ -982,6 +997,9 @@ impl ReasoningEngine {
 #[async_trait::async_trait]
 impl Reasoning for ReasoningEngine {
     async fn think(&self, event: Event) -> Result<ReasoningOutput> {
+        // #1285: Reset tool call budget for each reasoning cycle
+        self.tool_call_count.store(0, std::sync::atomic::Ordering::Relaxed);
+
         match event {
             Event::UserMessage(content) => {
                 // === Decision Router: layered filtering ===
