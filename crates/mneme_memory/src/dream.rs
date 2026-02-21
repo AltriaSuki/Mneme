@@ -16,7 +16,14 @@ use mneme_core::OrganismState;
 /// Trait for LLM-based dream narrative generation (Phase 2).
 #[async_trait]
 pub trait DreamNarrator: Send + Sync {
-    async fn narrate_dream(&self, seeds: &[DreamSeed], state: &OrganismState) -> Result<String>;
+    /// Generate a dream narrative from memory seeds, organism state,
+    /// and optional self-reflection context (#1478: dream-reflection interaction).
+    async fn narrate_dream(
+        &self,
+        seeds: &[DreamSeed],
+        state: &OrganismState,
+        reflection_context: &str,
+    ) -> Result<String>;
 }
 
 /// A generated dream episode ready for storage.

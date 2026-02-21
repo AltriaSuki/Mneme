@@ -1760,13 +1760,19 @@ impl mneme_memory::DreamNarrator for LlmDreamNarrator {
         &self,
         seeds: &[mneme_memory::DreamSeed],
         state: &mneme_core::OrganismState,
+        reflection_context: &str,
     ) -> Result<String> {
         let tone = mneme_memory::DreamGenerator::compute_emotional_tone(seeds, state.medium.mood_bias);
         let tone_desc = if tone > 0.2 { "温暖的" } else if tone < -0.2 { "不安的" } else { "朦胧的" };
 
         let seed_fragments: Vec<&str> = seeds.iter().map(|s| s.body.as_str()).collect();
+        let reflection_hint = if reflection_context.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n最近的自我反思：\n{reflection_context}\n请在梦境中隐喻性地融入这些领悟。")
+        };
         let user_prompt = format!(
-            "基于以下记忆碎片，生成一段{tone_desc}梦境叙述（第一人称，200-300字，超现实风格）：\n\n{}",
+            "基于以下记忆碎片，生成一段{tone_desc}梦境叙述（第一人称，200-300字，超现实风格）：\n\n{}{reflection_hint}",
             seed_fragments.join("\n")
         );
 

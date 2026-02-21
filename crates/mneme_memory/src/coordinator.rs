@@ -799,9 +799,17 @@ impl OrganismCoordinator {
                 Ok(seeds) if seeds.len() >= 2 => {
                     let current = self.state.read().await.clone();
 
+                    // #1478: Build reflection context for dream-reflection interaction
+                    let reflection_ctx: String = result
+                        .self_reflections
+                        .iter()
+                        .map(|r| format!("[{}] {}", r.domain, r.content))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
                     // Try LLM dream narrator first (Phase 2)
                     let llm_dream = if let Some(narrator) = self.dream_narrator.read().await.as_ref() {
-                        match narrator.narrate_dream(&seeds, &current).await {
+                        match narrator.narrate_dream(&seeds, &current, &reflection_ctx).await {
                             Ok(narrative) => {
                                 let tone = crate::dream::DreamGenerator::compute_emotional_tone(
                                     &seeds,
@@ -844,6 +852,28 @@ impl OrganismCoordinator {
                         if let Err(e) = db.memorize(&dream_content).await {
                             tracing::warn!("Failed to store dream episode: {}", e);
                         }
+
+                        // #1478: Dream insight — intense dreams yield self-knowledge
+                        if dream.emotional_tone.abs() > 0.5 && !dream.narrative.is_empty() {
+                            let insight = format!(
+                                "梦境领悟（情绪强度{:.1}）：{}",
+                                dream.emotional_tone,
+                                &dream.narrative[..dream.narrative.len().min(200)]
+                            );
+                            if let Err(e) = db
+                                .store_self_knowledge(
+                                    "dream_insight",
+                                    &insight,
+                                    dream.emotional_tone.abs(),
+                                    "self:dream",
+                                    None,
+                                )
+                                .await
+                            {
+                                tracing::warn!("Failed to store dream insight: {}", e);
+                            }
+                        }
+
                         result.dream = Some(dream);
                     }
                 }
