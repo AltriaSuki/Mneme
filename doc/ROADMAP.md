@@ -1813,4 +1813,13 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 
 ---
 
+## 📋 Session Log: 2026-02-21 (continued)
+
+- [x] `mneme_bench` 编译警告清零 — 未使用 import/函数移入 `#[cfg(test)]`，全 workspace 零警告 ✅
+- [x] `SurpriseDetector` 魔法数字提取为命名常量（`DEFAULT_MAX_HISTORY`, `SURPRISE_OFFSET` 等） ✅
+- [x] `Humanizer` 偶发"走神"延迟 — 5% 概率额外 2-5s 停顿（design.md §6.1） ✅
+- [x] `evaluation.md` 再次同步 — 元认知反思✅、ContentItem✅、FeedbackBuffer 已持久化，白皮书落地率 87%→91% ✅
+
+---
+
 *最后更新: 2026-02-21*
