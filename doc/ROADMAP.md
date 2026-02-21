@@ -1068,7 +1068,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] 集成测试补充 ✅ — sleep consolidation / feedback→state / energy decay 3 个新测试
 - [x] Mock 基础设施完善 ✅ — tests/common/mod.rs 共享 MockLlmClient/MockMemory/MockToolHandler/FailingToolHandler + response builders
 - [x] CI/CD 配置 ✅ — GitHub Actions: cargo build/test/clippy + OTLP feature check
-- [ ] 代码覆盖率报告
+- [x] 代码覆盖率报告 ✅ — cargo-tarpaulin CI job + cobertura.xml artifact upload
 
 ---
 
