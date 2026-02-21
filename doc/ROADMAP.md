@@ -1819,6 +1819,14 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] `SurpriseDetector` 魔法数字提取为命名常量（`DEFAULT_MAX_HISTORY`, `SURPRISE_OFFSET` 等） ✅
 - [x] `Humanizer` 偶发"走神"延迟 — 5% 概率额外 2-5s 停顿（design.md §6.1） ✅
 - [x] `evaluation.md` 再次同步 — 元认知反思✅、ContentItem✅、FeedbackBuffer 已持久化，白皮书落地率 87%→91% ✅
+- [x] `SomaticMarker`/`ModulationVector` 关键方法添加 `#[must_use]` 防止返回值被忽略 ✅
+- [x] `evaluation.md` Agency 章节同步 — 主动行为循环/目标系统/自主工具使用 ❌→✅，版本里程碑校正 ✅
+- [x] f32 `partial_cmp` NaN 安全 — narrative/feedback_buffer 的 `unwrap`→`unwrap_or(Equal)` ✅
+- [x] `README.md` crate 表同步 — 删除已退役模块(os/browser/voice/perception)、补充 gateway/mcp/bench ✅
+- [x] `evaluation.md` 量化指标全面更新 — 31k LOC / 348 测试 / crate 成熟度表重写 ✅
+- [x] `evaluation.md` 风险章节同步 — Agency 已部分实现、browser 已退役、配置已改善 ✅
+- [x] `dynamics.rs` ODE 魔法数字提取为命名常量 — 30+ 系数全部具名化 ✅
+- [x] `mneme_core` 公共方法添加 `#[must_use]` — ResourceBudget/VisibilityFilter/Emotion ✅
 
 ---
 
