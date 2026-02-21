@@ -462,6 +462,15 @@ impl OrganismCoordinator {
             *count += 1;
         }
 
+        // 5a. ADR-009: Maturity progression — slow growth per interaction
+        {
+            let mut state = self.state.write().await;
+            // Asymptotic growth: each interaction nudges maturity toward 1.0
+            // ~500 interactions to reach 0.5, ~2000 to reach 0.8
+            state.slow.maturity += 0.001 * (1.0 - state.slow.maturity);
+            state.slow.maturity = state.slow.maturity.clamp(0.0, 1.0);
+        }
+
         // 5b. Infer implicit feedback from user behavior (#5)
         self.infer_implicit_feedback(content).await;
 

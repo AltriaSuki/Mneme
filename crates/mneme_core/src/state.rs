@@ -345,6 +345,11 @@ pub struct SlowState {
     /// Core value rigidity (0.0 - 1.0): resistance to value change
     /// Increases as values are repeatedly reinforced
     pub rigidity: f32,
+
+    /// ADR-009: Maturity level (0.0–1.0) — controls progressive opacity.
+    /// 0.0 = newborn (fully transparent), 1.0 = adult (opaque internals).
+    #[serde(default)]
+    pub maturity: f32,
 }
 
 impl Default for SlowState {
@@ -353,6 +358,7 @@ impl Default for SlowState {
             values: ValueNetwork::default(),
             narrative_bias: 0.1, // Slightly optimistic default
             rigidity: 0.3,       // Moderately flexible
+            maturity: 0.0,       // Newborn: fully transparent
         }
     }
 }

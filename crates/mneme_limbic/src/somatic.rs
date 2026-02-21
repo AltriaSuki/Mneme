@@ -241,6 +241,10 @@ pub struct SomaticMarker {
     /// Top curiosity interests (ADR-007: curiosity vectorization)
     #[serde(default)]
     pub curiosity_interests: Vec<(String, f32)>,
+
+    /// ADR-009: Maturity level (0.0–1.0) for progressive opacity.
+    #[serde(default)]
+    pub maturity: f32,
 }
 
 impl SomaticMarker {
@@ -263,6 +267,7 @@ impl SomaticMarker {
             attachment_style: state.medium.attachment.style(),
             openness: state.medium.openness,
             curiosity_interests: interests,
+            maturity: state.slow.maturity,
         }
     }
 
@@ -276,17 +281,42 @@ impl SomaticMarker {
 
     /// Format for LLM system prompt injection with language selection.
     pub fn format_for_prompt_lang(&self, lang: &str) -> String {
+        self.format_for_prompt_opacity(lang, self.maturity)
+    }
+
+    /// ADR-009: Format with progressive opacity based on maturity level.
+    /// maturity 0.0 = fully transparent (exact numbers), 1.0 = opaque (qualitative only).
+    pub fn format_for_prompt_opacity(&self, lang: &str, maturity: f32) -> String {
         let affect_desc = self.affect.describe();
         let (state_label, emotion_label, curiosity_label) = match lang {
             "en" => ("Internal State", "Current Emotion", "Current Curiosities"),
             _ => ("内部状态", "当前情绪", "当前好奇方向"),
         };
-        let mut s = format!(
-            "[{}: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]\n[{}: {}]",
-            state_label,
-            self.energy, self.stress, self.mood_bias, self.affect.valence, self.affect.arousal,
-            emotion_label, affect_desc,
-        );
+
+        let state_line = if maturity < 0.3 {
+            // Level 0-1: transparent — exact numeric values
+            format!(
+                "[{}: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]",
+                state_label,
+                self.energy, self.stress, self.mood_bias, self.affect.valence, self.affect.arousal,
+            )
+        } else if maturity < 0.7 {
+            // Level 2: semi-opaque — qualitative ranges
+            let e = qual_level(self.energy);
+            let s = qual_level(self.stress);
+            let m = qual_signed(self.mood_bias);
+            format!("[{}: E={} S={} M={}]", state_label, e, s, m)
+        } else {
+            // Level 3: opaque — only affect description, no internals
+            String::new()
+        };
+
+        let mut s = if state_line.is_empty() {
+            format!("[{}: {}]", emotion_label, affect_desc)
+        } else {
+            format!("{}\n[{}: {}]", state_line, emotion_label, affect_desc)
+        };
+
         // ADR-007: Inject curiosity direction
         if !self.curiosity_interests.is_empty() {
             let interests: Vec<String> = self
@@ -505,6 +535,16 @@ impl SomaticMarker {
 /// Linear interpolation helper
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t.clamp(0.0, 1.0)
+}
+
+/// ADR-009: Qualitative level for 0.0–1.0 values (opacity Level 2).
+fn qual_level(v: f32) -> &'static str {
+    if v < 0.3 { "low" } else if v < 0.7 { "mid" } else { "high" }
+}
+
+/// ADR-009: Qualitative level for -1.0–1.0 signed values (opacity Level 2).
+fn qual_signed(v: f32) -> &'static str {
+    if v < -0.3 { "neg" } else if v > 0.3 { "pos" } else { "neutral" }
 }
 
 // ============================================================================
