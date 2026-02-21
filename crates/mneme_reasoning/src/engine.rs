@@ -550,6 +550,14 @@ impl ReasoningEngine {
         let mut final_content = String::new();
         let final_emotion = Emotion::from_affect(&somatic_marker.affect);
 
+        // Response cache: skip LLM for repeated identical queries (user messages only)
+        if is_user_message {
+            if let Some(cached) = self.response_cache.lock().await.get(input_text) {
+                tracing::info!("Response cache hit, skipping LLM call");
+                return Ok((cached, final_emotion, somatic_marker.affect));
+            }
+        }
+
         // --- React Loop (Max 5 turns) ---
         let mut consecutive_permanent_fails = 0u32;
         for _iteration in 0..5 {
@@ -771,8 +779,14 @@ impl ReasoningEngine {
                 .await;
         }
 
+        // Store in response cache for user messages
+        let trimmed = final_content.trim().to_string();
+        if is_user_message && !trimmed.is_empty() {
+            self.response_cache.lock().await.put(input_text, trimmed.clone());
+        }
+
         Ok((
-            final_content.trim().to_string(),
+            trimmed,
             final_emotion,
             final_affect,
         ))
