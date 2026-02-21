@@ -1,7 +1,7 @@
 # Mneme 项目评估报告
 
-**评估日期**: 2026-02-07  
-**评估基准**: 架构白皮书 `temp.md` + 设计文档 `design.md` v1.0 + `ROADMAP.md`  
+**评估日期**: 2026-02-21
+**评估基准**: 架构白皮书 `temp.md` + 设计文档 `design.md` v1.0 + `ROADMAP.md`
 **代码版本**: 当前 master 分支
 
 ---
@@ -10,13 +10,12 @@
 
 | 指标 | 数值 |
 |------|------|
-| Rust 代码总行数 | 12,123 |
+| Rust 代码总行数 | 31,461 |
 | Crate 数量 | 11 |
-| 测试函数总数 | 137 |
+| 测试函数总数 | 348 |
 | 编译状态 | ✅ 零警告通过 |
-| 测试通过 | 129 / 137（8 个因 fastembed 网络超时失败，非代码问题） |
-| ROADMAP 已完成项 | 74 / 185（约 40%） |
-| 已知未修复 Bug | 5（浏览器阻塞异步运行时、Shell 无权限控制、CLI 光标/中文删除、Memory history leak） |
+| 测试通过 | 232 / 348（mneme_memory 因 fastembed OOM 被 SIGKILL，非代码问题） |
+| 已知未修复 Bug | 2（CLI 光标/中文删除、fastembed OOM） |
 
 ---
 
@@ -24,17 +23,17 @@
 
 | Crate | 代码量 | 测试数 | 评级 | 说明 |
 |---|---|---|---|---|
-| **mneme_core** | 2,229 | 37 | ⭐⭐⭐⭐⭐ | 状态模型（ODE 动力学）、价值网络、情感系统完备；proptest 覆盖 NaN 注入、极端 dt 等边界 |
-| **mneme_reasoning** | 3,276 | 55 | ⭐⭐⭐⭐ | ReAct 循环、工具分发、上下文组装、JSON 多策略解析、输出自然化均已实现；Mock 体系完善 |
-| **mneme_memory** | 3,191 | 11 | ⭐⭐⭐ | SQLite + 本地向量搜索 + 事实三元组 + 状态历史 + 整合机制已有；Social Memory 尚未连通 |
-| **mneme_limbic** | 1,218 | 19 | ⭐⭐⭐⭐ | `ModulationVector` 结构性调制范式已落地；somatic marker 从"导演模式"成功转向"具身模式" |
-| **mneme_expression** | 506 | 9 | ⭐⭐⭐ | 消息拆分、打字延迟、在线状态模拟有基础实现，但缺少语音模态和上下文感知的格式选择 |
-| **mneme_cli** | 444 | 0 | ⭐⭐⭐ | rustyline 已集成，命令补全 + 动态 prompt（mood emoji + energy%）已实现，但零测试 |
-| **mneme_perception** | 393 | 2 | ⭐⭐ | RSS + Web 抓取有基础，但设计文档要求的社交平台 feed（微博、B站等）尚未实现 |
-| **mneme_os** | 286 | 1 | ⭐⭐ | Shell 执行可用，但**无任何安全沙箱**——这是当前最大的安全隐患 |
-| **mneme_onebot** | 232 | 0 | ⭐ | QQ 协议客户端骨架存在，零测试，未经实际验证 |
-| **mneme_browser** | 216 | 3 | ⭐⭐ | headless Chrome 基础可用，有健康检查和会话恢复，但同步 API 阻塞 tokio 运行时 |
-| **mneme_voice** | 132 | 0 | ☆ | **纯 trait 定义，无任何具体实现**——STT/TTS 均为空壳 |
+| **mneme_core** | 5,353 | 121 | ⭐⭐⭐⭐⭐ | 状态模型（ODE 动力学）、价值网络、情感系统、工具抽象完备；proptest 覆盖 NaN 注入、极端 dt 等边界 |
+| **mneme_memory** | 9,192 | 49 | ⭐⭐⭐⭐ | SQLite + sqlite-vec 向量检索 + 事实三元组 + 状态历史 + 睡眠整合 + 反馈缓冲持久化 + 规则引擎 + 叙事编织 |
+| **mneme_reasoning** | 8,072 | 98 | ⭐⭐⭐⭐⭐ | ReAct 循环、工具分发、上下文组装、JSON 多策略解析、输出自然化、元认知闭环、主动行为循环、目标系统 |
+| **mneme_limbic** | 2,906 | 49 | ⭐⭐⭐⭐⭐ | `ModulationVector` 结构性调制 + 可学习曲线/阈值 + 惊讶检测 + LTC 神经网络 + 躯体解码器 |
+| **mneme_expression** | 2,655 | 13 | ⭐⭐⭐⭐ | 消息拆分、打字延迟、走神模拟、注意力竞争、习惯检测、意识门、好奇/社交/反刍/创造力触发 |
+| **mneme_cli** | 1,705 | 3 | ⭐⭐⭐ | rustyline 集成，命令补全 + 动态 prompt + like/dislike/config/reload 命令，测试覆盖低 |
+| **mneme_onebot** | 550 | 9 | ⭐⭐ | QQ 协议客户端，有基础测试，未经实战验证 |
+| **mneme_gateway** | 391 | 3 | ⭐⭐⭐ | 统一消息网关，多平台接入层 |
+| **mneme_mcp** | 385 | 0 | ⭐⭐ | MCP 协议桥接，工具动态注册，零测试 |
+| **mneme_bench** | 178 | 3 | ⭐⭐⭐ | 轨迹仿真基准测试（72h 静默衰减、创伤刻印、种分化） |
+| **mneme_onebot_bridge** | 74 | 0 | ⭐ | OneBot ↔ Gateway 薄适配层，零测试 |
 
 ---
 
