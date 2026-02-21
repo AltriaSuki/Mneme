@@ -50,6 +50,21 @@ impl ToolRegistry {
 
     /// Dispatch a tool call by name. All calls are audit-logged.
     pub async fn dispatch(&self, name: &str, input: &serde_json::Value) -> ToolOutcome {
+        // #458: Destructive operation confirmation gate
+        if name == "shell" {
+            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                if let Some(guard) = &self.guard {
+                    if guard.needs_confirmation(cmd) {
+                        tracing::warn!(tool = name, command = cmd, "AUDIT destructive_blocked — needs confirmation");
+                        return ToolOutcome::permanent_error(format!(
+                            "⚠ 破坏性操作需要确认：`{}`。请先向用户确认后再执行。",
+                            cmd
+                        ));
+                    }
+                }
+            }
+        }
+
         let start = std::time::Instant::now();
         let outcome = match self.handlers.get(name) {
             Some(handler) => handler.execute(input).await,

@@ -117,6 +117,11 @@ impl CapabilityGuard {
         }
     }
 
+    /// #458: Check if a command needs user confirmation before execution.
+    pub fn needs_confirmation(&self, command: &str) -> bool {
+        self.config.require_confirmation && is_destructive_command(command)
+    }
+
     /// Check if a URL is allowed by the network whitelist.
     pub fn check_url(&self, url: &str) -> Result<(), SafetyDenied> {
         if self.config.network_whitelist.is_empty() {
