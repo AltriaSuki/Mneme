@@ -1280,8 +1280,8 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 
 **待后续补充**:
 - [x] 好奇心驱动的信息搜索 ✅ — memory_manage search action + CuriosityTrigger 联动
-- [ ] 定期"看看新闻/更新"
-- [ ] 主动整理和总结知识
+- [x] 定期"看看新闻/更新" ✅ — news_check 默认排程 14:00
+- [x] 主动整理和总结知识 ✅ — KnowledgeMaintenanceEvaluator 6h cooldown, 50+ episodes
 - [x] 工具使用的资源预算 ✅ `8759864`
 
 ### 24. ✅ Metacognition - 元认知反思
