@@ -29,7 +29,7 @@
 | **mneme_memory** | 3,191 | 11 | ⭐⭐⭐ | SQLite + 本地向量搜索 + 事实三元组 + 状态历史 + 整合机制已有；Social Memory 尚未连通 |
 | **mneme_limbic** | 1,218 | 19 | ⭐⭐⭐⭐ | `ModulationVector` 结构性调制范式已落地；somatic marker 从"导演模式"成功转向"具身模式" |
 | **mneme_expression** | 506 | 9 | ⭐⭐⭐ | 消息拆分、打字延迟、在线状态模拟有基础实现，但缺少语音模态和上下文感知的格式选择 |
-| **mneme_cli** | 444 | 0 | ⭐⭐ | rustyline 已集成，可用，但零测试、无自定义 prompt、无命令补全 |
+| **mneme_cli** | 444 | 0 | ⭐⭐⭐ | rustyline 已集成，命令补全 + 动态 prompt（mood emoji + energy%）已实现，但零测试 |
 | **mneme_perception** | 393 | 2 | ⭐⭐ | RSS + Web 抓取有基础，但设计文档要求的社交平台 feed（微博、B站等）尚未实现 |
 | **mneme_os** | 286 | 1 | ⭐⭐ | Shell 执行可用，但**无任何安全沙箱**——这是当前最大的安全隐患 |
 | **mneme_onebot** | 232 | 0 | ⭐ | QQ 协议客户端骨架存在，零测试，未经实际验证 |
@@ -105,8 +105,8 @@
 |----------|------|------|
 | Episodic Memory（事件记忆） | ✅ | SQLite + 本地 embedding 向量搜索（线性扫描 top-1000） |
 | Semantic Memory（语义记忆） | ✅ | 事实三元组 store/recall/decay/format + 对话后自动 extraction |
-| Social Memory（社交记忆） | ⚠️ | `SocialGraph` trait + 数据库表存在，但未连通到 recall 管道 |
-| Blended Recall（混合召回） | ⚠️ | 只返回 episodes + facts，不包含 social context |
+| Social Memory（社交记忆） | ⚠️ | `SocialGraph` trait + DB 表 + `lookup_social_context()` 已连通到 prompt 注入，但仅限当前说话人 |
+| Blended Recall（混合召回） | ⚠️ | episodes + facts + 当前说话人社交上下文，但不含对话中提及的其他人 |
 | 向量 ANN 索引 | ❌ | 线性扫描，无 HNSW/IVF，万级 episode 后性能退化 |
 | 存储后端可替换 | ✅ | `Memory` trait 抽象，SQLite 为默认实现 |
 
