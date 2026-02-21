@@ -54,6 +54,7 @@ impl RuntimeParams {
         })
     }
 
+    #[must_use]
     pub fn temperature(&self) -> f32 {
         f32::from_bits(self.base_temperature.load(Ordering::Relaxed))
     }
@@ -249,11 +250,13 @@ impl ReasoningEngine {
     }
 
     /// #86: Get current base temperature.
+    #[must_use]
     pub fn get_base_temperature(&self) -> f32 {
         self.runtime_params.temperature()
     }
 
     /// #86: Get current base max_tokens.
+    #[must_use]
     pub fn get_base_max_tokens(&self) -> u32 {
         self.runtime_params.max_tokens()
     }
@@ -1746,6 +1749,7 @@ pub fn detect_user_feedback(text: &str) -> Vec<UserFeedback> {
 // === Implicit feedback: topic overlap (v0.8.0) ===
 
 /// Character bigram Jaccard similarity. Chinese-aware, no external deps.
+#[must_use]
 pub fn topic_overlap(prev: &str, current: &str) -> f32 {
     let bigrams = |s: &str| -> std::collections::HashSet<(char, char)> {
         let chars: Vec<char> = s.chars().collect();
