@@ -1282,7 +1282,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [ ] 好奇心驱动的信息搜索
 - [ ] 定期"看看新闻/更新"
 - [ ] 主动整理和总结知识
-- [ ] 工具使用的资源预算
+- [x] 工具使用的资源预算 ✅ `8759864`
 
 ### 24. ✅ Metacognition - 元认知反思
 **优先级**: 🟢 低
