@@ -11,6 +11,13 @@ use mneme_core::{Trigger, TriggerEvaluator};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 
+// Priority scores for threshold comparison
+const PRIORITY_SCORE_LOW: f32 = 0.2;
+const PRIORITY_SCORE_MEDIUM: f32 = 0.5;
+const PRIORITY_SCORE_HIGH: f32 = 0.75;
+const PRIORITY_SCORE_EXTERNAL: f32 = 1.0;
+const PROACTIVITY_PENALTY_SCALE: f32 = 0.5;
+
 /// Priority tier for trigger competition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Priority {
@@ -140,7 +147,7 @@ impl AttentionGate {
         let engagement = self.engagement();
         let base = self.config.base_threshold + self.config.engagement_boost * engagement;
         // proactivity=1.0 → threshold unchanged; proactivity=0.0 → threshold raised by 0.5
-        let proactivity_penalty = (1.0 - self.config.proactivity) * 0.5;
+        let proactivity_penalty = (1.0 - self.config.proactivity) * PROACTIVITY_PENALTY_SCALE;
         (base + proactivity_penalty).clamp(0.0, 1.0)
     }
 }
@@ -174,10 +181,10 @@ fn classify_trigger(trigger: &Trigger) -> Priority {
 /// Normalize priority to [0.0, 1.0] for threshold comparison.
 fn priority_score(priority: Priority) -> f32 {
     match priority {
-        Priority::Low => 0.2,
-        Priority::Medium => 0.5,
-        Priority::High => 0.75,
-        Priority::External => 1.0,
+        Priority::Low => PRIORITY_SCORE_LOW,
+        Priority::Medium => PRIORITY_SCORE_MEDIUM,
+        Priority::High => PRIORITY_SCORE_HIGH,
+        Priority::External => PRIORITY_SCORE_EXTERNAL,
     }
 }
 

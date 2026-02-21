@@ -20,6 +20,12 @@ use tokio::sync::RwLock;
 use mneme_core::{MonologueResolution, OrganismState, Trigger, TriggerEvaluator};
 use mneme_limbic::SomaticMarker;
 
+// Consciousness classification thresholds
+const STRESS_SPIKE_THRESHOLD: f32 = 0.7;
+const AROUSAL_SPIKE_THRESHOLD: f32 = 0.7;
+const VALENCE_EMOTIONAL_SURGE_THRESHOLD: f32 = 0.5;
+const ENERGY_LOW_CAP_THRESHOLD: f32 = 0.4;
+
 /// Configuration for consciousness gate thresholds.
 #[derive(Debug, Clone)]
 pub struct ConsciousnessConfig {
@@ -103,10 +109,10 @@ impl ConsciousnessGate {
     /// Classify the cause of consciousness from body feelings.
     fn classify_cause(feelings: &[(String, f32)], curr: &SomaticMarker) -> String {
         // Pick the dominant cause based on what changed most
-        if curr.stress > 0.7 {
+        if curr.stress > STRESS_SPIKE_THRESHOLD {
             return "stress_spike".to_string();
         }
-        if curr.affect.arousal > 0.7 && curr.affect.valence.abs() > 0.5 {
+        if curr.affect.arousal > AROUSAL_SPIKE_THRESHOLD && curr.affect.valence.abs() > VALENCE_EMOTIONAL_SURGE_THRESHOLD {
             return "emotional_surge".to_string();
         }
         if feelings
@@ -192,7 +198,7 @@ impl TriggerEvaluator for ConsciousnessGate {
             || feeling_count >= self.config.high_feeling_count
         {
             // #55: Budget-aware — low energy caps resolution at Low (conserve tokens)
-            if curr.energy < 0.4 {
+            if curr.energy < ENERGY_LOW_CAP_THRESHOLD {
                 tracing::debug!("ConsciousnessGate: energy={:.2} too low for High, capping at Low", curr.energy);
                 MonologueResolution::Low
             } else {
