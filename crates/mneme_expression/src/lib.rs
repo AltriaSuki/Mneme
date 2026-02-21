@@ -3,6 +3,7 @@ use rand::Rng;
 use std::time::Duration;
 
 mod attention;
+mod boredom;
 mod consciousness;
 mod creativity;
 mod curiosity;
@@ -14,6 +15,7 @@ mod scheduled;
 mod meaning;
 mod social;
 pub use attention::{AttentionConfig, AttentionGate, EngagementHandle};
+pub use boredom::BoredomExplorationEvaluator;
 pub use consciousness::{ConsciousnessConfig, ConsciousnessGate};
 pub use creativity::CreativityTriggerEvaluator;
 pub use curiosity::CuriosityTriggerEvaluator;

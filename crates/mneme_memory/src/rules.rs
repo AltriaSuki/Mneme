@@ -332,6 +332,54 @@ pub fn seed_rules() -> Vec<BehaviorRule> {
             cooldown_secs: None,
             last_fired: None,
         },
+        // ADR-020: Stress-driven environment intervention
+        BehaviorRule {
+            id: 0,
+            name: "stress_env_intervention".into(),
+            priority: 70,
+            enabled: true,
+            trigger: RuleTrigger::OnTick,
+            condition: RuleCondition::All {
+                conditions: vec![
+                    RuleCondition::StateGt { field: "stress".into(), value: 0.85 },
+                    RuleCondition::LifecycleIs { state: "Awake".into() },
+                ],
+            },
+            action: RuleAction::Composite {
+                actions: vec![
+                    RuleAction::ExecuteTool {
+                        name: "env_intervention".into(),
+                        input: serde_json::json!({
+                            "reason": "stress_critical",
+                            "suggestion": "dim_lights",
+                        }),
+                    },
+                    RuleAction::ModifyState { field: "stress".into(), delta: -0.1 },
+                ],
+            },
+            cooldown_secs: Some(600),
+            last_fired: None,
+        },
+        // ADR-020: Boredom-driven exploration nudge
+        BehaviorRule {
+            id: 0,
+            name: "boredom_exploration_nudge".into(),
+            priority: 30,
+            enabled: true,
+            trigger: RuleTrigger::OnTick,
+            condition: RuleCondition::All {
+                conditions: vec![
+                    RuleCondition::StateGt { field: "boredom".into(), value: 0.7 },
+                    RuleCondition::StateGt { field: "energy".into(), value: 0.3 },
+                    RuleCondition::LifecycleIs { state: "Awake".into() },
+                ],
+            },
+            action: RuleAction::EmitTrigger {
+                trigger_json: r#"{"kind":"boredom_exploration","context":"无聊感很强，想自己找点事做"}"#.into(),
+            },
+            cooldown_secs: Some(1800),
+            last_fired: None,
+        },
     ]
 }
 
@@ -450,10 +498,12 @@ mod tests {
     #[test]
     fn test_seed_rules_loaded() {
         let rules = seed_rules();
-        assert_eq!(rules.len(), 3);
+        assert_eq!(rules.len(), 5);
         assert!(rules.iter().any(|r| r.name == "low_energy_silence"));
         assert!(rules.iter().any(|r| r.name == "night_drowsy"));
         assert!(rules.iter().any(|r| r.name == "greeting_quick"));
+        assert!(rules.iter().any(|r| r.name == "stress_env_intervention"));
+        assert!(rules.iter().any(|r| r.name == "boredom_exploration_nudge"));
     }
 
     #[test]
