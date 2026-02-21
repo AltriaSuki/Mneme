@@ -9,9 +9,9 @@ use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
 use mneme_expression::{
     AttentionConfig, AttentionGate, BoredomExplorationEvaluator, ConsciousnessGate, CreativityTriggerEvaluator,
-    CuriosityTriggerEvaluator, HabitDetector, Humanizer, MeaningSeekingEvaluator,
-    MetacognitionEvaluator, PresenceScheduler, RuminationEvaluator, ScheduledTriggerEvaluator,
-    SocialTriggerEvaluator,
+    CuriosityTriggerEvaluator, HabitDetector, Humanizer, KnowledgeMaintenanceEvaluator,
+    MeaningSeekingEvaluator, MetacognitionEvaluator, PresenceScheduler, RuminationEvaluator,
+    ScheduledTriggerEvaluator, SocialTriggerEvaluator,
 };
 use mneme_limbic::{BehaviorThresholds, LimbicSystem};
 use mneme_memory::{OrganismConfig, OrganismCoordinator, SqliteMemory};
@@ -536,6 +536,10 @@ async fn main() -> anyhow::Result<()> {
         Box::new(MeaningSeekingEvaluator::new(coordinator.state(), thresholds.clone())),
         Box::new(CreativityTriggerEvaluator::new(coordinator.state(), thresholds.clone())),
         Box::new(BoredomExplorationEvaluator::new(coordinator.state(), thresholds.clone())),
+        Box::new(KnowledgeMaintenanceEvaluator::new({
+            let mem = memory.clone();
+            move || { let m = mem.clone(); async move { m.episode_count().await.unwrap_or(0) } }
+        })),
     ];
 
     // B-17: Wrap all evaluators in AttentionGate for single-focus competition

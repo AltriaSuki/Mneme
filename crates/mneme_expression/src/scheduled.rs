@@ -79,6 +79,7 @@ impl ScheduleHandle {
         let new = if configs.is_empty() {
             vec![
                 ScheduleEntry::new("morning_greeting", 8, 0).unwrap(),
+                ScheduleEntry::new("news_check", 14, 0).unwrap(),
                 ScheduleEntry::new("evening_summary", 21, 0).unwrap(),
             ]
         } else {
@@ -141,6 +142,7 @@ impl ScheduledTriggerEvaluator {
         Self {
             schedules: Arc::new(Mutex::new(vec![
                 ScheduleEntry::new("morning_greeting", 8, 0).unwrap(),
+                ScheduleEntry::new("news_check", 14, 0).unwrap(),
                 ScheduleEntry::new("evening_summary", 21, 0).unwrap(),
             ])),
             last_fired: Mutex::new(HashMap::new()),
