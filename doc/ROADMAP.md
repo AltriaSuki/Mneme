@@ -1011,7 +1011,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 **问题**: 缺乏运行时监控和性能指标。
 
 **需要实现**:
-- [ ] Prometheus metrics 导出
+- [x] Prometheus metrics 导出 ✅ — feature-gated `--features prometheus`, metrics.rs (energy/stress/valence/arousal gauges + LLM latency + token counters)
   - API 调用延迟/成功率
   - 状态值分布
   - 内存使用
