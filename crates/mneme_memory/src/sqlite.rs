@@ -1826,6 +1826,49 @@ impl SqliteMemory {
         let total_out: i64 = row.get("total_out");
         Ok((total_in as u64, total_out as u64))
     }
+
+    // === #981: Batch Training Data Export ===
+
+    /// Export conversation episodes as JSONL suitable for LLM fine-tuning.
+    ///
+    /// Groups consecutive user→Mneme message pairs into conversation turns.
+    /// Each line is `{"messages": [{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}`.
+    pub async fn export_training_jsonl(&self, writer: &mut dyn std::io::Write) -> Result<u64> {
+        let rows = sqlx::query(
+            "SELECT author, body FROM episodes \
+             WHERE strength > 0.1 AND source != 'self:restart' \
+             ORDER BY timestamp ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to fetch episodes for export")?;
+
+        let mut count = 0u64;
+        let mut pending_user: Option<String> = None;
+
+        for row in &rows {
+            let author: String = row.get("author");
+            let body: String = self.decrypt_body(&row.get::<String, _>("body"));
+
+            if author == "Mneme" {
+                if let Some(user_msg) = pending_user.take() {
+                    let line = serde_json::json!({
+                        "messages": [
+                            {"role": "user", "content": user_msg},
+                            {"role": "assistant", "content": body}
+                        ]
+                    });
+                    writeln!(writer, "{}", line).context("Failed to write JSONL line")?;
+                    count += 1;
+                }
+            } else {
+                // New user message — overwrite any unpaired previous one
+                pending_user = Some(body);
+            }
+        }
+
+        Ok(count)
+    }
 }
 
 // =============================================================================

@@ -51,7 +51,7 @@ impl rustyline::completion::Completer for CommandCompleter {
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
         const COMMANDS: &[&str] = &[
-            "quit", "exit", "status", "sleep", "like", "dislike", "correct", "reload",
+            "quit", "exit", "status", "sleep", "like", "dislike", "correct", "reload", "export",
         ];
         let prefix = &line[..pos];
         if prefix.contains(' ') {
@@ -663,8 +663,9 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Commands that don't need to wait for response
-                    let needs_wait = !["sleep", "status", "like", "dislike", "correct", "reload"].contains(&trimmed)
-                        && !trimmed.starts_with("correct ");
+                    let needs_wait = !["sleep", "status", "like", "dislike", "correct", "reload", "export"].contains(&trimmed)
+                        && !trimmed.starts_with("correct ")
+                        && !trimmed.starts_with("export ");
 
                     let content = Content {
                         id: Uuid::new_v4(),
@@ -974,6 +975,17 @@ async fn main() -> anyhow::Result<()> {
                     println!("✏️  纠正已记录");
                 } else {
                     println!("用法: correct <纠正内容>");
+                }
+                continue;
+            } else if content.source == "cli" && (content.body.trim() == "export" || content.body.trim().starts_with("export ")) {
+                let path = content.body.trim().strip_prefix("export").unwrap().trim();
+                let path = if path.is_empty() { "training_data.jsonl" } else { path };
+                match std::fs::File::create(path) {
+                    Ok(mut file) => match memory.export_training_jsonl(&mut file).await {
+                        Ok(count) => println!("Exported {} conversation pairs to {}", count, path),
+                        Err(e) => println!("Export failed: {}", e),
+                    },
+                    Err(e) => println!("Cannot create file {}: {}", path, e),
                 }
                 continue;
             }
