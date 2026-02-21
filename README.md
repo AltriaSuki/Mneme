@@ -41,16 +41,16 @@
 
 | Crate | 职责 |
 |-------|------|
-| `mneme_core` | 核心 trait、ODE 动力学、状态定义、价值体系 |
-| `mneme_limbic` | 躯体标记、情感调制向量、可学习曲线 |
-| `mneme_memory` | SQLite + sqlite-vec 向量检索、自我认知、睡眠整合、规则引擎 |
-| `mneme_reasoning` | LLM 客户端、ReAct 循环、上下文组装、工具注册、元认知 |
+| `mneme_core` | 核心 trait、ODE 动力学、状态定义、价值体系、工具抽象 |
+| `mneme_limbic` | 躯体标记、情感调制向量、可学习曲线、惊讶检测、LTC 神经网络 |
+| `mneme_memory` | SQLite + sqlite-vec 向量检索、自我认知、睡眠整合、规则引擎、反馈缓冲 |
+| `mneme_reasoning` | LLM 客户端、ReAct 循环、上下文组装、工具注册、元认知、主动行为循环 |
 | `mneme_expression` | 人性化输出、主动触发、注意力竞争、习惯检测、意识门 |
-| `mneme_perception` | RSS 源、内容归一化 |
-| `mneme_os` | Shell 执行器（本地/SSH） |
-| `mneme_browser` | Headless Chrome 自动化 |
+| `mneme_gateway` | 统一消息网关（多平台接入层） |
+| `mneme_mcp` | MCP 协议桥接（工具动态注册） |
 | `mneme_onebot` | OneBot v11 协议（QQ 等） |
-| `mneme_voice` | TTS 语音合成 |
+| `mneme_onebot_bridge` | OneBot ↔ Gateway 适配器 |
+| `mneme_bench` | 轨迹仿真与动力学基准测试 |
 | `mneme_cli` | 终端交互入口 |
 
 ## 快速开始
@@ -115,6 +115,9 @@ ws_url = "ws://localhost:8080"
 > sync                   # 拉取 RSS 源
 > status                 # 查看有机体状态（能量、压力、情绪、token 用量）
 > sleep                  # 手动触发睡眠整合（叙事编织 + 记忆衰减）
+> like / dislike         # 用户反馈（调节行为阈值）
+> reload                 # 热重载配置
+> config <key> <val>     # 运行时参数调整
 > quit                   # 优雅退出
 ```
 
@@ -138,7 +141,6 @@ ws_url = "ws://localhost:8080"
 
 - 语音管线端到端
 - 多用户隔离
-- 跨天持续目标追踪
 
 ## 种子人格
 
@@ -162,10 +164,10 @@ persona/
 cargo fmt --all -- --check
 
 # Lint
-cargo clippy --workspace --exclude mneme_browser -- -D warnings
+cargo clippy --workspace -- -D warnings
 
 # 测试
-cargo test --workspace --exclude mneme_browser
+cargo test --workspace
 
 # 添加 RSS 源运行
 cargo run -- --rss "https://example.com/feed.xml"
