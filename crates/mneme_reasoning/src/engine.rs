@@ -133,6 +133,9 @@ pub struct ReasoningEngine {
 
     // Phase 5b-1: Multi-model router for task-based LLM selection (B-8 Level 2)
     router: Option<Arc<ModelRouter>>,
+
+    // #771: Response cache for reusing answers to similar questions
+    response_cache: tokio::sync::Mutex<crate::response_cache::ResponseCache>,
 }
 
 impl ReasoningEngine {
@@ -169,6 +172,7 @@ impl ReasoningEngine {
             cancelled: Arc::new(AtomicBool::new(false)),
             low_res_client: None,
             router: None,
+            response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
         }
     }
 
@@ -205,6 +209,7 @@ impl ReasoningEngine {
             cancelled: Arc::new(AtomicBool::new(false)),
             low_res_client: None,
             router: None,
+            response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
         }
     }
 

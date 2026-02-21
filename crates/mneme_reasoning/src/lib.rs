@@ -11,6 +11,7 @@ pub mod providers;
 pub mod retry;
 pub mod router;
 pub mod scheduler;
+pub mod response_cache;
 pub mod token_budget;
 pub mod tool_registry;
 pub mod tools;
