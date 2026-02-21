@@ -1020,7 +1020,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] File logging ✅ — `--log-file` with daily rolling via `tracing-appender`
 - [x] Key method instrumentation ✅ — `#[tracing::instrument]` on process_thought_loop, execute_tool_with_retry, complete (Anthropic/OpenAI), recall/recall_with_bias, consolidate
 - [x] Distributed tracing (OpenTelemetry) ✅ — feature-gated OTLP span export, `--otlp-endpoint` CLI arg
-- [ ] Grafana dashboard 模板
+- [x] Grafana dashboard 模板 ✅ — doc/grafana-dashboard.json (energy/stress/affect gauges + LLM latency/calls + token usage)
 
 ---
 
