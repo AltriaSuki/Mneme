@@ -2,6 +2,8 @@ use clap::Parser;
 mod compose_tool;
 mod connect_tool;
 mod discover_tool;
+#[cfg(feature = "prometheus")]
+mod metrics;
 mod schedule_tool;
 use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
@@ -75,6 +77,13 @@ async fn graceful_shutdown(coordinator: &OrganismCoordinator) {
 
 /// Format a compact CLI prompt showing organism status.
 fn format_status_prompt(state: &mneme_core::OrganismState) -> String {
+    #[cfg(feature = "prometheus")]
+    metrics::record_state(
+        state.fast.energy as f64,
+        state.fast.stress as f64,
+        state.fast.affect.valence as f64,
+        state.fast.affect.arousal as f64,
+    );
     let mood = if state.fast.affect.valence > 0.3 {
         "☀"
     } else if state.fast.affect.valence < -0.3 {
@@ -137,6 +146,10 @@ struct Args {
     /// OTLP endpoint for distributed tracing (requires --features otlp)
     #[arg(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
     otlp_endpoint: Option<String>,
+
+    /// Prometheus metrics HTTP port (requires --features prometheus)
+    #[arg(long, env = "MNEME_METRICS_PORT")]
+    metrics_port: Option<u16>,
 }
 
 #[tokio::main]
@@ -223,6 +236,12 @@ async fn main() -> anyhow::Result<()> {
                 .with(fmt::layer())
                 .init();
         }
+    }
+
+    // Prometheus metrics (feature-gated)
+    #[cfg(feature = "prometheus")]
+    if let Some(port) = args.metrics_port {
+        metrics::init(port)?;
     }
 
     // Load unified config (file + env overrides)
