@@ -162,6 +162,58 @@ impl GoalManager {
 
         suggestions
     }
+
+    /// #1268: Detect conflicts among active goals.
+    ///
+    /// Returns pairs of conflicting goal IDs with a reason string.
+    pub async fn detect_conflicts(&self) -> Result<Vec<GoalConflict>> {
+        let goals = self.active_goals().await?;
+        let mut conflicts = Vec::new();
+
+        for (i, a) in goals.iter().enumerate() {
+            for b in goals.iter().skip(i + 1) {
+                // Duplicate detection: same type + overlapping keywords
+                if a.goal_type == b.goal_type && Self::descriptions_overlap(&a.description, &b.description) {
+                    conflicts.push(GoalConflict {
+                        goal_a: a.id,
+                        goal_b: b.id,
+                        reason: "duplicate".into(),
+                    });
+                }
+                // Resource conflict: too many high-priority goals compete for attention
+                if a.priority > 0.7 && b.priority > 0.7 && a.goal_type != b.goal_type {
+                    conflicts.push(GoalConflict {
+                        goal_a: a.id,
+                        goal_b: b.id,
+                        reason: "priority_contention".into(),
+                    });
+                }
+            }
+        }
+        Ok(conflicts)
+    }
+
+    /// Check if two goal descriptions share significant content.
+    fn descriptions_overlap(a: &str, b: &str) -> bool {
+        let a_chars: Vec<char> = a.chars().collect();
+        let b_chars: Vec<char> = b.chars().collect();
+        if a_chars.len() < 4 || b_chars.len() < 4 {
+            return a == b;
+        }
+        // Check for shared 4-char subsequences (works for CJK and Latin)
+        let a_set: std::collections::HashSet<&[char]> = a_chars.windows(4).collect();
+        let shared = b_chars.windows(4).filter(|w| a_set.contains(w)).count();
+        let min_len = a_chars.len().min(b_chars.len());
+        shared as f32 / min_len as f32 > 0.3
+    }
+}
+
+/// A detected conflict between two goals.
+#[derive(Debug, Clone)]
+pub struct GoalConflict {
+    pub goal_a: i64,
+    pub goal_b: i64,
+    pub reason: String,
 }
 
 // ============================================================================
