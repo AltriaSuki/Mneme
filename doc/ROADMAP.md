@@ -1834,4 +1834,24 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 
 ---
 
+## 🚧 TODO: 完整使用前的阻断项
+
+> 核心代码全部是真实实现（非 stub），`cargo build --release` 编译通过。
+> 以下是从"代码存在"到"新用户能跑起来"之间的差距。
+
+### P0 — 阻断性（不解决跑不起来）
+
+- [ ] 创建 `.env.example` — 列出 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`ONEBOT_WS_URL` 等必需/可选环境变量
+- [ ] `mneme.example.toml` 补全 `[gateway]` 和 `[mcp]` 配置段 — 这两个是新增核心功能但示例里完全没提
+- [ ] 首次运行 embedding 模型下载 (~500MB) 无进度提示 — 用户会以为卡死，需加 log 或进度条
+- [ ] README 快速开始流程补完 — 缺 `cp mneme.example.toml mneme.toml` 步骤、缺环境变量说明
+
+### P1 — 体验性（能跑但不好用）
+
+- [ ] 缺 API key 时友好报错 — 当前直接 panic，应提示设置方法或建议 mock 模式
+- [ ] 低分辨率独白 Ollama fallback 验证 — 未配置本地模型时 fallback 到主 LLM 的路径需端到端验证
+- [ ] Prometheus/Grafana 启用方式文档化 — README 未说明 `--features prometheus` 编译开关
+
+---
+
 *最后更新: 2026-02-21*
