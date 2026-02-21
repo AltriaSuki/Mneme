@@ -1096,9 +1096,9 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | Memory leak in history | mneme_reasoning | history 有 20 条硬上限 prune，无持久泄漏；ReAct scratchpad 有 5 轮上限，风险低 | **Verified OK** ✅ |
 | **People 表始终为空** | mneme_reasoning/engine | CLI/OneBot 交互时自动 `upsert_person()` + `record_interaction()`，UUID v5 确定性 ID | **Fixed** ✅ (#53) |
 | **Mneme 猜错自己的表名** | mneme_reasoning/prompts | 启动时种子 10 条 system_knowledge 条目描述全部表结构，DB schema 自我认知完整 | **Fixed** ✅ (#54) |
-| **对话无法中断** | mneme_reasoning/engine | `engine.think()` 同步阻塞，Humanizer 分段输出期间新消息只能排队，无法打断正在生成的回复 | 🔴 Open (#58) |
-| **缺乏对话 agency** | mneme_reasoning/engine | 纯 request-response 模式，无对话目标、不主动追问、不因好奇追着话题不放；proactive triggers 是定时器驱动而非语境涌现 | 🔴 Open (#59) |
-| **连接能力需预配置** | mneme_cli/main | OneBot 等外部连接必须在 mneme.toml 预配置，无法在对话中被告知后自行建立连接 | 🟡 Open (#60) |
+| **对话无法中断** | mneme_reasoning/engine | stream_complete() + AtomicBool 取消令牌支持中断生成 | **Fixed** ✅ (#58, v0.11.0) |
+| **缺乏对话 agency** | mneme_reasoning/engine | ConversationIntent 意图标记系统，LLM 可追问/好奇/反驳/分享 | **Fixed** ✅ (#59, v0.11.0) |
+| **连接能力需预配置** | mneme_cli/main | ConnectToolHandler: LLM 可自主连接 MCP 服务器获取新工具 | **Fixed** ✅ (#60, v1.0.0) |
 | **工具结果截断 UTF-8 panic** | mneme_reasoning/engine | `result.truncate(MAX_TOOL_RESULT_LEN)` 截断位置落在中文多字节字符中间时 panic → char-boundary-aware truncation | **Fixed** ✅ (#61) |
 | **Token 预算降级未生效** | mneme_reasoning/engine | `BudgetStatus::Degrade` 只打 warn log → `degraded_max_tokens()` 现在实际应用到 `CompletionParams.max_tokens` | **Fixed** ✅ (#62) |
 | **意识门 prev_marker 更新时机** | mneme_expression/consciousness | energy < floor 时不再更新 `prev_marker`，能量恢复后 delta 正确反映累积变化 | **Fixed** ✅ (#63) |
