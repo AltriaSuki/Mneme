@@ -150,6 +150,74 @@ impl Default for CurveLearner {
     }
 }
 
+// =============================================================================
+// #984: A/B Testing Framework
+// =============================================================================
+
+/// Variant identifier for A/B tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Variant {
+    A,
+    B,
+}
+
+/// Tracks feedback for two parameter variants to determine which performs better.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbTest {
+    pub name: String,
+    pub a_description: String,
+    pub b_description: String,
+    a_sum: f64,
+    a_count: u32,
+    b_sum: f64,
+    b_count: u32,
+    /// Minimum samples per variant before declaring a winner.
+    pub min_samples: u32,
+}
+
+impl AbTest {
+    pub fn new(name: &str, a_desc: &str, b_desc: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            a_description: a_desc.to_string(),
+            b_description: b_desc.to_string(),
+            a_sum: 0.0, a_count: 0,
+            b_sum: 0.0, b_count: 0,
+            min_samples: 10,
+        }
+    }
+
+    /// Assign a variant for the next interaction (simple alternation).
+    pub fn assign(&self) -> Variant {
+        if self.a_count <= self.b_count { Variant::A } else { Variant::B }
+    }
+
+    /// Record feedback for a variant.
+    pub fn record(&mut self, variant: Variant, feedback: f32) {
+        match variant {
+            Variant::A => { self.a_sum += feedback as f64; self.a_count += 1; }
+            Variant::B => { self.b_sum += feedback as f64; self.b_count += 1; }
+        }
+    }
+
+    /// Mean feedback for each variant.
+    pub fn means(&self) -> (f64, f64) {
+        let a = if self.a_count > 0 { self.a_sum / self.a_count as f64 } else { 0.0 };
+        let b = if self.b_count > 0 { self.b_sum / self.b_count as f64 } else { 0.0 };
+        (a, b)
+    }
+
+    /// Returns the winning variant if both have enough samples, else None.
+    pub fn winner(&self) -> Option<Variant> {
+        if self.a_count < self.min_samples || self.b_count < self.min_samples {
+            return None;
+        }
+        let (a, b) = self.means();
+        if (a - b).abs() < 0.05 { return None; } // too close to call
+        Some(if a >= b { Variant::A } else { Variant::B })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,7 +21,7 @@ pub use feedback_buffer::{
     ConsolidatedPattern, FeedbackBuffer, FeedbackSignal, SignalType, StateUpdates,
 };
 pub use goals::{Goal, GoalManager, GoalStatus, GoalTriggerEvaluator, GoalType};
-pub use learning::{CurveLearner, ModulationSample};
+pub use learning::{AbTest, CurveLearner, ModulationSample, Variant};
 pub use narrative::{CrisisEvent, EpisodeDigest, NarrativeChapter, NarrativeWeaver};
 pub use rules::{BehaviorRule, RuleAction, RuleCondition, RuleContext, RuleEngine, RuleTrigger};
 pub use sqlite::DreamSeed;
