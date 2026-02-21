@@ -264,7 +264,7 @@ impl NarrativeWeaver {
         }
 
         // Limit to top 3 most significant
-        turning_points.sort_by(|a, b| b.impact.abs().partial_cmp(&a.impact.abs()).unwrap_or(std::cmp::Ordering::Equal));
+        turning_points.sort_by(|a, b| b.impact.abs().total_cmp(&a.impact.abs()));
         turning_points.truncate(3);
         turning_points
     }

@@ -183,7 +183,7 @@ impl FeedbackBuffer {
             // Find most confident signal as representative
             let representative = signals
                 .iter()
-                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))
+                .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
                 .unwrap();
 
             let first_seen = signals.iter().map(|s| s.timestamp).min().unwrap();

@@ -164,7 +164,7 @@ impl CuriosityVector {
         if self.interests.len() > Self::MAX_INTERESTS {
             // Remove weakest
             self.interests
-                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                .sort_by(|a, b| b.1.total_cmp(&a.1));
             self.interests.truncate(Self::MAX_INTERESTS);
         }
     }
@@ -184,7 +184,7 @@ impl CuriosityVector {
             .iter()
             .map(|(t, i)| (t.as_str(), *i))
             .collect();
-        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
         sorted.truncate(n);
         sorted
     }
@@ -449,7 +449,7 @@ impl ValueNetwork {
             .iter()
             .map(|(k, v)| (k.clone(), v.weight))
             .collect();
-        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
         sorted.truncate(n);
         sorted
     }
