@@ -27,19 +27,51 @@ pub use rumination::{RuminationConfig, RuminationEvaluator};
 pub use scheduled::{ScheduleEntry, ScheduleHandle, ScheduledTriggerEvaluator};
 pub use social::SocialTriggerEvaluator;
 
+/// Learnable expression style parameters — varies per Mneme instance.
+/// Some are terse, some verbose; some split aggressively, some send walls of text.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExpressionStyle {
+    /// Characters per minute for simulated typing (higher = faster typist).
+    pub typing_speed_cpm: u32,
+    /// Max characters per message chunk (lower = more IM-style bursts).
+    pub max_chunk_chars: usize,
+    /// Verbosity bias (0.0 = terse, 1.0 = verbose). Injected into system prompt.
+    pub verbosity: f32,
+}
+
+impl Default for ExpressionStyle {
+    fn default() -> Self {
+        Self {
+            typing_speed_cpm: 300,
+            max_chunk_chars: 60,
+            verbosity: 0.5,
+        }
+    }
+}
+
 pub struct Humanizer {
     read_speed_cpm: u32,
-    typing_speed_cpm: u32,
-    max_chunk_chars: usize,
+    style: ExpressionStyle,
 }
 
 impl Humanizer {
     pub fn new() -> Self {
         Self {
             read_speed_cpm: 1000,
-            typing_speed_cpm: 300,
-            max_chunk_chars: 60, // Aggressive splitting for IM-style bursts
+            style: ExpressionStyle::default(),
         }
+    }
+
+    pub fn with_style(style: ExpressionStyle) -> Self {
+        Self {
+            read_speed_cpm: 1000,
+            style,
+        }
+    }
+
+    /// Get the current expression style (for persistence/learning).
+    pub fn style(&self) -> &ExpressionStyle {
+        &self.style
     }
 
     /// Calculate simulated delay for reading a message with randomness
@@ -66,7 +98,7 @@ impl Humanizer {
             Emotion::Neutral => (1.0, 0.8..1.2),
         };
 
-        let effective_cpm = (self.typing_speed_cpm as f64 * speed_mult) as u64;
+        let effective_cpm = (self.style.typing_speed_cpm as f64 * speed_mult) as u64;
         let chars = response.chars().count() as u64;
         let ms_per_char = (60 * 1000) / effective_cpm.max(1); // avoid div by 0
 
@@ -96,9 +128,9 @@ impl Humanizer {
             // Use chars().count() for proper Unicode support (Chinese chars are 3 bytes)
             let current_chars = current_part.chars().count();
             let line_chars = line.chars().count();
-            if !current_part.is_empty() && current_chars + line_chars > self.max_chunk_chars {
+            if !current_part.is_empty() && current_chars + line_chars > self.style.max_chunk_chars {
                 // Try to split the current_part at sentence boundaries if it's too long
-                if current_chars > self.max_chunk_chars {
+                if current_chars > self.style.max_chunk_chars {
                     parts.extend(self.split_at_sentences(&current_part, &sentence_enders));
                 } else {
                     parts.push(current_part);
@@ -114,7 +146,7 @@ impl Humanizer {
 
         // Handle remaining content
         if !current_part.is_empty() {
-            if current_part.chars().count() > self.max_chunk_chars {
+            if current_part.chars().count() > self.style.max_chunk_chars {
                 parts.extend(self.split_at_sentences(&current_part, &sentence_enders));
             } else {
                 parts.push(current_part);
@@ -129,7 +161,7 @@ impl Humanizer {
     /// target_split_point (max_chunk_chars/2 = 75 chars) balances chunk sizes
     fn split_at_sentences(&self, text: &str, enders: &[char]) -> Vec<String> {
         // target_split_point (max_chunk_chars/2 = 75 chars) balances chunk sizes
-        let target_split_point = self.max_chunk_chars / 2;
+        let target_split_point = self.style.max_chunk_chars / 2;
 
         let mut result = Vec::new();
         let mut current = String::new();

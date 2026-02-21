@@ -2250,6 +2250,7 @@ dependencies = [
  "mneme_core",
  "mneme_limbic",
  "rand 0.8.5",
+ "serde",
  "tokio",
  "tracing",
 ]
