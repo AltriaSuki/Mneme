@@ -977,7 +977,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 - [x] SQLite 持久化：`modulation_samples` + `learned_curves` 表 ✅
 
 **长期目标**:
-- [ ] 定时任务调度器
+- [x] 定时任务调度器 ✅ — PresenceScheduler + AgentLoop + Trigger::Scheduled 动态调度
 - [ ] 批量训练数据导出
 - [ ] 外部模型训练接口
 - [ ] 增量学习支持
