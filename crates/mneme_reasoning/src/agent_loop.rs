@@ -12,6 +12,8 @@ use std::time::Duration;
 pub enum AgentAction {
     /// A proactive trigger fired — caller should process via engine.think()
     ProactiveTrigger(Trigger),
+    /// Multiple low-priority triggers batched together (#770)
+    BatchedTriggers(Vec<Trigger>),
     /// Organism state tick completed
     StateUpdate,
     /// Autonomous tool use triggered by rule engine (#23, v0.6.0)
@@ -138,9 +140,20 @@ impl AgentLoop {
                     }
                     _ = tokio::time::sleep(trigger_sleep) => {
                         let triggers = self.evaluate_triggers().await;
-                        for trigger in triggers {
-                            tracing::info!("AgentLoop trigger fired: {:?}", trigger);
-                            if self.action_tx.send(AgentAction::ProactiveTrigger(trigger)).await.is_err() {
+                        // #770: Batch multiple triggers into a single action
+                        let action = match triggers.len() {
+                            0 => None,
+                            1 => {
+                                tracing::info!("AgentLoop trigger fired: {:?}", triggers[0]);
+                                Some(AgentAction::ProactiveTrigger(triggers.into_iter().next().unwrap()))
+                            }
+                            n => {
+                                tracing::info!("AgentLoop batching {} triggers", n);
+                                Some(AgentAction::BatchedTriggers(triggers))
+                            }
+                        };
+                        if let Some(a) = action {
+                            if self.action_tx.send(a).await.is_err() {
                                 tracing::info!("AgentLoop: receiver dropped, shutting down");
                                 return;
                             }

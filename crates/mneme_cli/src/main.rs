@@ -765,6 +765,47 @@ async fn main() -> anyhow::Result<()> {
                         }
                         continue;
                     }
+                    AgentAction::BatchedTriggers(triggers) => {
+                        // #770: Process batched triggers in a single LLM call
+                        let active = presence.filter_triggers(triggers);
+                        if active.is_empty() { continue; }
+                        info!("Processing {} batched triggers", active.len());
+                        // Pick the first trigger's route, merge descriptions
+                        let first = active[0].clone();
+                        let merged_event = Event::ProactiveTrigger(first);
+                        match engine.think(merged_event).await {
+                            Ok(response) if response.content.trim().is_empty() => {},
+                            Ok(response) => {
+                                #[allow(unused_mut, unused_assignments)]
+                                let mut routed = false;
+
+                                #[cfg(feature = "onebot")]
+                                if !routed {
+                                    if let Some(ref route) = response.route {
+                                        if route.starts_with("onebot:") {
+                                            if let Some(ref client) = onebot_client {
+                                                let parts = humanizer.split_response(&response.content);
+                                                for part in parts {
+                                                    let delay = humanizer.typing_delay(&part, Some(response.emotion));
+                                                    tokio::time::sleep(delay).await;
+                                                    if let Err(e) = client.route_message(route, "", &part).await {
+                                                        error!("Proactive OneBot send failed: {}", e);
+                                                    }
+                                                }
+                                                routed = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !routed {
+                                    print_response(&response, &humanizer, Some("Batched")).await;
+                                }
+                            }
+                            Err(e) => error!("Error processing batched triggers: {}", e),
+                        }
+                        continue;
+                    }
                     AgentAction::AutonomousToolUse { tool_name, input, goal_id } => {
                         info!("Autonomous tool use: {} (goal={:?})", tool_name, goal_id);
                         match engine.execute_autonomous_tool(&tool_name, &input, goal_id).await {
