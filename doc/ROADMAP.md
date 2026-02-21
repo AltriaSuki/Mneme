@@ -1295,6 +1295,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] 行为模式识别 ✅ — `assemble_metacognition_context()` 收集 self_knowledge + 近期 episodes + 躯体状态，LLM 识别模式
 - [x] 自我改进建议生成 ✅ — `parse_metacognition_response()` 解析 `MetacognitionInsight` (domain, content, confidence)
 - [x] 反思日志 ✅ — 洞察存入 `self_knowledge` (source="self:metacognition") + 反思摘要存为 episode
+- [x] 反馈闭环 ✅ — 元认知洞察推入 `FeedbackBuffer` (SelfReflection signal)，经睡眠整合消化为状态更新
 
 ---
 
