@@ -1001,6 +1001,61 @@ impl OrganismCoordinator {
         Ok(result)
     }
 
+    /// Run offline learning on unconsumed samples without full sleep consolidation.
+    ///
+    /// Returns the number of samples processed.
+    pub async fn trigger_training(&self) -> Result<usize> {
+        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("No database configured"))?;
+        let samples = db.load_unconsumed_samples().await?;
+        if samples.is_empty() {
+            return Ok(0);
+        }
+        let count = samples.len();
+
+        // 1. CurveLearner
+        let learner = crate::learning::CurveLearner::new();
+        let current_curves = self.limbic.get_curves().await;
+        if let Some(new_curves) = learner.learn(&current_curves, &samples) {
+            self.limbic.set_curves(new_curves.clone()).await;
+            let _ = db.save_learned_curves(&new_curves).await;
+        }
+
+        // 2. NeuralModulator
+        let mut nn = self.limbic.get_neural().await
+            .unwrap_or_else(mneme_limbic::NeuralModulator::default);
+        let train_samples: Vec<_> = samples.iter().map(|s| {
+            (
+                mneme_limbic::neural::StateFeatures {
+                    energy: s.energy, stress: s.stress, arousal: s.arousal,
+                    mood_bias: s.mood_bias, social_need: s.social_need,
+                    cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                s.modulation.clone(),
+                s.feedback_valence,
+            )
+        }).collect();
+        nn.train(&train_samples, 0.01);
+        nn.blend = (nn.blend + 0.02).min(0.5);
+        let _ = db.save_learned_neural(&nn).await;
+        self.limbic.set_neural(Some(nn)).await;
+
+        // 3. LearnableDynamics
+        let dyn_samples: Vec<_> = samples.iter()
+            .map(|s| (s.energy, s.stress, s.feedback_valence))
+            .collect();
+        {
+            let mut dyn_guard = self.dynamics.write().await;
+            if dyn_guard.learnable.learn_from_samples(&dyn_samples) {
+                let _ = db.save_learned_dynamics(&dyn_guard.learnable).await;
+            }
+        }
+
+        let ids: Vec<i64> = samples.iter().map(|s| s.id).collect();
+        let _ = db.mark_samples_consumed(&ids).await;
+        tracing::info!("Training completed on {} samples", count);
+        Ok(count)
+    }
+
     /// Save current state to database (if persistence is enabled).
     /// Also records a snapshot into the state history table.
     pub async fn save_state(&self) {

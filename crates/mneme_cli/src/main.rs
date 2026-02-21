@@ -51,7 +51,7 @@ impl rustyline::completion::Completer for CommandCompleter {
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
         const COMMANDS: &[&str] = &[
-            "quit", "exit", "status", "sleep", "like", "dislike", "correct", "reload", "export",
+            "quit", "exit", "status", "sleep", "like", "dislike", "correct", "reload", "export", "train",
         ];
         let prefix = &line[..pos];
         if prefix.contains(' ') {
@@ -663,7 +663,7 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Commands that don't need to wait for response
-                    let needs_wait = !["sleep", "status", "like", "dislike", "correct", "reload", "export"].contains(&trimmed)
+                    let needs_wait = !["sleep", "status", "like", "dislike", "correct", "reload", "export", "train"].contains(&trimmed)
                         && !trimmed.starts_with("correct ")
                         && !trimmed.starts_with("export ");
 
@@ -986,6 +986,13 @@ async fn main() -> anyhow::Result<()> {
                         Err(e) => println!("Export failed: {}", e),
                     },
                     Err(e) => println!("Cannot create file {}: {}", path, e),
+                }
+                continue;
+            } else if content.source == "cli" && content.body.trim() == "train" {
+                match coordinator.trigger_training().await {
+                    Ok(0) => println!("No unconsumed samples to train on."),
+                    Ok(n) => println!("Training completed on {} samples.", n),
+                    Err(e) => println!("Training failed: {}", e),
                 }
                 continue;
             }
