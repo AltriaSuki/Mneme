@@ -38,6 +38,7 @@ impl ModulationVector {
     /// Linearly interpolate between self and other.
     /// `t` = 0.0 → returns self (no change), `t` = 1.0 → returns other (instant jump).
     /// A low `t` (e.g. 0.15) gives heavy inertia; a high `t` (e.g. 0.8) gives fast response.
+    #[must_use]
     pub fn lerp(&self, other: &Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
         let mix = |a: f32, b: f32| a + (b - a) * t;
@@ -53,6 +54,7 @@ impl ModulationVector {
 
     /// Compute the maximum absolute difference across all fields.
     /// Used to detect "surprise jumps" that should bypass smoothing.
+    #[must_use]
     pub fn max_delta(&self, other: &Self) -> f32 {
         let deltas = [
             (self.max_tokens_factor - other.max_tokens_factor).abs(),
@@ -372,6 +374,7 @@ impl SomaticMarker {
 
     /// Convert somatic marker to a structural modulation vector.
     /// Uses default curves (matches original hardcoded behavior).
+    #[must_use]
     pub fn to_modulation_vector(&self) -> ModulationVector {
         self.to_modulation_vector_with_curves(&ModulationCurves::default())
     }
@@ -381,11 +384,13 @@ impl SomaticMarker {
     /// This is the "neuromodulatory" pathway: instead of telling the LLM
     /// "you're tired", we actually give it less context and limit its output length.
     /// The behavior emerges from the constraint, not from instruction.
+    #[must_use]
     pub fn to_modulation_vector_with_curves(&self, curves: &ModulationCurves) -> ModulationVector {
         self.to_modulation_vector_full(curves, &BehaviorThresholds::default())
     }
 
     /// Convert with both learnable curves and learnable thresholds.
+    #[must_use]
     pub fn to_modulation_vector_full(
         &self,
         curves: &ModulationCurves,
@@ -458,11 +463,13 @@ impl SomaticMarker {
     }
 
     /// Check if the marker indicates a need for special handling
+    #[must_use]
     pub fn needs_attention(&self) -> bool {
         self.needs_attention_with(&BehaviorThresholds::default())
     }
 
     /// Check with learnable thresholds
+    #[must_use]
     pub fn needs_attention_with(&self, t: &BehaviorThresholds) -> bool {
         self.stress > t.attention_stress
             || self.energy < t.attention_energy
@@ -470,11 +477,13 @@ impl SomaticMarker {
     }
 
     /// Get urgency level (0.0 - 1.0) for proactive messaging
+    #[must_use]
     pub fn proactivity_urgency(&self) -> f32 {
         self.proactivity_urgency_with(&BehaviorThresholds::default())
     }
 
     /// Get urgency with learnable thresholds
+    #[must_use]
     pub fn proactivity_urgency_with(&self, t: &BehaviorThresholds) -> f32 {
         let social_factor = self.social_need * 0.6;
         let curiosity_factor = self.curiosity * 0.2;
@@ -626,6 +635,7 @@ impl SomaticDecoder {
 
     /// Decode LTC hidden state into a semantic description string.
     /// Returns empty string if no entry exceeds threshold.
+    #[must_use]
     pub fn decode(&self, state: &[f32]) -> String {
         if state.len() < CODEBOOK_DIM {
             return String::new();
