@@ -456,7 +456,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 **待后续补充**:
 - [ ] Destructive 操作的用户确认流程（交互式）
-- [ ] 审计日志：所有工具调用记录
+- [x] 审计日志：所有工具调用记录 ✅ — ToolRegistry.dispatch() 结构化 tracing 日志 (tool/elapsed_ms/input/outcome)
 
 ---
 
