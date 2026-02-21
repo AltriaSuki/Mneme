@@ -1208,7 +1208,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 **长期：完全数据驱动**:
 - [x] 神经网络直接从 `OrganismState` 输出 `ModulationVector` ✅ — ADR-016 LTC 网络 StateFeatures→step()→readout()→ModulationVector
 - [x] 用 (state, modulation, user_feedback) 三元组在线学习 ✅ — ADR-017 赫布在线学习 + surprise/reward 调制
-- [ ] 文字 hint 完全移除，行为 100% 从结构性约束涌现
+- [x] 文字 hint 完全移除，行为 100% 从结构性约束涌现 ✅ — maturity≥0.9 Level 4 opacity: empty prompt, ModulationVector only
 
 **当前行动**:
 - [x] 紧急：实现 `ModulationVector` + `to_modulation_vector()` ✅
