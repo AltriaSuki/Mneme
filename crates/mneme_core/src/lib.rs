@@ -460,6 +460,7 @@ impl Default for ResourceBudget {
 
 impl ResourceBudget {
     /// Fraction of budget remaining (0.0–1.0).
+    #[must_use]
     pub fn fraction_remaining(&self) -> f64 {
         if self.period_total <= 0.0 { return 0.0; }
         (self.remaining / self.period_total).clamp(0.0, 1.0)
@@ -492,6 +493,7 @@ impl Default for VisibilityFilter {
 
 impl VisibilityFilter {
     /// Check if a field name is allowed for export.
+    #[must_use]
     pub fn is_allowed(&self, field: &str) -> bool {
         self.expose_raw_state || self.allowed_fields.iter().any(|f| f == field)
     }
@@ -515,6 +517,7 @@ pub enum Emotion {
 
 impl Emotion {
     /// Get a descriptive name for the emotion
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Neutral => "neutral",
