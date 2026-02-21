@@ -159,7 +159,7 @@ impl Memory for SqliteMemory {
         // KNN search via sqlite-vec: fetch top 20 candidates across ALL episodes
         let rows = sqlx::query(
             r#"
-            SELECT e.author, e.body, e.timestamp, e.strength, v.distance
+            SELECT e.id, e.author, e.body, e.timestamp, e.strength, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.id = v.episode_id
             WHERE v.embedding MATCH ?
@@ -174,8 +174,9 @@ impl Memory for SqliteMemory {
         .context("Failed to execute vec KNN recall")?;
 
         // Re-rank: score = (1 - distance) * strength, take top 5
-        let mut scored: Vec<(f32, String, String, i64)> = Vec::new();
+        let mut scored: Vec<(f32, String, String, String, i64)> = Vec::new();
         for row in &rows {
+            let id: String = row.get("id");
             let author: String = row.get("author");
             let body_raw: String = row.get("body");
             let body = self.decrypt_body(&body_raw);
@@ -184,7 +185,7 @@ impl Memory for SqliteMemory {
             let distance: f64 = row.get("distance");
             let similarity = (1.0 - distance) as f32;
             let score = similarity * strength as f32;
-            scored.push((score, author, body, timestamp));
+            scored.push((score, id, author, body, timestamp));
         }
 
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -194,8 +195,13 @@ impl Memory for SqliteMemory {
             return Ok("No relevant memories found.".to_string());
         }
 
+        // ACT-R retrieval reinforcement: boost recalled episodes
+        for (_, id, _, _, _) in &top {
+            let _ = self.boost_episode_on_recall(id, 0.02, None).await;
+        }
+
         let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
-        for (_score, author, body, ts) in top {
+        for (_score, _id, author, body, ts) in top {
             context.push_str(&format!("- [{}] {}: {}\n", ts, author, body));
         }
         Ok(context)
@@ -213,7 +219,7 @@ impl Memory for SqliteMemory {
         // KNN search via sqlite-vec: fetch top 20 candidates across ALL episodes
         let rows = sqlx::query(
             r#"
-            SELECT e.author, e.body, e.timestamp, e.strength, v.distance
+            SELECT e.id, e.author, e.body, e.timestamp, e.strength, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.id = v.episode_id
             WHERE v.embedding MATCH ?
@@ -237,9 +243,10 @@ impl Memory for SqliteMemory {
         let newest = *timestamps.iter().max().unwrap_or(&1);
         let ts_range = (newest - oldest).max(1) as f32;
 
-        let mut scored: Vec<(f32, String, String, i64)> = Vec::new();
+        let mut scored: Vec<(f32, String, String, String, i64)> = Vec::new();
 
         for row in &rows {
+            let id: String = row.get("id");
             let author: String = row.get("author");
             let body_raw: String = row.get("body");
             let body = self.decrypt_body(&body_raw);
@@ -254,7 +261,7 @@ impl Memory for SqliteMemory {
             let bias_factor = 1.0 + mood_bias * (recency_score - 0.5) * 0.6;
             let final_score = base_score * bias_factor.max(0.1);
 
-            scored.push((final_score, author, body, timestamp));
+            scored.push((final_score, id, author, body, timestamp));
         }
 
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -264,8 +271,13 @@ impl Memory for SqliteMemory {
             return Ok("No relevant memories found.".to_string());
         }
 
+        // ACT-R retrieval reinforcement: boost recalled episodes
+        for (_, id, _, _, _) in &top {
+            let _ = self.boost_episode_on_recall(id, 0.02, None).await;
+        }
+
         let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
-        for (_score, author, body, ts) in top {
+        for (_score, _id, author, body, ts) in top {
             context.push_str(&format!("- [{}] {}: {}\n", ts, author, body));
         }
         Ok(context)
