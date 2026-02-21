@@ -1054,7 +1054,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] 子配置：LlmConfig / SafetyConfig / TokenBudgetConfig / OrganismConfig / OneBotConfig ✅
 - [x] CLI `--config` 参数 + `--model` / `--db` / `--persona` 覆盖 ✅
 - [x] `mneme.example.toml` 示例配置文件 ✅
-- [ ] 配置验证（schema-level）
+- [x] 配置验证（schema-level） ✅ `validate()` 范围/空值/调度检查
 - [x] Hot reload 支持 ✅ — `SharedConfig` (arc-swap) + CLI `reload` 命令
 
 ### 19. 🏗️ 测试覆盖率
