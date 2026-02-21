@@ -97,6 +97,33 @@ impl TokenBudget {
         }
     }
 
+    /// Fraction of daily budget remaining (0.0 = exhausted, 1.0 = untouched).
+    /// Returns 1.0 if no daily limit is configured.
+    pub async fn remaining_fraction(&self) -> f32 {
+        match self.config.daily_limit {
+            Some(limit) if limit > 0 => {
+                let used = self.get_daily_usage().await;
+                (1.0 - used as f32 / limit as f32).clamp(0.0, 1.0)
+            }
+            _ => 1.0,
+        }
+    }
+
+    /// Evaluate whether an action is worth the token cost.
+    /// `priority`: 0.0 (optional/proactive) to 1.0 (user-initiated, must serve).
+    /// Returns true if the action should proceed.
+    pub async fn is_worthy(&self, priority: f32) -> bool {
+        let remaining = self.remaining_fraction().await;
+        // User messages (priority >= 0.8) always pass unless budget fully exhausted
+        if priority >= 0.8 {
+            return remaining > 0.0;
+        }
+        // Proactive actions need proportionally more remaining budget:
+        // priority=0.0 needs >50% remaining, priority=0.5 needs >25%
+        let threshold = 0.5 * (1.0 - priority);
+        remaining > threshold
+    }
+
     pub fn config(&self) -> &TokenBudgetConfig {
         &self.config
     }

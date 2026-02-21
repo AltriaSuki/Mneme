@@ -1200,6 +1200,20 @@ impl Reasoning for ReasoningEngine {
                 })
             }
             Event::ProactiveTrigger(trigger) => {
+                // #769: Worthiness gate — skip proactive triggers when budget is low
+                if let Some(ref budget) = self.token_budget {
+                    if !budget.is_worthy(0.3).await {
+                        tracing::info!("Proactive trigger skipped: token budget too low");
+                        let affect = self.limbic.get_affect().await;
+                        return Ok(ReasoningOutput {
+                            content: String::new(),
+                            modality: ResponseModality::Text,
+                            emotion: Emotion::from_affect(&affect),
+                            affect,
+                            route: None,
+                        });
+                    }
+                }
                 // Extract route: explicit trigger route > last active source
                 let trigger_route = match &trigger {
                     Trigger::Scheduled { route: Some(r), .. }
