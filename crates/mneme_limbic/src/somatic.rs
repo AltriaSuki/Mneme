@@ -284,6 +284,18 @@ impl SomaticMarker {
         }
     }
 
+    /// Narrative Blind Spot (白皮书 §4.5): detect when internal state is noticeably
+    /// "off" but not clearly attributable to any single cause. Multiple moderate
+    /// deviations from homeostasis suggest the agent shouldn't over-rationalize.
+    pub fn narrative_blind_spot(&self) -> bool {
+        let devs = [
+            (self.energy - 0.7).abs() > 0.15 && (self.energy - 0.7).abs() < 0.4,
+            self.stress > 0.2 && self.stress < 0.6,
+            self.mood_bias.abs() > 0.2 && self.mood_bias.abs() < 0.6,
+        ];
+        devs.iter().filter(|&&d| d).count() >= 2
+    }
+
     /// Format for LLM system prompt injection.
     /// Combines minimal numeric state with a human-readable affect description
     /// so the LLM can both "feel" (via ModulationVector) and "know" its emotional state.
@@ -344,6 +356,17 @@ impl SomaticMarker {
                 .collect();
             s.push_str(&format!("\n[{}: {}]", curiosity_label, interests.join(", ")));
         }
+
+        // Narrative Blind Spot (白皮书 §4.5): prevent over-rationalization
+        if self.narrative_blind_spot() {
+            let hint = match lang {
+                "en" => "[You may not know why you feel this way — you don't need to explain it]",
+                _ => "[你可能不清楚为什么会有这种感觉——不需要解释原因]",
+            };
+            s.push('\n');
+            s.push_str(hint);
+        }
+
         s
     }
 
