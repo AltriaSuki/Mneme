@@ -533,7 +533,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 
 **待后续补充**:
 - [x] 序列化/反序列化往返测试 ✅ OrganismState/Affect/Emotion JSON roundtrip
-- [ ] 并发安全测试
+- [x] 并发安全测试 ✅ — coordinator 多任务交互/反馈/健康监控/睡眠阻塞 4 项
 
 ---
 
