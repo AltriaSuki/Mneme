@@ -41,3 +41,35 @@ jobs:
 
       - name: Build with OTLP feature
         run: cargo build -p mneme_cli --features otlp
+
+      - name: Build with Prometheus feature
+        run: cargo build -p mneme_cli --features prometheus
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: |
+            ~/.cargo
+            target
+            .fastembed_cache
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Generate coverage
+        run: cargo tarpaulin --workspace --out xml --output-dir coverage/
+        env:
+          FASTEMBED_CACHE_PATH: .fastembed_cache
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/cobertura.xml
