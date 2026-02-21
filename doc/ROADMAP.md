@@ -95,7 +95,7 @@
 | ~~工具列表固定~~ | ~~🟡 中~~ | `tools.rs` | B-8 / ADR-014 | ✅ ShellToolHandler 为唯一硬编码工具，browser 工具已删除，其余通过 MCP 动态获取 |
 | ~~无低分辨率独白~~ | ~~🟡 中~~ | — | ADR-013 / B-16 | ✅ 三层分辨率完整：Zero(纯ODE)、Low(Ollama+strength 0.2)、High(完整LLM)；surprise升级+预算感知 |
 | ~~无形成性课程~~ | ~~🟡 中~~ | `tools.rs` | ADR-011 | ✅ ReadingToolHandler 阅读 → 状态依赖反思 → self_knowledge |
-| 无记忆加密 | 🟢 低 | — | B-12 结构性保障 | Level 0-1 全透明是合理的，Level 2+ 需要可选加密 |
+| ~~无记忆加密~~ | ~~🟢 低~~ | — | B-12 结构性保障 | ✅ Level 2 mark_private/mark_public + Level 3 默认加密 + 运行时密钥 (#57) |
 | ~~平台协议侵入核心~~ | ~~🟡 中~~ | `mneme_onebot` | ADR-015 | ✅ `route_message()` 封装协议路由，CLI 不再解析 group_id/user_id |
 
 ### 实现路径
