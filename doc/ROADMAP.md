@@ -532,7 +532,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 **Bug found**: `sanitize_chat_output` 对重叠 `*` 模式 (如 `**0*text*`) 不幂等。已修复。
 
 **待后续补充**:
-- [ ] 序列化/反序列化往返测试
+- [x] 序列化/反序列化往返测试 ✅ OrganismState/Affect/Emotion JSON roundtrip
 - [ ] 并发安全测试
 
 ---
