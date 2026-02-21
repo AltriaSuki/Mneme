@@ -1474,7 +1474,7 @@ CREATE TABLE self_knowledge (
 - [x] 9 个测试（dream 模块 8 + sqlite 集成 1） ✅
 
 **Phase 2 待升级**:
-- [ ] LLM 生成梦境叙述（替代模板拼接）
+- [x] LLM 生成梦境叙述（替代模板拼接） ✅ — DreamNarrator trait + coordinator LLM 优先/模板兜底
 - [ ] 梦境与自我反思的交互（梦中领悟）
 
 ---
