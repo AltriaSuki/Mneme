@@ -926,7 +926,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 - [x] 两个 provider 新增 SSE 解析单元测试
 
 **未修复**（影响较小，保留）:
-- [ ] OpenAI: 参数解析失败时返回错误而非空 `{}`（当前已有 warn 日志，改为硬错误可能破坏兼容 API）
+- [x] OpenAI: 参数解析失败时返回错误而非空 `{}`（已实现 `_parse_error` 字段） ✅
 - [x] 两个 provider 的超时统一为可配置参数 ✅ — `timeout_secs` in LlmConfig, env `LLM_TIMEOUT_SECS`
 
 ---
