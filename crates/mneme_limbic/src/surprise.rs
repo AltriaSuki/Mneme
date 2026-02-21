@@ -74,20 +74,19 @@ impl SurpriseDetector {
         self.history.push_back(content.to_string());
     }
 
-    /// Compute semantic distance between two strings (simplified)
+    /// Compute semantic distance between two strings using bigram Jaccard.
+    /// Bigrams capture word-level patterns in Chinese (most words are 2 chars)
+    /// and phrase-level patterns in English, much better than single-char Jaccard.
     fn semantic_distance(&self, a: &str, b: &str) -> f32 {
-        // Simple approach: character-level Jaccard distance
-        // In a real implementation, use embeddings
+        let a_bi = bigrams(a);
+        let b_bi = bigrams(b);
 
-        let a_chars: std::collections::HashSet<char> = a.chars().collect();
-        let b_chars: std::collections::HashSet<char> = b.chars().collect();
-
-        if a_chars.is_empty() && b_chars.is_empty() {
+        if a_bi.is_empty() && b_bi.is_empty() {
             return 0.0;
         }
 
-        let intersection = a_chars.intersection(&b_chars).count() as f32;
-        let union = a_chars.union(&b_chars).count() as f32;
+        let intersection = a_bi.intersection(&b_bi).count() as f32;
+        let union = a_bi.union(&b_bi).count() as f32;
 
         if union == 0.0 {
             return 1.0;
@@ -157,6 +156,12 @@ pub enum SpecialPattern {
     ConfessionSignal,    // User about to share something important
     EmotionalDisclosure, // User expressing strong emotion
     OpinionRequest,      // User asking for agent's opinion
+}
+
+/// Extract character bigrams from text.
+fn bigrams(s: &str) -> std::collections::HashSet<(char, char)> {
+    let chars: Vec<char> = s.chars().collect();
+    chars.windows(2).map(|w| (w[0], w[1])).collect()
 }
 
 #[cfg(test)]
