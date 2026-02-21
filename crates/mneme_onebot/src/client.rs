@@ -192,6 +192,7 @@ impl OneBotClient {
                                      body: msg_event.raw_message,
                                      timestamp: msg_event.time,
                                      modality: Modality::Text,
+                                     ..Default::default()
                                  };
 
                                  // Send to reasoning engine

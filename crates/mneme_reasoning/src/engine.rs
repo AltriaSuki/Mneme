@@ -955,6 +955,7 @@ impl ReasoningEngine {
                 body: summary,
                 timestamp: chrono::Utc::now().timestamp(),
                 modality: mneme_core::Modality::Text,
+                ..Default::default()
             };
             if let Err(e) = self.memory.memorize(&meta_content).await {
                 tracing::warn!("Failed to store metacognition episode: {}", e);
@@ -1284,6 +1285,7 @@ impl Reasoning for ReasoningEngine {
                                                 body: text.clone(),
                                                 timestamp: chrono::Utc::now().timestamp(),
                                                 modality: mneme_core::Modality::Text,
+                                                ..Default::default()
                                             };
                                             let _ = self.memory.memorize_with_strength(&episode, 0.2).await;
 
@@ -1844,6 +1846,7 @@ mod tests {
             body: body.into(),
             timestamp: 0,
             modality: Modality::Text,
+            ..Default::default()
         }
     }
 

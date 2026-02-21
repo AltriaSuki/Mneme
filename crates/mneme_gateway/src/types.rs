@@ -33,6 +33,7 @@ impl GatewayMessage {
             body: self.body,
             timestamp: chrono::Utc::now().timestamp(),
             modality: Modality::Text,
+            ..Default::default()
         }
     }
 }

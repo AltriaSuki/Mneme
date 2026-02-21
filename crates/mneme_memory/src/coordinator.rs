@@ -784,6 +784,7 @@ impl OrganismCoordinator {
                     body: summary,
                     timestamp: chrono::Utc::now().timestamp(),
                     modality: mneme_core::Modality::Text,
+                    ..Default::default()
                 };
                 if let Err(e) = db.memorize(&meta_content).await {
                     tracing::warn!("Failed to store reflection meta-episode: {}", e);
@@ -838,6 +839,7 @@ impl OrganismCoordinator {
                             body: dream.narrative.clone(),
                             timestamp: chrono::Utc::now().timestamp(),
                             modality: mneme_core::Modality::Text,
+                            ..Default::default()
                         };
                         if let Err(e) = db.memorize(&dream_content).await {
                             tracing::warn!("Failed to store dream episode: {}", e);

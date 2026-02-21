@@ -32,6 +32,7 @@ use uuid::Uuid;
 
 /// Represents a normalized unit of information from any source
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Content {
     pub id: Uuid,
     pub source: String,
@@ -39,6 +40,28 @@ pub struct Content {
     pub body: String,
     pub timestamp: i64, // Unix timestamp
     pub modality: Modality,
+    /// Reply chain: ID of the message this is replying to (§3.2).
+    pub reply_to: Option<Uuid>,
+    /// Thread/conversation ID for grouping related messages (§3.2).
+    pub thread_id: Option<String>,
+    /// Modality-specific metadata (e.g. image dimensions, audio duration) (§3.2).
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+impl Default for Content {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            source: String::new(),
+            author: String::new(),
+            body: String::new(),
+            timestamp: 0,
+            modality: Modality::Text,
+            reply_to: None,
+            thread_id: None,
+            metadata: std::collections::HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

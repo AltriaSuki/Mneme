@@ -13,6 +13,7 @@ async fn seed_episodes(memory: &SqliteMemory, count: u64) {
             body: format!("dummy episode {}", i),
             timestamp: i as i64,
             modality: Modality::Text,
+            ..Default::default()
         };
         memory.memorize(&content).await.unwrap();
     }
@@ -144,6 +145,7 @@ async fn test_recall_blended_with_data() {
         body: "I love programming in Rust".to_string(),
         timestamp: 100,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&content).await.expect("memorize failed");
 
@@ -172,6 +174,7 @@ async fn test_semantic_recall() {
         body: "I really love eating red apples.".to_string(),
         timestamp: 100,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory
         .memorize(&apple_content)
@@ -185,6 +188,7 @@ async fn test_semantic_recall() {
         body: "My computer running Rust is very fast.".to_string(),
         timestamp: 101,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory
         .memorize(&tech_content)
@@ -783,6 +787,7 @@ async fn test_episode_default_strength() {
         body: "Hello world".to_string(),
         timestamp: 100,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&content).await.unwrap();
 
@@ -810,6 +815,7 @@ async fn test_episode_update_strength() {
         body: "An emotionally intense memory".to_string(),
         timestamp: 100,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&content).await.unwrap();
 
@@ -843,6 +849,7 @@ async fn test_episode_decay() {
             body: format!("Memory {}", id),
             timestamp: 100,
             modality: Modality::Text,
+            ..Default::default()
         };
         memory.memorize(&content).await.unwrap();
         memory
@@ -884,6 +891,7 @@ async fn test_episode_rehearsal_boost() {
         body: "Original memory content".to_string(),
         timestamp: 100,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&content).await.unwrap();
     // Start at 0.5 (default)
@@ -1037,6 +1045,7 @@ async fn test_sleep_decays_episodes() {
         body: "A memorable event".to_string(),
         timestamp: 100,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&content).await.unwrap();
     memory
@@ -1092,6 +1101,7 @@ async fn test_recall_with_bias_no_panic() {
             body: format!("Memory about topic {}", i),
             timestamp: 100 + i * 1000,
             modality: Modality::Text,
+            ..Default::default()
         };
         memory.memorize(&content).await.unwrap();
     }
@@ -1125,6 +1135,7 @@ async fn test_recall_with_bias_ordering_differs() {
         body: "I remember the old days of learning Rust".to_string(),
         timestamp: 1000,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&old_content).await.unwrap();
 
@@ -1135,6 +1146,7 @@ async fn test_recall_with_bias_ordering_differs() {
         body: "Today I am learning Rust with great enthusiasm".to_string(),
         timestamp: 100_000,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&new_content).await.unwrap();
 
@@ -1361,6 +1373,7 @@ async fn test_recall_random_by_strength() {
             body: format!("Episode number {}", i),
             timestamp: 1000 + i as i64,
             modality: Modality::Text,
+            ..Default::default()
         };
         memory.memorize(&content).await.unwrap();
         // Set varying strengths: 0.2, 0.3, ..., 1.0, 1.0 (clamped)
@@ -1404,6 +1417,7 @@ async fn test_vec_recall_basic() {
         body: "Rust programming language is great for systems programming".to_string(),
         timestamp: 100,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&content).await.unwrap();
 
@@ -1428,6 +1442,7 @@ async fn test_vec_recall_removes_limit() {
         body: "The quantum physics experiment yielded surprising results".to_string(),
         timestamp: 1,
         modality: Modality::Text,
+        ..Default::default()
     };
     memory.memorize(&needle).await.unwrap();
 
@@ -1440,6 +1455,7 @@ async fn test_vec_recall_removes_limit() {
             body: format!("Daily log entry number {} about routine tasks", i),
             timestamp: 100 + i as i64,
             modality: Modality::Text,
+            ..Default::default()
         };
         memory.memorize(&filler).await.unwrap();
     }
@@ -1475,6 +1491,7 @@ async fn test_vec_backfill() {
             body: "Backfill test: machine learning algorithms".to_string(),
             timestamp: 500,
             modality: Modality::Text,
+            ..Default::default()
         };
         memory.memorize(&content).await.unwrap();
     }

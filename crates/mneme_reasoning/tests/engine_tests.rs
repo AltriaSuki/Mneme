@@ -278,6 +278,7 @@ fn user_event(text: &str) -> Event {
         body: text.into(),
         timestamp: 0,
         modality: Modality::Text,
+        ..Default::default()
     })
 }
 

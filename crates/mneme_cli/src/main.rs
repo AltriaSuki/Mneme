@@ -296,6 +296,7 @@ async fn main() -> anyhow::Result<()> {
                 body: format!("我好像不在了一会儿……过去了{}。现在重新启动了。", gap_desc),
                 timestamp: now_ts,
                 modality: Modality::Text,
+                ..Default::default()
             };
             if let Err(e) = memory.memorize(&episode).await {
                 error!("Failed to store restart episode: {}", e);
@@ -653,6 +654,7 @@ async fn main() -> anyhow::Result<()> {
                         body: line.clone(),
                         timestamp: chrono::Utc::now().timestamp(),
                         modality: Modality::Text,
+                        ..Default::default()
                     };
                     if tx_stdin.blocking_send(Event::UserMessage(content)).is_err() {
                         break;
