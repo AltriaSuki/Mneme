@@ -598,7 +598,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 **后续改进**:
 - [x] 上下文感知：CLI 源跳过 sanitize（支持 markdown），QQ/群聊 源应用 sanitize ✅
 - [x] 技术讨论时自动跳过 sanitize（检测 ``` 代码块） ✅
-- [ ] 🧬 不同实例的表达风格差异（有的简洁有的啰嗦，作为可学习参数）
+- [x] 🧬 不同实例的表达风格差异（有的简洁有的啰嗦，作为可学习参数） ✅ `ExpressionStyle` 可持久化风格参数
 
 ---
 ### 30. ✅ 工具注册系统
