@@ -83,8 +83,17 @@ impl Humanizer {
         let base_ms = 500 + chars * ms_per_char;
 
         // Add 20% jitter
-        let jitter = rand::thread_rng().gen_range(0.8..1.2);
-        Duration::from_millis((base_ms as f64 * jitter) as u64)
+        let mut rng = rand::thread_rng();
+        let jitter = rng.gen_range(0.8..1.2);
+        let base = (base_ms as f64 * jitter) as u64;
+
+        // 5% chance of "distraction" pause (2-5s) — design.md §6.1
+        let distraction = if rng.gen_ratio(1, 20) {
+            rng.gen_range(2000..5000)
+        } else {
+            0
+        };
+        Duration::from_millis(base + distraction)
     }
 
     /// Calculate simulated delay for typing a response with emotional modulation
