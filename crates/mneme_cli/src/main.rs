@@ -6,7 +6,7 @@ mod schedule_tool;
 use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
 use mneme_expression::{
-    AttentionGate, BoredomExplorationEvaluator, ConsciousnessGate, CreativityTriggerEvaluator,
+    AttentionConfig, AttentionGate, BoredomExplorationEvaluator, ConsciousnessGate, CreativityTriggerEvaluator,
     CuriosityTriggerEvaluator, HabitDetector, Humanizer, MeaningSeekingEvaluator,
     MetacognitionEvaluator, PresenceScheduler, RuminationEvaluator, ScheduledTriggerEvaluator,
     SocialTriggerEvaluator,
@@ -513,7 +513,11 @@ async fn main() -> anyhow::Result<()> {
     ];
 
     // B-17: Wrap all evaluators in AttentionGate for single-focus competition
-    let attention_gate = AttentionGate::new(inner_evaluators);
+    let attention_config = AttentionConfig {
+        proactivity: config.organism.proactivity,
+        ..AttentionConfig::default()
+    };
+    let attention_gate = AttentionGate::with_config(inner_evaluators, attention_config);
     let engagement = attention_gate.engagement_handle();
     let evaluators: Vec<Box<dyn mneme_core::TriggerEvaluator>> = vec![Box::new(attention_gate)];
 

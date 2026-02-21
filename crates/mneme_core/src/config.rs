@@ -218,6 +218,8 @@ pub struct OrganismDefaults {
     pub language: String,
     /// Daily schedule entries. If empty, defaults to morning_greeting(8:00) + evening_summary(21:00).
     pub schedules: Vec<ScheduleEntryConfig>,
+    /// Proactivity level (0.0 = silent, 1.0 = maximum). Scales trigger thresholds.
+    pub proactivity: f32,
 }
 
 /// A single scheduled event in the daily plan.
@@ -254,6 +256,7 @@ impl Default for OrganismDefaults {
             trigger_interval_secs: 60,
             language: "zh".to_string(),
             schedules: Vec::new(),
+            proactivity: 0.7,
         }
     }
 }

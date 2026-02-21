@@ -8,7 +8,7 @@
 
 use async_trait::async_trait;
 use mneme_core::{Trigger, TriggerEvaluator};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Priority tier for trigger competition.
@@ -35,6 +35,10 @@ pub struct AttentionConfig {
     pub engagement_boost: f32,
     /// Maximum number of triggers to emit per cycle. Default: 1.
     pub max_triggers: usize,
+    /// Minimum seconds between any two trigger emissions (global cooldown). Default: 30.
+    pub cooldown_secs: i64,
+    /// Proactivity scaling (0.0 = silent, 1.0 = max). Lowers threshold when high. Default: 0.7.
+    pub proactivity: f32,
 }
 
 impl Default for AttentionConfig {
@@ -43,6 +47,8 @@ impl Default for AttentionConfig {
             base_threshold: 0.3,
             engagement_boost: 0.4,
             max_triggers: 1,
+            cooldown_secs: 30,
+            proactivity: 0.7,
         }
     }
 }
@@ -82,6 +88,8 @@ pub struct AttentionGate {
     config: AttentionConfig,
     /// Shared engagement level (lock-free via AtomicU64).
     engagement: Arc<AtomicU64>,
+    /// Global cooldown: unix timestamp of last trigger emission.
+    last_fired: AtomicI64,
 }
 
 impl AttentionGate {
@@ -90,6 +98,7 @@ impl AttentionGate {
             evaluators,
             config: AttentionConfig::default(),
             engagement: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+            last_fired: AtomicI64::new(0),
         }
     }
 
@@ -101,6 +110,7 @@ impl AttentionGate {
             evaluators,
             config,
             engagement: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+            last_fired: AtomicI64::new(0),
         }
     }
 
@@ -124,10 +134,14 @@ impl AttentionGate {
         f64::from_bits(self.engagement.load(Ordering::Relaxed)) as f32
     }
 
-    /// Compute effective interrupt threshold based on engagement.
+    /// Compute effective interrupt threshold based on engagement and proactivity.
+    /// Higher proactivity lowers the threshold, making triggers easier to pass.
     fn effective_threshold(&self) -> f32 {
         let engagement = self.engagement();
-        (self.config.base_threshold + self.config.engagement_boost * engagement).clamp(0.0, 1.0)
+        let base = self.config.base_threshold + self.config.engagement_boost * engagement;
+        // proactivity=1.0 → threshold unchanged; proactivity=0.0 → threshold raised by 0.5
+        let proactivity_penalty = (1.0 - self.config.proactivity) * 0.5;
+        (base + proactivity_penalty).clamp(0.0, 1.0)
     }
 }
 
@@ -170,6 +184,13 @@ fn priority_score(priority: Priority) -> f32 {
 #[async_trait]
 impl TriggerEvaluator for AttentionGate {
     async fn evaluate(&self) -> anyhow::Result<Vec<Trigger>> {
+        // Global cooldown: prevent burst firing
+        let now = chrono::Utc::now().timestamp();
+        let last = self.last_fired.load(Ordering::Relaxed);
+        if now - last < self.config.cooldown_secs {
+            return Ok(Vec::new());
+        }
+
         // Collect all triggers from wrapped evaluators (resilient to failures)
         let mut candidates: Vec<(Trigger, Priority)> = Vec::new();
         for evaluator in &self.evaluators {
@@ -207,11 +228,13 @@ impl TriggerEvaluator for AttentionGate {
             .collect();
 
         if !filtered.is_empty() {
+            self.last_fired.store(now, Ordering::Relaxed);
             tracing::info!(
-                "AttentionGate: {} trigger(s) passed (threshold={:.2}, engagement={:.2})",
+                "AttentionGate: {} trigger(s) passed (threshold={:.2}, engagement={:.2}, proactivity={:.2})",
                 filtered.len(),
                 threshold,
                 self.engagement(),
+                self.config.proactivity,
             );
         }
 
@@ -337,6 +360,8 @@ mod tests {
                 base_threshold: 0.1,
                 engagement_boost: 0.4,
                 max_triggers: 1,
+                cooldown_secs: 0,
+                proactivity: 1.0,
             },
         );
         let result = gate.evaluate().await.unwrap();
