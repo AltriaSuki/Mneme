@@ -162,18 +162,22 @@ impl ToolHandler for MemoryToolHandler {
     fn schema(&self) -> Tool {
         Tool {
             name: "memory_manage".to_string(),
-            description: "管理自己的记忆。action: pin/unpin/forget/list_pinned。pin/unpin/forget 需要 episode_id。".to_string(),
+            description: "管理自己的记忆。action: search/pin/unpin/forget/list_pinned。search 需要 query；pin/unpin/forget 需要 episode_id。".to_string(),
             input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties: json!({
                     "action": {
                         "type": "string",
-                        "enum": ["pin", "unpin", "forget", "list_pinned"],
+                        "enum": ["search", "pin", "unpin", "forget", "list_pinned"],
                         "description": "The memory management action"
                     },
                     "episode_id": {
                         "type": "string",
                         "description": "Episode UUID (required for pin/unpin/forget)"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (required for search action)"
                     }
                 }),
                 required: vec!["action".to_string()],
@@ -188,6 +192,18 @@ impl ToolHandler for MemoryToolHandler {
         };
 
         match action {
+            "search" => {
+                let query = match input.get("query").and_then(|v| v.as_str()) {
+                    Some(q) => q,
+                    None => return ToolOutcome::permanent_error("query required for search".into()),
+                };
+                use mneme_core::Memory;
+                match self.db.recall(query).await {
+                    Ok(result) if result.is_empty() => ToolOutcome::ok("没有找到相关记忆。".into()),
+                    Ok(result) => ToolOutcome::ok(result),
+                    Err(e) => ToolOutcome::transient_error(format!("Search error: {e}")),
+                }
+            }
             "list_pinned" => match self.db.list_pinned_episodes(20).await {
                 Ok(eps) if eps.is_empty() => ToolOutcome::ok("没有固定的记忆。".into()),
                 Ok(eps) => {
