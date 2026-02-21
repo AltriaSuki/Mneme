@@ -766,7 +766,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 - [x] AgentLoop 改用 tokio::time::sleep 动态调度替代固定 interval ✅
 
 **待后续补充**:
-- [ ] "值得度"评估：这个行动值得花多少 token？
+- [x] "值得度"评估：这个行动值得花多少 token？ ✅ `is_worthy()` 预算感知门控
 - [ ] 批量处理：积累多个小任务一起处理
 - [ ] 缓存复用：相似问题复用历史回答
 
