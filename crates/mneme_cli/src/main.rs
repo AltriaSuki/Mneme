@@ -1,5 +1,6 @@
 use clap::Parser;
 mod connect_tool;
+mod discover_tool;
 mod schedule_tool;
 use mneme_core::config::{MnemeConfig, SharedConfig};
 use mneme_core::{Content, Event, Memory, Modality, Reasoning, SeedPersona};
@@ -454,6 +455,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let mut reg = registry.write().await;
         reg.register(Box::new(connect_tool::ConnectToolHandler::new(registry.clone())));
+        reg.register(Box::new(discover_tool::DiscoverToolHandler::new(registry.clone())));
     }
 
     // Track connected MCP server names for reload diffing
