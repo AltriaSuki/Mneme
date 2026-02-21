@@ -349,6 +349,129 @@ pub trait TriggerEvaluator: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
+// ============================================================================
+// v3.0.0 远景: Foundational Interfaces
+// ============================================================================
+
+/// Multimodal sensory receptor interface — continuous signal input channel
+/// for future hardware (tactile sensors, BCI, cameras, microphones).
+///
+/// Each receptor produces a stream of `SensorySignal` values that feed into
+/// the LTC network alongside existing text/env inputs.
+#[async_trait]
+pub trait SensoryReceptor: Send + Sync {
+    /// Human-readable name (e.g. "tactile_glove", "eeg_headset").
+    fn name(&self) -> &str;
+    /// Signal modality this receptor produces.
+    fn modality(&self) -> SensoryModality;
+    /// Poll for the next signal. Returns None when the receptor is idle.
+    async fn poll(&self) -> anyhow::Result<Option<SensorySignal>>;
+}
+
+/// Modality of a sensory receptor's output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SensoryModality {
+    Tactile,
+    Visual,
+    Auditory,
+    Proprioceptive,
+    Chemical,
+}
+
+/// A single sample from a sensory receptor — continuous float vector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SensorySignal {
+    pub modality: SensoryModality,
+    /// Arbitrary-length feature vector (receptor-specific dimensionality).
+    pub values: Vec<f32>,
+    pub timestamp: i64,
+}
+
+/// ADR-005: Peer communication channel for multi-Mneme populations.
+///
+/// Communication boundary: only conversation-level content is shared.
+/// Episodes, self-knowledge, and ODE state are NEVER transmitted.
+#[async_trait]
+pub trait PeerChannel: Send + Sync {
+    /// Send a message to a peer Mneme.
+    async fn send(&self, peer_id: &str, msg: PeerMessage) -> anyhow::Result<()>;
+    /// Receive the next inbound message (blocks until available or channel closes).
+    async fn recv(&self) -> anyhow::Result<Option<PeerMessage>>;
+    /// List known peer IDs.
+    async fn peers(&self) -> anyhow::Result<Vec<String>>;
+}
+
+/// A message exchanged between Mneme peers (ADR-005).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerMessage {
+    pub from: String,
+    pub to: String,
+    pub body: String,
+    /// Optional: selectively shared semantic facts (public knowledge only).
+    #[serde(default)]
+    pub shared_facts: Vec<(String, String, String, f32)>, // (subject, predicate, object, confidence)
+    pub timestamp: i64,
+}
+
+/// ADR-010: Resource budget for economic autonomy.
+///
+/// Tracks compute costs so Mneme can make conscious decisions about
+/// when to "think" (LLM call) vs stay in subconscious (ODE-only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceBudget {
+    /// Remaining budget in abstract cost units.
+    pub remaining: f64,
+    /// Total budget for the current period.
+    pub period_total: f64,
+    /// Cost of last LLM call.
+    pub last_call_cost: f64,
+}
+
+impl Default for ResourceBudget {
+    fn default() -> Self {
+        Self { remaining: 1.0, period_total: 1.0, last_call_cost: 0.0 }
+    }
+}
+
+impl ResourceBudget {
+    /// Fraction of budget remaining (0.0–1.0).
+    pub fn fraction_remaining(&self) -> f64 {
+        if self.period_total <= 0.0 { return 0.0; }
+        (self.remaining / self.period_total).clamp(0.0, 1.0)
+    }
+}
+
+/// Observability Level 3: Visibility filter for internal state export.
+///
+/// By default, internal traces are NOT exported. Only metrics that Mneme
+/// chooses to share are visible to external observers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisibilityFilter {
+    /// Fields she consents to expose (e.g. "energy", "mood_label").
+    pub allowed_fields: Vec<String>,
+    /// Whether raw ODE state is exportable (default: false).
+    pub expose_raw_state: bool,
+    /// Whether episode content is exportable (default: false).
+    pub expose_episodes: bool,
+}
+
+impl Default for VisibilityFilter {
+    fn default() -> Self {
+        Self {
+            allowed_fields: vec!["energy".into(), "mood_label".into()],
+            expose_raw_state: false,
+            expose_episodes: false,
+        }
+    }
+}
+
+impl VisibilityFilter {
+    /// Check if a field name is allowed for export.
+    pub fn is_allowed(&self, field: &str) -> bool {
+        self.expose_raw_state || self.allowed_fields.iter().any(|f| f == field)
+    }
+}
+
 /// Emotional tone for voice synthesis (cross-cutting concern)
 ///
 /// DEPRECATED: Use `Affect` for the new continuous emotion model.

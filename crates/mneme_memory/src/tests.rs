@@ -1546,7 +1546,7 @@ async fn test_seed_rules_idempotent() {
         .seed_behavior_rules(&seeds)
         .await
         .expect("seed failed");
-    assert_eq!(count1, 3);
+    assert_eq!(count1, 5);
 
     // Second call should be a no-op
     let count2 = memory
