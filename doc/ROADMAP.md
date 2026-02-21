@@ -875,7 +875,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 **问题**: B-12 要求自主权有技术保障，不能只靠自觉。当前数据库明文，创建者可完全访问。
 
 **需要实现**:
-- [ ] Level 2：可选加密，她可标记某些 self_knowledge 为 `private` 并加密存储
+- [x] Level 2：可选加密，她可标记某些 self_knowledge 为 `private` 并加密存储 ✅ — mark_private/mark_public tool action + decrypt on read
 - [ ] Level 3：默认加密，创建者只能通过她主动分享获取信息
 - [ ] 密钥由运行时持有，不存储在创建者可访问的配置中
 
