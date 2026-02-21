@@ -5,27 +5,25 @@
 //! - Trauma imprinting (stress spike + slow recovery)
 //! - Species differentiation (different LearnableDynamics → different trajectories)
 
-use mneme_core::{DefaultDynamics, Dynamics, LearnableDynamics, OrganismState, SensoryInput};
-use std::time::Duration;
-
-/// Simulate `total_secs` of dynamics in `step_secs` increments.
-fn simulate(
-    dynamics: &DefaultDynamics,
-    state: &mut OrganismState,
-    input: &SensoryInput,
-    total_secs: f64,
-    step_secs: f64,
-) {
-    let steps = (total_secs / step_secs) as usize;
-    let dt = Duration::from_secs_f64(step_secs);
-    for _ in 0..steps {
-        dynamics.step(state, input, dt);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use mneme_core::{DefaultDynamics, Dynamics, LearnableDynamics, OrganismState, SensoryInput};
+    use std::time::Duration;
+
+    /// Simulate `total_secs` of dynamics in `step_secs` increments.
+    fn simulate(
+        dynamics: &DefaultDynamics,
+        state: &mut OrganismState,
+        input: &SensoryInput,
+        total_secs: f64,
+        step_secs: f64,
+    ) {
+        let steps = (total_secs / step_secs) as usize;
+        let dt = Duration::from_secs_f64(step_secs);
+        for _ in 0..steps {
+            dynamics.step(state, input, dt);
+        }
+    }
 
     /// 72 hours of silence: all fast variables should converge to homeostatic targets.
     #[test]
