@@ -1041,7 +1041,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 
 ### 17. 🏗️ 代码组织优化
 - [x] `engine.rs` 拆分：`ContextBuilder` 提取到 `context.rs`（recall/social/self-knowledge/resource/6-layer assembly）✅；ToolExecutor/ConversationManager/FeedbackRecorder 体量过小暂不拆分
-- [ ] 统一错误类型（目前全部使用 `anyhow::Error`，无自定义错误类型；可引入 `thiserror` 定义领域错误）
+- [x] 统一错误类型（目前全部使用 `anyhow::Error`，无自定义错误类型；可引入 `thiserror` 定义领域错误） ✅ `MnemeError/MemoryError/ReasoningError`
 - [ ] 减少 `Arc<RwLock<>>` 的过度使用（coordinator 有 8 个 Arc 字段，考虑 actor/mpsc 模式）
 - [ ] 文档注释补全（尤其是 public API；reasoning 和 CLI 模块注释稀疏）
 - [x] `values.rs` 和 `somatic.rs` 的中文情感关键词分析逻辑重复，应抽取为共用模块 ✅ — `mneme_core::sentiment` 共享模块 + 6 测试
