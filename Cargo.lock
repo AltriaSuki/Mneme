@@ -2463,6 +2463,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mneme_onebot_bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mneme_gateway",
+ "mneme_onebot",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mneme_reasoning"
 version = "0.1.0"
 dependencies = [
