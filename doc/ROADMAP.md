@@ -981,7 +981,7 @@ async fn should_use_llm(trigger: &AgentTrigger, budget: &TokenBudget) -> Decisio
 - [x] 批量训练数据导出 ✅ — SqliteMemory::export_training_jsonl + CLI `export` 命令
 - [x] 外部模型训练接口 ✅ — OrganismCoordinator::trigger_training() + CLI `train` 命令
 - [x] 增量学习支持 ✅ — record_modulation_sample() online micro-updates (NeuralModulator + LTC Hebbian)
-- [ ] A/B 测试框架（比较不同参数效果）
+- [x] A/B 测试框架（比较不同参数效果） ✅ — AbTest variant tracking + feedback comparison
 
 ---
 
