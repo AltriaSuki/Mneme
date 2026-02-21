@@ -1206,8 +1206,8 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] 从反馈中调整曲线参数 ✅ — `CurveLearner` reward-weighted nudge, sleep 时自动学习
 
 **长期：完全数据驱动**:
-- [ ] 神经网络直接从 `OrganismState` 输出 `ModulationVector`
-- [ ] 用 (state, modulation, user_feedback) 三元组在线学习
+- [x] 神经网络直接从 `OrganismState` 输出 `ModulationVector` ✅ — ADR-016 LTC 网络 StateFeatures→step()→readout()→ModulationVector
+- [x] 用 (state, modulation, user_feedback) 三元组在线学习 ✅ — ADR-017 赫布在线学习 + surprise/reward 调制
 - [ ] 文字 hint 完全移除，行为 100% 从结构性约束涌现
 
 **当前行动**:
@@ -1250,8 +1250,8 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 - [x] 6 个测试：空 triggers、收集全部、容错、StateUpdate、ProactiveTrigger、receiver drop 停止 ✅
 
 **待后续补充**:
-- [ ] 行为冷却机制（防止过度主动）
-- [ ] 用户可配置的主动程度
+- [x] 行为冷却机制（防止过度主动） ✅ — AttentionGate 全局冷却计时器 (cooldown_secs)
+- [x] 用户可配置的主动程度 ✅ — OrganismDefaults.proactivity → AttentionConfig.proactivity 阈值缩放
 
 ### 22. ✅ Goal System - 目标管理
 **优先级**: 🟡 中
