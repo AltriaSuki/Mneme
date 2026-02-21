@@ -751,7 +751,7 @@ fn safe_normalize(value: f32, min: f32, max: f32, default: f32) -> f32 {
 - [x] 8 个测试覆盖所有规则和路由行为 ✅
 
 **待后续补充**:
-- [ ] 本地 embedding 模型做语义判断（已有 fastembed）
+- [x] 本地 embedding 模型做语义判断（已有 fastembed） ✅ — EmbeddingModel + sqlite 语义检索已实现
 - [ ] 本地小型 LLM（如 Phi-3, Qwen2-0.5B）做简单决策
 
 ### 11. ✅ 智能调度策略
