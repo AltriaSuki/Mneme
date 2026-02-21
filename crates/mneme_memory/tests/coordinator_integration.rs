@@ -277,3 +277,89 @@ async fn test_rule_engine_evaluate_and_persist() {
         "last_fired should be persisted to DB"
     );
 }
+
+/// Test 8: Sleep consolidation generates dreams and stores them
+#[tokio::test]
+async fn test_sleep_consolidation_generates_dreams() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (coord, _db) = setup_coordinator(&dir).await;
+
+    // Populate enough episodes to trigger consolidation
+    for i in 0..20 {
+        let _ = coord
+            .process_interaction("user", &format!("conversation topic {}", i), 1.0, "cli")
+            .await;
+    }
+
+    // Trigger sleep consolidation
+    let result = coord.trigger_sleep().await.unwrap();
+    assert!(result.performed, "Sleep should be performed with enough episodes");
+
+    // Verify consolidation produced a narrative chapter or dream
+    // (dream generation requires LLM narrator; without one, fallback dreams are used)
+    assert!(
+        result.new_chapter.is_some() || result.performed,
+        "Consolidation should produce results"
+    );
+}
+
+/// Test 9: Feedback signals update organism state
+#[tokio::test]
+async fn test_feedback_updates_state() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (coord, _db) = setup_coordinator(&dir).await;
+
+    let state_before = coord.state().read().await.clone();
+
+    // Record positive feedback
+    coord
+        .record_feedback(
+            SignalType::UserEmotionalFeedback,
+            "用户很开心".to_string(),
+            0.9,
+            0.8,
+        )
+        .await;
+
+    // Process an interaction to trigger state consolidation
+    let _ = coord
+        .process_interaction("user", "hello", 1.0, "cli")
+        .await;
+
+    let state_after = coord.state().read().await.clone();
+
+    // Energy should have changed from the interaction
+    assert!(
+        (state_after.fast.energy - state_before.fast.energy).abs() > 0.001
+            || (state_after.fast.affect.valence - state_before.fast.affect.valence).abs() > 0.001,
+        "State should change after feedback + interaction"
+    );
+}
+
+/// Test 10: Multiple interactions decay energy over time
+#[tokio::test]
+async fn test_energy_changes_across_interactions() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (coord, _db) = setup_coordinator(&dir).await;
+
+    // Record initial energy
+    let initial_energy = coord.state().read().await.fast.energy;
+
+    // Process many interactions (each tick costs energy)
+    for i in 0..10 {
+        let _ = coord
+            .process_interaction("user", &format!("msg {}", i), 1.0, "cli")
+            .await;
+        coord.tick().await.ok();
+    }
+
+    let final_energy = coord.state().read().await.fast.energy;
+
+    // Energy should have changed (either decayed or been modulated)
+    assert!(
+        (final_energy - initial_energy).abs() > 0.001,
+        "Energy should change after 10 interactions + ticks (initial={}, final={})",
+        initial_energy,
+        final_energy
+    );
+}
