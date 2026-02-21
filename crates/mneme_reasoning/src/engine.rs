@@ -2,6 +2,7 @@ use crate::{
     context::ContextBuilder,
     llm::{CompletionParams, LlmClient},
     prompts::ContextAssembler,
+    router::ModelRouter,
 };
 use anyhow::Result;
 use mneme_core::safety::CapabilityGuard;
@@ -129,6 +130,9 @@ pub struct ReasoningEngine {
 
     // #55: Optional local model for low-resolution inner monologue (ADR-013)
     low_res_client: Option<Arc<dyn LlmClient>>,
+
+    // Phase 5b-1: Multi-model router for task-based LLM selection (B-8 Level 2)
+    router: Option<Arc<ModelRouter>>,
 }
 
 impl ReasoningEngine {
@@ -164,6 +168,7 @@ impl ReasoningEngine {
             intents: tokio::sync::Mutex::new(Vec::new()),
             cancelled: Arc::new(AtomicBool::new(false)),
             low_res_client: None,
+            router: None,
         }
     }
 
@@ -199,12 +204,23 @@ impl ReasoningEngine {
             intents: tokio::sync::Mutex::new(Vec::new()),
             cancelled: Arc::new(AtomicBool::new(false)),
             low_res_client: None,
+            router: None,
         }
     }
 
     /// #55: Set a local model client for low-resolution inner monologue.
     pub fn set_low_res_client(&mut self, client: Arc<dyn LlmClient>) {
         self.low_res_client = Some(client);
+    }
+
+    /// Phase 5b-1: Set the multi-model router for task-based LLM selection.
+    pub fn set_router(&mut self, router: Arc<ModelRouter>) {
+        self.router = Some(router);
+    }
+
+    /// Get the router (if configured).
+    pub fn router(&self) -> Option<&Arc<ModelRouter>> {
+        self.router.as_ref()
     }
 
     /// Set the context budget from config (chars, ~4 chars per token)
@@ -536,8 +552,16 @@ impl ReasoningEngine {
 
             // #58: Use streaming for real-time output + cancellation support
             // #85: Record LLM health for self-diagnosis
-            let rx = match self
-                .client
+            // Phase 5b-1: Route to task-specific model if router is configured
+            let routed_client = match self.router {
+                Some(ref r) => Some(r.client_for(mneme_core::TaskType::Conversation).await),
+                None => None,
+            };
+            let active_client: &dyn LlmClient = match routed_client {
+                Some(ref c) => &**c,
+                None => self.client.as_ref(),
+            };
+            let rx = match active_client
                 .stream_complete(
                     &system_prompt,
                     scratchpad_messages.clone(),
@@ -1052,8 +1076,16 @@ impl Reasoning for ReasoningEngine {
                     let user_text = content.body.clone();
                     let reply_text = response_text.clone();
                     let memory = self.memory.clone();
+                    let extraction_client = match self.router {
+                        Some(ref r) => Some(r.client_for(mneme_core::TaskType::Extraction).await),
+                        None => None,
+                    };
+                    let ext_ref: &dyn LlmClient = match extraction_client {
+                        Some(ref c) => &**c,
+                        None => self.client.as_ref(),
+                    };
                     let (facts, goals) = crate::extraction::extract_all(
-                        self.client.as_ref(),
+                        ext_ref,
                         &user_text,
                         &reply_text,
                     )

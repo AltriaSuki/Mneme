@@ -18,6 +18,9 @@ pub struct MnemeConfig {
     pub onebot: Option<OneBotConfig>,
     pub mcp: Option<McpConfig>,
     pub gateway: Option<GatewayConfig>,
+    /// Phase 5b-1: Additional model profiles for task-based routing (B-8 Level 2).
+    /// Each profile is a named LLM configuration that Mneme can route tasks to.
+    pub models: Vec<ModelProfile>,
 }
 
 impl MnemeConfig {
@@ -311,6 +314,52 @@ impl Default for GatewayConfig {
             port: 3000,
         }
     }
+}
+
+// ============================================================================
+// Model Router config (Phase 5b-1, B-8 Level 2)
+// ============================================================================
+
+/// A named LLM profile for task-based routing.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ModelProfile {
+    pub name: String,
+    pub provider: String,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub max_tokens: u32,
+    pub temperature: f32,
+    pub timeout_secs: u64,
+    /// Which task types this profile is preferred for.
+    pub preferred_tasks: Vec<TaskType>,
+}
+
+impl Default for ModelProfile {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            provider: "anthropic".to_string(),
+            model: "claude-4-5-sonnet-20250929".to_string(),
+            base_url: None,
+            max_tokens: 4096,
+            temperature: 0.7,
+            timeout_secs: 120,
+            preferred_tasks: Vec::new(),
+        }
+    }
+}
+
+/// Task types for model routing decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskType {
+    Conversation,
+    Dream,
+    InnerMonologue,
+    Reading,
+    Creation,
+    Extraction,
 }
 
 // ============================================================================

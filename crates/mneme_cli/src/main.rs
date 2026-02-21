@@ -363,6 +363,36 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Phase 5b-1: Build multi-model router if additional profiles are configured
+    if !config.models.is_empty() {
+        let primary: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
+            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout)?),
+            "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
+            _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+        };
+        let mut router = mneme_reasoning::ModelRouter::new(primary);
+        for profile in &config.models {
+            let pclient: Arc<dyn LlmClient> = match profile.provider.as_str() {
+                "anthropic" => Arc::new(AnthropicClient::new(&profile.model, profile.timeout_secs)?),
+                "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&profile.model, profile.timeout_secs)?),
+                "ollama" => {
+                    use mneme_reasoning::providers::ollama::OllamaClient;
+                    Arc::new(OllamaClient::new(&profile.model, profile.timeout_secs)?)
+                }
+                "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&profile.model)),
+                other => {
+                    tracing::warn!("Unknown provider '{}' in model profile '{}', skipping", other, profile.name);
+                    continue;
+                }
+            };
+            router.register(profile.name.clone(), pclient, &profile.preferred_tasks);
+            info!("Model router: registered profile '{}' ({}:{})", profile.name, profile.provider, profile.model);
+        }
+        engine.set_router(Arc::new(router));
+        info!("Model router active with {} profile(s)", config.models.len());
+    }
+
     // 4b. Initialize Safety Guard
     let guard = Arc::new(mneme_core::safety::CapabilityGuard::new(
         config.safety.clone(),

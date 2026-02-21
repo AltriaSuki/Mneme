@@ -10,6 +10,7 @@ pub mod tools;
 pub mod values;
 
 pub use affect::Affect;
+pub use config::{ModelProfile, TaskType};
 pub use dynamics::{DefaultDynamics, Dynamics, LearnableDynamics};
 pub use persona::{Psyche, SeedPersona};
 pub use state::{
