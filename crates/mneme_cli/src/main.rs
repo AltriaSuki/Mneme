@@ -829,6 +829,7 @@ async fn main() -> anyhow::Result<()> {
     // Now we listen to event_rx (stdin + OneBot), agent_rx (AgentLoop actions),
     // and shutdown_rx (from readline thread quit/Ctrl-C/Ctrl-D/error).
     let mut shutdown_rx = shutdown_rx;
+    let mut single_shot_error: Option<String> = None;
 
     loop {
         let event = tokio::select! {
@@ -1218,6 +1219,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::error!("Reasoning error: {}", e);
                 if single_shot {
                     eprintln!("Error: {}", e);
+                    single_shot_error = Some(e.to_string());
                     break;
                 }
                 // Update prompt and signal stdin loop even on error
@@ -1231,6 +1233,10 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "otlp")]
     if args.otlp_endpoint.is_some() {
         opentelemetry::global::shutdown_tracer_provider();
+    }
+
+    if let Some(err) = single_shot_error {
+        anyhow::bail!("{}", err);
     }
 
     Ok(())
