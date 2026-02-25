@@ -664,7 +664,7 @@ async fn main() -> anyhow::Result<()> {
     let mut lifecycle_rx = coordinator.subscribe_lifecycle();
 
     if !single_shot {
-        println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
+        println!("Mneme System Online. Type 'quit' to exit, 'status' for state, 'sleep' for consolidation.");
     }
 
     // Channel for events from stdin, OneBot, Gateway, etc.
