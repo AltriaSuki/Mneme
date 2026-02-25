@@ -1153,6 +1153,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **单次模式错误退出码为 0** | mneme_cli | `-M` 遇到 API 错误时 exit 0，脚本无法检测失败 → 跟踪错误状态，bail! 返回 exit 1 | **Fixed** ✅ |
 | **CLI 命令在 -M 模式挂起** | mneme_cli | `status`/`like` 等命令用 `continue` 跳过 single_shot break → 所有 8 个命令处理器添加 `if single_shot { break; }` | **Fixed** ✅ |
 | **stdin 管道显示交互 banner** | mneme_cli | `echo "hi" \| mneme` 显示启动消息并挂起 → `IsTerminal` 检测管道，自动单次模式 | **Fixed** ✅ |
+| **ReAct 中间推理泄露** | mneme_reasoning | 工具调用后 follow-up 迭代的推理文本直接流式输出给用户 → `stream_suppressed` 标志抑制 | **Fixed** ✅ |
 
 ---
 
@@ -1858,7 +1859,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 ### 体验测试发现（待处理）
 
 - [ ] 记忆检索优先级：新存入的事实（如用户名）可能被旧记忆覆盖（"小飞" vs "Yuki"），纠正后能找到正确记录，说明存储正常但检索排序需调优
-- [ ] ReAct 中间思考泄露到输出：工具调用时 LLM 的中间推理文本（如"看起来不是 Linux，换个方式"）直接显示给用户
+- [x] ReAct 中间思考泄露到输出 → `stream_suppressed` 标志抑制 follow-up 迭代的流式输出 ✅
 - [x] stdin 管道不带 `-M` 时显示交互模式启动消息 → 自动检测 `IsTerminal`，管道输入以单次模式处理 ✅
 
 ---
