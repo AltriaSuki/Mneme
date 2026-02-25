@@ -541,10 +541,8 @@ async fn main() -> anyhow::Result<()> {
     engine.set_on_text_chunk(Arc::new(move |chunk: &str| {
         use std::io::Write;
         use std::sync::atomic::Ordering;
-        if sf.swap(false, Ordering::Relaxed) {
-            if !is_single_shot {
-                print!("\nMneme: ");
-            }
+        if sf.swap(false, Ordering::Relaxed) && !is_single_shot {
+            print!("\nMneme: ");
         }
         sd.store(true, Ordering::Relaxed);
 
