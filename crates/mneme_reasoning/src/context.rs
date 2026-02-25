@@ -32,6 +32,7 @@ pub struct ContextBuilder<'a> {
 }
 
 impl<'a> ContextBuilder<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         psyche: &'a Psyche,
         memory: &'a Arc<dyn Memory>,
@@ -59,6 +60,7 @@ impl<'a> ContextBuilder<'a> {
     /// Gathers recalled episodes, facts, social context, self-knowledge,
     /// resource status, and tool definitions, then assembles the 6-layer
     /// system prompt with modulated budget.
+    #[allow(clippy::too_many_arguments)]
     pub async fn build(
         &self,
         input_text: &str,

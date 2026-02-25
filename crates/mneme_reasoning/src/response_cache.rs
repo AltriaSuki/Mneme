@@ -19,6 +19,12 @@ pub struct ResponseCache {
     ttl: Duration,
 }
 
+impl Default for ResponseCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResponseCache {
     pub fn new() -> Self {
         Self {

@@ -1119,8 +1119,10 @@ impl OrganismCoordinator {
             LifecycleState::Awake => {
                 // Update medium state periodically
                 let mut state = self.state.write().await;
-                let mut input = SensoryInput::default();
-                input.env = mneme_core::EnvironmentMetrics::sample();
+                let input = SensoryInput {
+                    env: mneme_core::EnvironmentMetrics::sample(),
+                    ..Default::default()
+                };
                 let fast_clone = state.fast.clone();
                 let slow_clone = state.slow.clone();
                 self.dynamics.read().await.step_medium(

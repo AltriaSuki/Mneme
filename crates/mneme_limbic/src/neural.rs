@@ -83,22 +83,22 @@ impl NeuralModulator {
     fn forward_raw(&self, input: &[f32; INPUT_DIM]) -> ([f32; HIDDEN_DIM], [f32; OUTPUT_DIM]) {
         // Hidden layer: tanh(W1 * x + b1)
         let mut hidden = [0.0f32; HIDDEN_DIM];
-        for i in 0..HIDDEN_DIM {
+        for (i, h) in hidden.iter_mut().enumerate() {
             let mut sum = self.b1[i];
-            for j in 0..INPUT_DIM {
-                sum += self.w1[i][j] * input[j];
+            for (&inp, &w) in input.iter().zip(&self.w1[i]) {
+                sum += w * inp;
             }
-            hidden[i] = sum.tanh();
+            *h = sum.tanh();
         }
 
         // Output layer: W2 * hidden + b2
         let mut output = [0.0f32; OUTPUT_DIM];
-        for i in 0..OUTPUT_DIM {
+        for (i, out) in output.iter_mut().enumerate() {
             let mut sum = self.b2[i];
-            for j in 0..HIDDEN_DIM {
-                sum += self.w2[i][j] * hidden[j];
+            for (&hv, &w) in hidden.iter().zip(&self.w2[i]) {
+                sum += w * hv;
             }
-            output[i] = sum;
+            *out = sum;
         }
 
         (hidden, output)
@@ -158,35 +158,35 @@ impl NeuralModulator {
 
             // Output layer gradients
             let mut d_output = [0.0f32; OUTPUT_DIM];
-            for i in 0..OUTPUT_DIM {
-                d_output[i] = (target_raw[i] - raw_output[i]) * scale;
+            for (d, (&tr, &ro)) in d_output.iter_mut().zip(target_raw.iter().zip(&raw_output)) {
+                *d = (tr - ro) * scale;
             }
 
             // Update W2, b2
-            for i in 0..OUTPUT_DIM {
-                for j in 0..HIDDEN_DIM {
-                    self.w2[i][j] += d_output[i] * hidden[j];
+            for (i, &d_out) in d_output.iter().enumerate() {
+                for (w, &hv) in self.w2[i].iter_mut().zip(hidden.iter()) {
+                    *w += d_out * hv;
                 }
-                self.b2[i] += d_output[i];
+                self.b2[i] += d_out;
             }
 
             // Backprop to hidden layer
             let mut d_hidden = [0.0f32; HIDDEN_DIM];
-            for j in 0..HIDDEN_DIM {
+            for (j, dh) in d_hidden.iter_mut().enumerate() {
                 let mut sum = 0.0;
-                for i in 0..OUTPUT_DIM {
-                    sum += d_output[i] * self.w2[i][j];
+                for (i, &d_out) in d_output.iter().enumerate() {
+                    sum += d_out * self.w2[i][j];
                 }
                 // tanh derivative: 1 - tanh^2
-                d_hidden[j] = sum * (1.0 - hidden[j] * hidden[j]);
+                *dh = sum * (1.0 - hidden[j] * hidden[j]);
             }
 
             // Update W1, b1
-            for i in 0..HIDDEN_DIM {
-                for j in 0..INPUT_DIM {
-                    self.w1[i][j] += d_hidden[i] * input[j];
+            for (i, &dh) in d_hidden.iter().enumerate() {
+                for (w, &inp) in self.w1[i].iter_mut().zip(input.iter()) {
+                    *w += dh * inp;
                 }
-                self.b1[i] += d_hidden[i];
+                self.b1[i] += dh;
             }
 
             // Clamp weights to prevent explosion
@@ -329,23 +329,23 @@ impl LiquidNeuralModulator {
 
         // Compute synaptic activation: f = σ(W_in · input + W_rec · x + b)
         let mut f = [0.0f32; HIDDEN_DIM];
-        for i in 0..HIDDEN_DIM {
+        for (i, fv) in f.iter_mut().enumerate() {
             let mut sum = self.b_h[i];
-            for j in 0..INPUT_DIM {
-                sum += self.w_in[i][j] * input[j];
+            for (&inp, &w) in input.iter().zip(&self.w_in[i]) {
+                sum += w * inp;
             }
-            for j in 0..HIDDEN_DIM {
-                sum += self.w_rec[i][j] * self.state[j];
+            for (&sv, &w) in self.state.iter().zip(&self.w_rec[i]) {
+                sum += w * sv;
             }
-            f[i] = sigmoid(sum);
+            *fv = sigmoid(sum);
         }
 
         // LTC ODE step (Euler): dx_i = [-(1/τ_i + f_i)·x_i + A·f_i] · dt
-        for i in 0..HIDDEN_DIM {
+        for (i, sv) in self.state.iter_mut().enumerate() {
             let leak = 1.0 / self.tau[i];
-            let dx = -(leak + f[i]) * self.state[i] + self.amplitude * f[i];
-            self.state[i] += dx * dt;
-            self.state[i] = self.state[i].clamp(-5.0, 5.0);
+            let dx = -(leak + f[i]) * *sv + self.amplitude * f[i];
+            *sv += dx * dt;
+            *sv = sv.clamp(-5.0, 5.0);
         }
 
         // Read out: W_out · state + b_out → ModulationVector
@@ -355,12 +355,12 @@ impl LiquidNeuralModulator {
     /// Read the current hidden state into a ModulationVector (no state mutation).
     fn readout(&self) -> ModulationVector {
         let mut raw = [0.0f32; OUTPUT_DIM];
-        for i in 0..OUTPUT_DIM {
+        for (i, r) in raw.iter_mut().enumerate() {
             let mut sum = self.b_out[i];
-            for j in 0..HIDDEN_DIM {
-                sum += self.w_out[i][j] * self.state[j];
+            for (&sv, &w) in self.state.iter().zip(&self.w_out[i]) {
+                sum += w * sv;
             }
-            raw[i] = sum;
+            *r = sum;
         }
 
         ModulationVector {

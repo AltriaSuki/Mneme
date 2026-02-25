@@ -222,7 +222,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                     Ok(m) => m,
                     Err(e) => {
                         let err = serde_json::json!({"error": format!("Invalid JSON: {}", e)});
-                        let _ = ws_tx.send(Message::Text(err.to_string().into())).await;
+                        let _ = ws_tx.send(Message::Text(err.to_string())).await;
                         continue;
                     }
                 };
@@ -254,7 +254,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
                     Ok(Ok(response)) => {
                         let json = serde_json::to_string(&response).unwrap_or_default();
-                        if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                        if ws_tx.send(Message::Text(json)).await.is_err() {
                             break;
                         }
                     }
@@ -262,7 +262,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                     Err(_) => {
                         pending.write().await.remove(&request_id);
                         let err = serde_json::json!({"error": "timeout"});
-                        let _ = ws_tx.send(Message::Text(err.to_string().into())).await;
+                        let _ = ws_tx.send(Message::Text(err.to_string())).await;
                     }
                 }
             }

@@ -1523,8 +1523,7 @@ impl SqliteMemory {
             self.encrypt_body(&plain)
         } else {
             // going public: decrypt
-            let plain = self.decrypt_body(&raw);
-            plain
+            self.decrypt_body(&raw)
         };
 
         sqlx::query(

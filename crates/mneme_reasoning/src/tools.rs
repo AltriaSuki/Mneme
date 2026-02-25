@@ -37,6 +37,12 @@ pub struct ShellToolHandler {
     timeout: Duration,
 }
 
+impl Default for ShellToolHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShellToolHandler {
     pub fn new() -> Self {
         Self {
