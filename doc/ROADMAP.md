@@ -1151,6 +1151,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **二进制名 mneme_cli** | mneme_cli | 用户需输入 `mneme_cli` 而非 `mneme`，版本号停留在 0.1.0 → `[[bin]] name = "mneme"`, v0.9.0 | **Fixed** ✅ |
 | **加密密钥未 gitignore** | .gitignore | `mneme.key` 可能被意外提交 → 添加 `*.key` 规则 | **Fixed** ✅ |
 | **单次模式错误退出码为 0** | mneme_cli | `-M` 遇到 API 错误时 exit 0，脚本无法检测失败 → 跟踪错误状态，bail! 返回 exit 1 | **Fixed** ✅ |
+| **CLI 命令在 -M 模式挂起** | mneme_cli | `status`/`like` 等命令用 `continue` 跳过 single_shot break → 所有 8 个命令处理器添加 `if single_shot { break; }` | **Fixed** ✅ |
 
 ---
 
@@ -1851,6 +1852,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] clippy `collapsible_if` 警告修复 ✅
 - [x] `.gitignore` 添加 `*.key` 防止加密密钥泄露 ✅
 - [x] 单次模式错误时返回非零退出码（之前 exit 0 导致脚本无法检测失败） ✅
+- [x] CLI 命令（status/like/export 等）在 `-M` 模式下正确退出而非挂起 ✅
 
 ### 体验测试发现（待处理）
 
