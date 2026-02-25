@@ -208,10 +208,23 @@ impl ToolHandler for MemoryToolHandler {
                     None => return ToolOutcome::permanent_error("query required for search".into()),
                 };
                 use mneme_core::Memory;
+                let mut parts = Vec::new();
+                // Search episodes (semantic KNN)
                 match self.db.recall(query).await {
-                    Ok(result) if result.is_empty() => ToolOutcome::ok("没有找到相关记忆。".into()),
-                    Ok(result) => ToolOutcome::ok(result),
-                    Err(e) => ToolOutcome::transient_error(format!("Search error: {e}")),
+                    Ok(result) if !result.is_empty() => parts.push(result),
+                    Ok(_) => {}
+                    Err(e) => return ToolOutcome::transient_error(format!("Search error: {e}")),
+                }
+                // Search facts (keyword matching)
+                match self.db.recall_facts_formatted(query).await {
+                    Ok(result) if !result.is_empty() => parts.push(result),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Fact search error: {e}"),
+                }
+                if parts.is_empty() {
+                    ToolOutcome::ok("没有找到相关记忆。".into())
+                } else {
+                    ToolOutcome::ok(parts.join("\n"))
                 }
             }
             "list_pinned" => match self.db.list_pinned_episodes(20).await {
