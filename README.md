@@ -59,7 +59,7 @@
 
 - Rust 1.75+
 - SQLite 3
-- LLM API key（Anthropic / OpenAI / DeepSeek）
+- LLM API key（Anthropic / OpenAI / DeepSeek，或用 `provider = "mock"` 跳过）
 
 ### 构建与运行
 
@@ -68,57 +68,63 @@
 git clone https://github.com/anthropic/mneme.git  # 替换为实际地址
 cd mneme
 
-# 设置 API key
-echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env，填入你的 API key（至少设置 ANTHROPIC_API_KEY）
+
+# 配置文件（可选，所有字段都有默认值）
+cp mneme.example.toml mneme.toml
+# 按需编辑 mneme.toml
 
 # 构建
 cargo build --release
 
-# 运行（首次会自动创建数据库并导入种子人格）
+# 运行（首次启动会下载 embedding 模型 ~100MB，请耐心等待）
 cargo run --release
+
+# 或：单次对话模式
+cargo run --release -- -M "你好"
 ```
 
 ### 配置
 
-创建 `mneme.toml`（可选，所有字段都有默认值）：
+复制 `mneme.example.toml` 为 `mneme.toml`，按需修改。完整配置项见示例文件，核心段：
 
 ```toml
 [llm]
-provider = "anthropic"          # anthropic / openai / deepseek
-model = "claude-4-5-sonnet-20250929"
+provider = "anthropic"          # anthropic / openai / deepseek / ollama / mock
+model = "claude-sonnet-4-5-20250929"
+# base_url = "https://your-proxy.example.com/v1"
 
 [organism]
 db_path = "mneme.db"
 persona_dir = "persona"
-tick_interval_secs = 10         # 内部心跳间隔
-trigger_interval_secs = 60      # 主动触发评估间隔
+language = "zh"                 # 系统提示语言：zh / en
 
 [safety]
 tier = "restricted"             # read_only / restricted / full
-require_confirmation = true
 
-[token_budget]
-daily_limit = 100000
-monthly_limit = 3000000
-
-# 可选：接入 QQ
-[onebot]
-ws_url = "ws://localhost:8080"
+# 可选功能（详见 mneme.example.toml）：
+# [onebot]       — QQ 机器人接入
+# [gateway]      — HTTP+WebSocket 网关
+# [mcp]          — MCP 工具服务器
+# [[models]]     — 多模型路由
+# [token_budget] — Token 用量预算
 ```
 
-环境变量覆盖：`LLM_PROVIDER`、`ANTHROPIC_MODEL`、`ANTHROPIC_API_KEY`、`ONEBOT_WS_URL`。
+环境变量可覆盖配置文件，详见 `.env.example`。
 
 ### CLI 命令
 
 ```
 > 你好                    # 正常对话
-> sync                   # 拉取 RSS 源
 > status                 # 查看有机体状态（能量、压力、情绪、token 用量）
 > sleep                  # 手动触发睡眠整合（叙事编织 + 记忆衰减）
 > like / dislike         # 用户反馈（调节行为阈值）
-> reload                 # 热重载配置
-> config <key> <val>     # 运行时参数调整
-> train                  # 触发外部模型训练（导出 JSONL + 微调）
+> correct <内容>          # 纠正 Mneme 的错误认知
+> train                  # 触发离线学习（曲线 + 神经调制器 + 动力学参数）
+> export [path]          # 导出对话数据为 JSONL
+> reload                 # 热重载配置文件
 > quit                   # 优雅退出
 ```
 
@@ -178,8 +184,8 @@ cargo clippy --workspace -- -D warnings
 # 测试
 cargo test --workspace
 
-# 添加 RSS 源运行
-cargo run -- --rss "https://example.com/feed.xml"
+# 真实 LLM 集成测试（需 .env 中配置 API key）
+cargo test -p mneme_reasoning --test llm_integration -- --ignored
 ```
 
 ## 文档
