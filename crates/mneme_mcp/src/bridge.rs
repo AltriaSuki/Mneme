@@ -166,3 +166,150 @@ fn convert_mcp_tool_schema(mcp_tool: &rmcp::model::Tool) -> Tool {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::{Annotated, RawTextContent};
+    use std::borrow::Cow;
+
+    /// Helper: build an rmcp Tool for testing schema conversion.
+    fn make_rmcp_tool(name: &str, desc: &str, schema: serde_json::Value) -> rmcp::model::Tool {
+        let map = schema.as_object().cloned().unwrap_or_default();
+        rmcp::model::Tool {
+            name: Cow::Owned(name.to_string()),
+            title: None,
+            description: Some(Cow::Owned(desc.to_string())),
+            input_schema: Arc::new(map),
+            output_schema: None,
+            annotations: None,
+            execution: None,
+            icons: None,
+            meta: None,
+        }
+    }
+
+    /// Helper: build a text Content block for CallToolResult.
+    fn text_content(s: &str) -> rmcp::model::Content {
+        Annotated {
+            raw: RawContent::Text(RawTextContent {
+                text: s.to_string(),
+                meta: None,
+            }),
+            annotations: None,
+        }
+    }
+
+    // --- Schema conversion tests ---
+
+    #[test]
+    fn test_schema_conversion_basic() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"}
+            },
+            "required": ["query"]
+        });
+        let rmcp_tool = make_rmcp_tool("search", "Search the web", schema);
+        let tool = convert_mcp_tool_schema(&rmcp_tool);
+
+        assert_eq!(tool.name, "search");
+        assert_eq!(tool.description, "Search the web");
+        assert_eq!(tool.input_schema.schema_type, "object");
+        assert!(tool.input_schema.properties["query"].is_object());
+        assert_eq!(tool.input_schema.required, vec!["query"]);
+    }
+
+    #[test]
+    fn test_schema_conversion_no_required() {
+        let schema = json!({"type": "object", "properties": {}});
+        let rmcp_tool = make_rmcp_tool("noop", "Do nothing", schema);
+        let tool = convert_mcp_tool_schema(&rmcp_tool);
+
+        assert!(tool.input_schema.required.is_empty());
+    }
+
+    #[test]
+    fn test_schema_conversion_no_properties() {
+        let schema = json!({"type": "object"});
+        let rmcp_tool = make_rmcp_tool("bare", "Bare tool", schema);
+        let tool = convert_mcp_tool_schema(&rmcp_tool);
+
+        assert_eq!(tool.input_schema.properties, json!({}));
+    }
+
+    // --- convert_call_result tests ---
+
+    #[test]
+    fn test_call_result_success_text() {
+        let result = CallToolResult::success(vec![text_content("hello world")]);
+        let outcome = convert_call_result(result);
+
+        assert!(!outcome.is_error);
+        assert_eq!(outcome.content, "hello world");
+        assert!(outcome.error_kind.is_none());
+    }
+
+    #[test]
+    fn test_call_result_multiple_text_blocks() {
+        let result = CallToolResult::success(vec![
+            text_content("line 1"),
+            text_content("line 2"),
+        ]);
+        let outcome = convert_call_result(result);
+
+        assert_eq!(outcome.content, "line 1\nline 2");
+    }
+
+    #[test]
+    fn test_call_result_empty_content() {
+        let result = CallToolResult::success(vec![]);
+        let outcome = convert_call_result(result);
+
+        assert_eq!(outcome.content, "[no output]");
+    }
+
+    #[test]
+    fn test_call_result_error() {
+        let result = CallToolResult::error(vec![text_content("bad input")]);
+        let outcome = convert_call_result(result);
+
+        assert!(outcome.is_error);
+        assert_eq!(outcome.content, "bad input");
+        assert_eq!(outcome.error_kind, Some(ToolErrorKind::Permanent));
+    }
+
+    // --- Disconnected peer tests ---
+
+    #[tokio::test]
+    async fn test_execute_disconnected_peer() {
+        let schema = json!({"type": "object", "properties": {}});
+        let rmcp_tool = make_rmcp_tool("test_tool", "A test", schema);
+        let peer = Arc::new(RwLock::new(None)); // disconnected
+        let handler = McpToolHandler::from_mcp_tool(&rmcp_tool, peer, "test-server");
+
+        let outcome = handler.execute(&json!({})).await;
+
+        assert!(outcome.is_error);
+        assert!(outcome.content.contains("disconnected"));
+        assert!(outcome.content.contains("test-server"));
+        assert_eq!(outcome.error_kind, Some(ToolErrorKind::Transient));
+    }
+
+    #[tokio::test]
+    async fn test_from_mcp_tool_accessors() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"x": {"type": "number"}}
+        });
+        let rmcp_tool = make_rmcp_tool("calc", "Calculator", schema);
+        let peer = Arc::new(RwLock::new(None));
+        let handler = McpToolHandler::from_mcp_tool(&rmcp_tool, peer, "math-server");
+
+        assert_eq!(handler.name(), "calc");
+        assert_eq!(handler.description(), "Calculator");
+        let s = handler.schema();
+        assert_eq!(s.name, "calc");
+    }
+}

@@ -449,3 +449,63 @@ impl ToolHandler for ReadingToolHandler {
         self.reflect_and_store(title, &text).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_shell_echo() {
+        let handler = ShellToolHandler::new();
+        let input = json!({"command": "echo hello"});
+        let result = handler.execute(&input).await;
+        assert!(!result.is_error);
+        assert_eq!(result.content.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_shell_missing_command() {
+        let handler = ShellToolHandler::new();
+        let input = json!({});
+        let result = handler.execute(&input).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_nonzero_exit() {
+        let handler = ShellToolHandler::new();
+        let input = json!({"command": "exit 42"});
+        let result = handler.execute(&input).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("Exit 42"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_stderr_capture() {
+        let handler = ShellToolHandler::new();
+        let input = json!({"command": "echo err >&2 && echo ok"});
+        let result = handler.execute(&input).await;
+        assert!(!result.is_error);
+        assert!(result.content.contains("ok"));
+        assert!(result.content.contains("err"));
+    }
+
+    #[tokio::test]
+    async fn test_shell_empty_output() {
+        let handler = ShellToolHandler::new();
+        let input = json!({"command": "true"});
+        let result = handler.execute(&input).await;
+        assert!(!result.is_error);
+        assert_eq!(result.content, "[no output]");
+    }
+
+    #[tokio::test]
+    async fn test_shell_unicode() {
+        let handler = ShellToolHandler::new();
+        let input = json!({"command": "echo '你好世界'"});
+        let result = handler.execute(&input).await;
+        assert!(!result.is_error);
+        assert!(result.content.contains("你好世界"));
+    }
+}

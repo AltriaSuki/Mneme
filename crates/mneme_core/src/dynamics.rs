@@ -35,10 +35,6 @@ const AFFECT_RATE: f32 = 0.1;
 const STRESS_VALENCE_COUPLING: f32 = 0.1;
 
 // === Fast dynamics: curiosity ===
-const CURIOSITY_SURPRISE_FACTOR: f32 = 0.1;
-const CURIOSITY_STRESS_DRAG: f32 = 0.05;
-const CURIOSITY_OPENNESS_BOOST: f32 = 0.02;
-const CURIOSITY_BOREDOM_BOOST: f32 = 0.03;
 const CURIOSITY_DECAY_RATE: f32 = 0.001;
 
 // === Fast dynamics: social ===
@@ -199,12 +195,17 @@ impl DefaultDynamics {
         } else {
             0.0
         };
-        let d_energy =
-            self.energy_recovery_rate * (self.learnable.energy_target - fast.energy) - activity_cost;
-        fast.energy += d_energy * dt;
+        // === Energy dynamics ===
+        // Exponential recovery toward target (unconditionally dt-stable).
+        // Activity cost is an impulse (one-time event per interaction, not scaled by dt).
+        let energy_blend = 1.0 - (-self.energy_recovery_rate * dt).exp();
+        fast.energy += energy_blend * (self.learnable.energy_target - fast.energy);
+        fast.energy -= activity_cost; // impulse, not *= dt
 
         // === Stress dynamics ===
-        // dS/dt = -decay_rate * (S - target) + sensitivity * negative_stimulus
+        // Exponential decay toward target (dt-stable) + impulse from stimulus.
+        // Euler `d_stress * dt` caused stress spikes when dt > 1 (e.g. dt=15 for
+        // interaction attention window).
         let negative_stimulus = (-input.content_valence).max(0.0) * input.content_intensity;
         let surprise_stress = input.surprise * SURPRISE_STRESS_FACTOR;
 
@@ -215,9 +216,10 @@ impl DefaultDynamics {
             0.0
         };
 
-        let d_stress = -self.learnable.stress_decay_rate * (fast.stress - self.stress_target)
-            + self.stress_sensitivity * (negative_stimulus + surprise_stress + moral_stress);
-        fast.stress += d_stress * dt;
+        let stress_blend = 1.0 - (-self.learnable.stress_decay_rate * dt).exp();
+        fast.stress += stress_blend * (self.stress_target - fast.stress);
+        // Stimulus as impulse (not scaled by dt)
+        fast.stress += self.stress_sensitivity * (negative_stimulus + surprise_stress + moral_stress);
 
         // === Affect dynamics ===
         // Affect moves toward stimulus-induced target.
@@ -233,53 +235,61 @@ impl DefaultDynamics {
         let target_valence = input.content_valence * self.affect_sensitivity + mood_influence;
         let target_arousal = input.content_intensity * AROUSAL_INTENSITY_WEIGHT + input.surprise * AROUSAL_SURPRISE_WEIGHT + AROUSAL_BASELINE;
 
-        let affect_rate = AFFECT_RATE;
-        fast.affect.valence += affect_rate * (target_valence - fast.affect.valence) * dt;
-        fast.affect.arousal += affect_rate * (target_arousal - fast.affect.arousal) * dt;
+        // Exact exponential blend — unconditionally stable for any dt.
+        // Euler `rate * dt` overshoots when rate*dt > 1 (e.g. dt=60).
+        let affect_blend = 1.0 - (-AFFECT_RATE * dt).exp();
+        fast.affect.valence += affect_blend * (target_valence - fast.affect.valence);
+        fast.affect.arousal += affect_blend * (target_arousal - fast.affect.arousal);
 
         // Stress pulls valence down — but only during active interaction.
         // During idle, this coupling creates a positive feedback loop that
         // prevents homeostatic recovery.
         if has_stimulus {
-            fast.affect.valence -= fast.stress * STRESS_VALENCE_COUPLING * dt;
+            // Cap dt contribution to avoid overshoot with large dt
+            fast.affect.valence -= fast.stress * STRESS_VALENCE_COUPLING * dt.min(2.0);
         }
 
         // === Curiosity dynamics ===
-        // Curiosity increases with positive surprise, decreases with stress
-        // Boredom also drives curiosity up (seeking novelty)
-        let d_curiosity = input.surprise * CURIOSITY_SURPRISE_FACTOR * input.content_valence.max(0.0)
-            - fast.stress * CURIOSITY_STRESS_DRAG
-            + medium.openness * CURIOSITY_OPENNESS_BOOST
-            + fast.boredom * CURIOSITY_BOREDOM_BOOST;
-        fast.curiosity += d_curiosity * dt;
+        // Uses exponential approach toward a stimulus-driven target (dt-stable).
+        // Stress is folded into the target to avoid linear drag exploding with large dt.
+        let curiosity_target = (input.surprise * input.content_valence.max(0.0)
+            + medium.openness * 0.4
+            + fast.boredom * 0.5
+            - fast.stress * 0.3)
+            .clamp(0.0, 1.0);
+        let curiosity_blend = 1.0 - (-0.02 * dt).exp();
+        let d_curiosity = curiosity_target - fast.curiosity; // sign for topic tagging
+        fast.curiosity += curiosity_blend * d_curiosity;
 
-        // ADR-007: Curiosity vectorization — tag with topic when curiosity rises
-        if d_curiosity > 0.0 {
+        // ADR-007: Curiosity vectorization — tag topic on any meaningful stimulus.
+        // Decoupled from d_curiosity sign: even if overall curiosity is falling,
+        // a surprising topic should still register as an interest.
+        if input.surprise > 0.1 {
             if let Some(ref topic) = input.topic_hint {
-                let boost = (d_curiosity * dt).min(0.3);
+                let boost = (input.surprise * 0.3).min(0.3);
                 fast.curiosity_vector.tag_interest(topic, boost);
             }
         }
-        // Decay existing interests slowly
-        fast.curiosity_vector.decay(1.0 - CURIOSITY_DECAY_RATE * dt);
+        // Decay existing interests slowly (exact exponential for dt-stability)
+        fast.curiosity_vector.decay((-CURIOSITY_DECAY_RATE * dt).exp());
 
         // === Social need dynamics ===
-        // Increases when alone, decreases after social interaction
-        let d_social = if input.is_social {
-            -SOCIAL_SATISFACTION_FACTOR * fast.social_need // Satisfied by interaction
+        // Exponential blend for dt-stability. Social interaction is an impulse.
+        if input.is_social {
+            fast.social_need -= SOCIAL_SATISFACTION_FACTOR * fast.social_need; // impulse
         } else {
-            self.social_need_growth_rate * (self.social_need_target - fast.social_need)
-        };
-        fast.social_need += d_social * dt;
+            let social_blend = 1.0 - (-self.social_need_growth_rate * dt).exp();
+            fast.social_need += social_blend * (self.social_need_target - fast.social_need);
+        }
 
         // === Boredom dynamics ===
-        // Increases with low-surprise, low-intensity input (monotony).
-        // Decreases sharply with novel/surprising stimuli.
+        // Uses exact exponential blend toward a target (unconditionally dt-stable).
         let novelty = input.surprise * AROUSAL_INTENSITY_WEIGHT + input.content_intensity * NOVELTY_INTENSITY_WEIGHT;
-        let d_boredom = BOREDOM_MONOTONY_RATE * (1.0 - novelty)  // Monotony accumulation
-            - novelty * BOREDOM_NOVELTY_SUPPRESSION                      // Novelty suppression
-            - fast.stress * BOREDOM_STRESS_SUPPRESSION; // Stress also suppresses boredom
-        fast.boredom += d_boredom * dt;
+        let boredom_target = (1.0 - novelty * 2.0).max(0.0);
+        let boredom_blend = 1.0 - (-BOREDOM_MONOTONY_RATE * dt).exp();
+        fast.boredom += boredom_blend * (boredom_target - fast.boredom)
+            - novelty * BOREDOM_NOVELTY_SUPPRESSION * dt.min(2.0)
+            - fast.stress * BOREDOM_STRESS_SUPPRESSION * dt.min(2.0);
 
         // ADR-019: Propagate environment metrics into fast state
         fast.env = input.env.clone();

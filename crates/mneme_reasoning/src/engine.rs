@@ -356,7 +356,7 @@ impl ReasoningEngine {
     async fn consume_stream(
         &self,
         mut rx: tokio::sync::mpsc::Receiver<crate::api_types::StreamEvent>,
-    ) -> (Vec<crate::api_types::ContentBlock>, bool) {
+    ) -> (Vec<crate::api_types::ContentBlock>, bool, u64, u64) {
         use crate::api_types::{ContentBlock, StreamEvent};
 
         let mut blocks: Vec<ContentBlock> = Vec::new();
@@ -364,6 +364,8 @@ impl ReasoningEngine {
         let mut current_tool_id = String::new();
         let mut current_tool_name = String::new();
         let mut current_tool_input = String::new();
+        let mut total_input_tokens: u64 = 0;
+        let mut total_output_tokens: u64 = 0;
 
         while let Some(event) = rx.recv().await {
             if self.cancelled.load(Ordering::Acquire) {
@@ -371,7 +373,7 @@ impl ReasoningEngine {
                 if !current_text.is_empty() {
                     blocks.push(ContentBlock::Text { text: std::mem::take(&mut current_text) });
                 }
-                return (blocks, true);
+                return (blocks, true, total_input_tokens, total_output_tokens);
             }
 
             match event {
@@ -393,6 +395,10 @@ impl ReasoningEngine {
                 }
                 StreamEvent::ToolInputDelta(delta) => {
                     current_tool_input.push_str(&delta);
+                }
+                StreamEvent::Usage { input_tokens, output_tokens } => {
+                    total_input_tokens += input_tokens;
+                    total_output_tokens += output_tokens;
                 }
                 StreamEvent::Done { .. } => break,
                 StreamEvent::Error(e) => {
@@ -416,7 +422,7 @@ impl ReasoningEngine {
             });
         }
 
-        (blocks, false)
+        (blocks, false, total_input_tokens, total_output_tokens)
     }
 
     #[tracing::instrument(skip(self, input_text), fields(is_user_message))]
@@ -619,7 +625,14 @@ impl ReasoningEngine {
                 }
             };
 
-            let (content_blocks, was_cancelled) = self.consume_stream(rx).await;
+            let (content_blocks, was_cancelled, stream_input_tokens, stream_output_tokens) = self.consume_stream(rx).await;
+
+            // Record token usage if available
+            if stream_input_tokens > 0 || stream_output_tokens > 0 {
+                if let Some(ref budget) = self.token_budget {
+                    budget.record_usage(stream_input_tokens, stream_output_tokens).await;
+                }
+            }
 
             let assistant_msg = Message {
                 role: Role::Assistant,

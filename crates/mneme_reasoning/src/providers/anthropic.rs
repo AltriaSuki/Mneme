@@ -253,8 +253,8 @@ enum SseAction {
     None,
     /// Send a StreamEvent to the channel
     Send(crate::api_types::StreamEvent),
-    /// Capture stop_reason for the final Done event
-    CaptureStopReason(String),
+    /// Capture stop_reason for the final Done event, with optional usage
+    CaptureStopReason(String, Option<(u64, u64)>),
     /// Stream is done — send Done and return
     Done(Option<String>),
     /// Error event received
@@ -316,9 +316,32 @@ fn parse_sse_event_block(event_block: &str, stop_reason: &Option<String>) -> Sse
         }
         "message_delta" => {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_data) {
+                // Extract usage from message_delta (may coexist with stop_reason)
+                let usage = v.get("usage").and_then(|u| {
+                    let out = u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                    if out > 0 { Some((0u64, out)) } else { None }
+                });
                 if let Some(d) = v.get("delta") {
                     if let Some(sr) = d.get("stop_reason").and_then(|s| s.as_str()) {
-                        return SseAction::CaptureStopReason(sr.to_string());
+                        return SseAction::CaptureStopReason(sr.to_string(), usage);
+                    }
+                }
+                // Usage without stop_reason
+                if let Some((inp, out)) = usage {
+                    return SseAction::Send(StreamEvent::Usage { input_tokens: inp, output_tokens: out });
+                }
+            }
+            SseAction::None
+        }
+        "message_start" => {
+            // Extract input_tokens from message_start
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_data) {
+                if let Some(msg) = v.get("message") {
+                    if let Some(u) = msg.get("usage") {
+                        let inp = u.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                        if inp > 0 {
+                            return SseAction::Send(StreamEvent::Usage { input_tokens: inp, output_tokens: 0 });
+                        }
                     }
                 }
             }
@@ -363,7 +386,12 @@ where
             match parse_sse_event_block(&event_block, &stop_reason) {
                 SseAction::None => {}
                 SseAction::Send(ev) => { let _ = tx.send(ev).await; }
-                SseAction::CaptureStopReason(sr) => { stop_reason = Some(sr); }
+                SseAction::CaptureStopReason(sr, usage) => {
+                    stop_reason = Some(sr);
+                    if let Some((inp, out)) = usage {
+                        let _ = tx.send(StreamEvent::Usage { input_tokens: inp, output_tokens: out }).await;
+                    }
+                }
                 SseAction::Done(sr) => {
                     let _ = tx.send(StreamEvent::Done { stop_reason: sr }).await;
                     return Ok(());
@@ -381,7 +409,12 @@ where
     if !residue.is_empty() {
         match parse_sse_event_block(&residue, &stop_reason) {
             SseAction::Send(ev) => { let _ = tx.send(ev).await; }
-            SseAction::CaptureStopReason(sr) => { stop_reason = Some(sr); }
+            SseAction::CaptureStopReason(sr, usage) => {
+                stop_reason = Some(sr);
+                if let Some((inp, out)) = usage {
+                    let _ = tx.send(StreamEvent::Usage { input_tokens: inp, output_tokens: out }).await;
+                }
+            }
             SseAction::Done(sr) => {
                 let _ = tx.send(StreamEvent::Done { stop_reason: sr }).await;
                 return Ok(());

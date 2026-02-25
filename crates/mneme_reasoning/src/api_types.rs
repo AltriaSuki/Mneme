@@ -82,6 +82,8 @@ pub enum StreamEvent {
     ToolInputDelta(String),
     /// Stream completed, final stop reason
     Done { stop_reason: Option<String> },
+    /// Token usage report (emitted from message_delta or message_stop)
+    Usage { input_tokens: u64, output_tokens: u64 },
     /// Error during streaming
     Error(String),
 }

@@ -164,6 +164,14 @@ async fn main() -> anyhow::Result<()> {
 
     let mut args = Args::parse();
 
+    // Early validation: reject empty single-shot messages before heavy init
+    if let Some(ref msg) = args.message {
+        if msg.trim().is_empty() {
+            eprintln!("错误: 消息不能为空");
+            std::process::exit(1);
+        }
+    }
+
     // Configurable tracing subscriber
     {
         use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -1050,6 +1058,14 @@ async fn main() -> anyhow::Result<()> {
                 println!("Stress: {:.2}", state.fast.stress);
                 println!("Mood bias: {:.2}", state.medium.mood_bias);
                 println!("Affect: {}", state.fast.affect.describe());
+                println!("Curiosity: {:.2}", state.fast.curiosity);
+                println!("Social need: {:.2}", state.fast.social_need);
+                println!("Boredom: {:.2}", state.fast.boredom);
+                let interests = state.fast.curiosity_vector.top_interests(3);
+                if !interests.is_empty() {
+                    let tags: Vec<String> = interests.iter().map(|(t, i)| format!("{}({:.1})", t, i)).collect();
+                    println!("Interests: {}", tags.join(", "));
+                }
                 println!("Attachment: {:?}", state.medium.attachment.style());
                 // Token usage
                 let daily = token_budget.get_daily_usage().await;
@@ -1098,8 +1114,8 @@ async fn main() -> anyhow::Result<()> {
                 println!("👎 已记录");
                 if single_shot { break; }
                 continue;
-            } else if content.source == "cli" && content.body.trim().starts_with("correct ") {
-                let correction = content.body.trim().strip_prefix("correct ").unwrap_or("").trim();
+            } else if content.source == "cli" && (content.body.trim() == "correct" || content.body.trim().starts_with("correct ")) {
+                let correction = content.body.trim().strip_prefix("correct").unwrap_or("").trim();
                 if !correction.is_empty() {
                     coordinator
                         .record_feedback(
@@ -1109,6 +1125,16 @@ async fn main() -> anyhow::Result<()> {
                             -0.3,
                         )
                         .await;
+                    // Store as self_knowledge so it appears in system prompt
+                    if let Err(e) = memory.store_self_knowledge(
+                        "user_correction",
+                        &format!("用户纠正：{}", correction),
+                        0.95,
+                        "user:correction",
+                        None,
+                    ).await {
+                        tracing::warn!("Failed to store correction: {}", e);
+                    }
                     println!("✏️  纠正已记录");
                 } else {
                     println!("用法: correct <纠正内容>");

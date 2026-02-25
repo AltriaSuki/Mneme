@@ -108,3 +108,161 @@ impl TriggerEvaluator for SocialTriggerEvaluator {
         "SocialTriggerEvaluator"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mneme_core::{Person, PersonContext};
+    use std::collections::HashMap;
+
+    /// Mock SocialGraph that only implements list_recent_contacts.
+    /// Uses the default trait methods for everything else.
+    struct MockSocialGraph {
+        contacts: Vec<PersonContext>,
+    }
+
+    #[async_trait]
+    impl SocialGraph for MockSocialGraph {
+        async fn find_person(&self, _: &str, _: &str) -> anyhow::Result<Option<Person>> {
+            Ok(None)
+        }
+        async fn upsert_person(&self, _: &Person) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn record_interaction(
+            &self,
+            _from: uuid::Uuid,
+            _to: uuid::Uuid,
+            _ctx: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn get_person_context(
+            &self,
+            _id: uuid::Uuid,
+        ) -> anyhow::Result<Option<PersonContext>> {
+            Ok(None)
+        }
+        async fn list_recent_contacts(&self, _limit: usize) -> anyhow::Result<Vec<PersonContext>> {
+            Ok(self.contacts.clone())
+        }
+    }
+
+    fn make_state(social_need: f32) -> Arc<RwLock<OrganismState>> {
+        let mut state = OrganismState::default();
+        state.fast.social_need = social_need;
+        Arc::new(RwLock::new(state))
+    }
+
+    fn default_thresholds() -> Arc<RwLock<BehaviorThresholds>> {
+        Arc::new(RwLock::new(BehaviorThresholds::default()))
+    }
+
+    fn make_contact(name: &str, qq_id: Option<&str>, last_ts: Option<i64>) -> PersonContext {
+        let mut aliases = HashMap::new();
+        if let Some(id) = qq_id {
+            aliases.insert("qq".to_string(), id.to_string());
+        }
+        PersonContext {
+            person: Person {
+                id: uuid::Uuid::new_v4(),
+                name: name.to_string(),
+                aliases,
+            },
+            interaction_count: 5,
+            last_interaction_ts: last_ts,
+            relationship_notes: "好朋友".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_trigger_at_low_social_need() {
+        let state = make_state(0.3);
+        let graph = Arc::new(MockSocialGraph {
+            contacts: vec![make_contact("小明", Some("12345"), Some(100))],
+        });
+        let eval = SocialTriggerEvaluator::new(state, graph, default_thresholds());
+        let triggers = eval.evaluate().await.unwrap();
+        assert!(triggers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_no_trigger_with_empty_contacts() {
+        let state = make_state(0.9);
+        let graph = Arc::new(MockSocialGraph { contacts: vec![] });
+        let eval = SocialTriggerEvaluator::new(state, graph, default_thresholds());
+        let triggers = eval.evaluate().await.unwrap();
+        assert!(triggers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fires_with_high_social_need_and_contacts() {
+        let now = chrono::Utc::now().timestamp();
+        let state = make_state(0.9);
+        let graph = Arc::new(MockSocialGraph {
+            contacts: vec![make_contact("小明", Some("12345"), Some(now - 7200))],
+        });
+        let eval = SocialTriggerEvaluator::new(state, graph, default_thresholds());
+        let triggers = eval.evaluate().await.unwrap();
+        assert_eq!(triggers.len(), 1);
+        match &triggers[0] {
+            Trigger::Rumination { kind, context, route } => {
+                assert_eq!(kind, "social_outreach");
+                assert!(context.contains("小明"));
+                assert!(context.contains("好朋友"));
+                assert_eq!(route.as_deref(), Some("onebot:private:12345"));
+            }
+            _ => panic!("Expected Rumination trigger"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_route_without_qq_alias() {
+        let state = make_state(0.9);
+        let graph = Arc::new(MockSocialGraph {
+            contacts: vec![make_contact("小红", None, Some(100))],
+        });
+        let eval = SocialTriggerEvaluator::new(state, graph, default_thresholds());
+        let triggers = eval.evaluate().await.unwrap();
+        assert_eq!(triggers.len(), 1);
+        match &triggers[0] {
+            Trigger::Rumination { route, .. } => {
+                assert!(route.is_none());
+            }
+            _ => panic!("Expected Rumination trigger"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cooldown_prevents_rapid_fire() {
+        let state = make_state(0.9);
+        let graph = Arc::new(MockSocialGraph {
+            contacts: vec![make_contact("小明", Some("12345"), Some(100))],
+        });
+        let eval = SocialTriggerEvaluator::new(state, graph, default_thresholds());
+
+        let t1 = eval.evaluate().await.unwrap();
+        assert_eq!(t1.len(), 1);
+
+        let t2 = eval.evaluate().await.unwrap();
+        assert!(t2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_last_interaction_days_ago_format() {
+        let now = chrono::Utc::now().timestamp();
+        let state = make_state(0.9);
+        let graph = Arc::new(MockSocialGraph {
+            contacts: vec![make_contact("小明", None, Some(now - 3 * 86400))],
+        });
+        let eval = SocialTriggerEvaluator::new(state, graph, default_thresholds());
+        let triggers = eval.evaluate().await.unwrap();
+        assert_eq!(triggers.len(), 1);
+        match &triggers[0] {
+            Trigger::Rumination { context, .. } => {
+                assert!(context.contains("3天前"));
+            }
+            _ => panic!("Expected Rumination trigger"),
+        }
+    }
+}

@@ -432,12 +432,15 @@ impl OrganismCoordinator {
         let soma = self.limbic.get_somatic_marker().await;
 
         // 3. Update fast state based on stimulus
+        // Use effective dt=15s to represent the "attention window" of a conversation
+        // turn — reading + thinking + composing. A 1s blip can't compete with 60s
+        // idle ticks, causing boredom/curiosity to be unresponsive to interaction.
         let sensory = self.create_sensory_input(content, &soma, response_delay_secs, source);
         {
             let mut state = self.state.write().await;
             let medium_clone = state.medium.clone();
             self.dynamics.read().await
-                .step_fast(&mut state.fast, &medium_clone, &sensory, 1.0);
+                .step_fast(&mut state.fast, &medium_clone, &sensory, 15.0);
             state.last_updated = Utc::now().timestamp();
         }
 
@@ -1226,10 +1229,13 @@ impl OrganismCoordinator {
         let topic_hint = extract_topic_hint(content);
         let mut env = mneme_core::EnvironmentMetrics::sample();
         env.channel_distance = mneme_core::EnvironmentMetrics::channel_distance_for(source);
+        // Surprise heuristic: any user interaction is inherently novel (base 0.3),
+        // plus arousal contribution — high-emotion messages are more surprising.
+        let surprise = (0.3 + soma.affect.arousal * 0.4).clamp(0.0, 1.0);
         SensoryInput {
             content_valence: soma.affect.valence,
             content_intensity: soma.affect.arousal,
-            surprise: 0.1, // Default low surprise
+            surprise,
             is_social: true,
             response_delay_factor: response_delay,
             violated_values: vec![],
@@ -1276,6 +1282,10 @@ impl OrganismCoordinator {
 fn extract_topic_hint(content: &str) -> Option<String> {
     let trimmed = content.trim();
     if trimmed.len() < 4 {
+        return None;
+    }
+    // Skip tool invocation requests — these aren't real topics
+    if trimmed.contains("工具") && (trimmed.contains("请用") || trimmed.contains("帮我用")) {
         return None;
     }
     // For Chinese text: take the first meaningful clause (up to punctuation)

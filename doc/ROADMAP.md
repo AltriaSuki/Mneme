@@ -1156,7 +1156,20 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **ReAct 中间推理泄露** | mneme_reasoning | 工具调用后 follow-up 迭代的推理文本直接流式输出给用户 → `stream_suppressed` 标志抑制 | **Fixed** ✅ |
 | **Tool-use 最终回复丢失** | engine + main | 迭代 0 中间文本设 `streamed_flag=true`，`stream_suppressed` 在循环末尾被重置为 false → main.rs 误判已输出，跳过最终回复。修正：重置移至循环开始，暴露 token 供调用方检查 | **Fixed** ✅ |
 | **memory_manage search 不检索 facts** | mneme_reasoning/tools | search action 只调用 `recall()`（episodes KNN），结构化知识（facts 表）无法被搜索 → 同时调用 `recall_facts_formatted()` | **Fixed** ✅ |
-| **Token usage daily 计数始终为 0** | engine + providers | `StreamEvent` 无 `Usage` 变体，Anthropic SSE 的 `message_delta.usage` 被忽略，`record_usage()` 从未被调用 | **Open** 🟡 |
+| **Token usage daily 计数始终为 0** | engine + providers | `StreamEvent` 添加 `Usage` 变体，Anthropic SSE `message_start` 提取 input_tokens、`message_delta` 提取 output_tokens，`consume_stream()` 返回累计 token 并调用 `record_usage()` | **Fixed** ✅ |
+| **Boredom dt-不稳定（卡死 1.0）** | mneme_core/dynamics | tick dt=60 时 Euler 积分 `rate * dt = 0.01 * 60 = 0.6`，每次 tick 直接推满 1.0 → 改用精确指数混合 `1 - exp(-rate * dt)` | **Fixed** ✅ |
+| **Curiosity dt-不稳定（卡死 1.0）** | mneme_core/dynamics | idle tick 时 openness\*0.02 + boredom\*0.03 = ~0.03/s × 60 = +1.8，瞬间推满 → 改用指数逼近 stimulus-driven target | **Fixed** ✅ |
+| **Affect valence dt-不稳定（剧烈震荡）** | mneme_core/dynamics | AFFECT_RATE=0.1 × dt=60 = 6.0 >> 1，valence 从 +0.865 一步跳到 -1.0 → 精确指数混合 `1 - exp(-0.1 * dt)` | **Fixed** ✅ |
+| **情感分析单字误匹配** | mneme_core/sentiment | "气"、"好"、"差" 等单字关键词导致 "天气" 触发负面、"你好" 触发正面 → 全部替换为 2+ 字词组 | **Fixed** ✅ |
+| **Curiosity vector 始终为空** | mneme_core/dynamics | topic tagging 条件 `d_curiosity > 0` 在 curiosity 已高于 target 时永远不满足 → 改为 `input.surprise > 0.1` 直接触发 | **Fixed** ✅ |
+| **Coordinator surprise 始终为 0** | mneme_memory/coordinator | `create_sensory_input()` 未设置 surprise 字段，所有交互 surprise=0 → 启发式 `0.3 + arousal * 0.4` | **Fixed** ✅ |
+| **decrypt_body 静默回退** | mneme_memory/sqlite | 密钥变更后旧加密 episode 解密失败时静默返回 base64 密文，泄入 prompt → 检测密文特征，返回 `[encrypted: key mismatch]` 占位符 + warn 日志 | **Fixed** ✅ |
+| **correct 命令纠正不生效** | mneme_cli | 纠正只存为 feedback signal（影响人格参数），不写入可检索记忆 → 同时存入 self_knowledge(domain=user_correction)，注入 system prompt | **Fixed** ✅ |
+| **self_knowledge 加密去重失败** | mneme_memory/sqlite | `store_self_knowledge` 用明文与加密密文做 SQL 比较，永远找不到重复 → 改为 fetch all + Rust 端解密比较 | **Fixed** ✅ |
+| **key mismatch 条目泄入 prompt** | mneme_memory/sqlite | 旧密钥加密的 self_knowledge 解密后为 `[encrypted: key mismatch]`，仍注入 system prompt → `format_self_knowledge_for_prompt` 过滤 | **Fixed** ✅ |
+| **Stress/Energy dt-不稳定** | mneme_core/dynamics | `process_interaction` dt=1→15 后 Euler 积分导致 stress 从 0.26 飙升至 0.59 → 改用指数混合衰减 + 脉冲式刺激 | **Fixed** ✅ |
+| **Social need dt-不稳定** | mneme_core/dynamics | Euler `d_social * dt` 在大 dt 下不稳定 → 指数混合增长 + 脉冲式社交满足 | **Fixed** ✅ |
+| **Boredom 对交互无响应** | mneme_memory/coordinator | `process_interaction` 硬编码 dt=1.0，1 秒刺激无法对抗 60 秒 idle tick 的无聊增长 → 改为 dt=15.0（注意力窗口） | **Fixed** ✅ |
 
 ---
 
@@ -1866,7 +1879,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] stdin 管道不带 `-M` 时显示交互模式启动消息 → 自动检测 `IsTerminal`，管道输入以单次模式处理 ✅
 - [x] Tool-use 最终回复丢失 → `stream_suppressed` 重置时机从循环末尾移至开头，暴露 token 供 main.rs 检查 ✅
 - [x] memory_manage search 只检索 episodes 不检索 facts → 同时调用 `recall_facts_formatted()` 关键词匹配 ✅
-- [ ] Token usage daily 计数始终为 0 — `StreamEvent` 缺 `Usage` 变体，Anthropic SSE usage 被忽略，`record_usage()` 从未调用（需改 api_types + providers + engine）
+- [x] Token usage daily 计数始终为 0 — `StreamEvent` 添加 `Usage` 变体，Anthropic SSE 解析 `message_start`/`message_delta` usage，`consume_stream()` 累计并调用 `record_usage()` ✅
 
 ### Manifesto 信念对照测试 (2026-02-25)
 

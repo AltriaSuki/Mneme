@@ -85,7 +85,24 @@ impl SqliteMemory {
     /// Decrypt body if encryptor is set and content looks encrypted (base64).
     fn decrypt_body(&self, body: &str) -> String {
         match &self.encryptor {
-            Some(enc) => enc.decrypt(body).unwrap_or_else(|_| body.to_string()),
+            Some(enc) => enc.decrypt(body).unwrap_or_else(|_| {
+                // Heuristic: if body looks like base64 (no CJK, no spaces, length > 20),
+                // it's likely encrypted with a different key — return placeholder instead
+                // of leaking ciphertext into prompts.
+                let looks_encrypted = body.len() > 20
+                    && !body.contains(' ')
+                    && !body.chars().any(|c| c > '\u{2E80}');
+                if looks_encrypted {
+                    tracing::warn!(
+                        "Decryption failed for content (len={}), likely key mismatch — returning placeholder",
+                        body.len()
+                    );
+                    "[encrypted: key mismatch]".to_string()
+                } else {
+                    // Plaintext that was stored before encryption was enabled
+                    body.to_string()
+                }
+            }),
             None => body.to_string(),
         }
     }
@@ -1350,15 +1367,24 @@ impl SqliteMemory {
 
         let boosted_confidence = (confidence as f64 * sensitive_boost).min(1.0);
 
-        // Check for existing entry with same domain + content
-        let existing = sqlx::query(
-            "SELECT id, confidence, source FROM self_knowledge WHERE domain = ? AND content = ?",
+        // Check for existing entry with same domain + content.
+        // Because content may be encrypted (ChaCha20 random nonce → same plaintext
+        // produces different ciphertext), we fetch all entries for the domain and
+        // decrypt in Rust for comparison.
+        let candidates = sqlx::query(
+            "SELECT id, content, confidence, source, is_private FROM self_knowledge WHERE domain = ?",
         )
         .bind(domain)
-        .bind(content)
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await
         .context("Failed to check existing self_knowledge")?;
+
+        let existing = candidates.iter().find(|row| {
+            let is_priv = row.get::<i32, _>("is_private") != 0;
+            let raw: String = row.get("content");
+            let decrypted = if is_priv { self.decrypt_body(&raw) } else { raw };
+            decrypted == content
+        });
 
         if let Some(row) = existing {
             let id: i64 = row.get("id");
@@ -1570,10 +1596,14 @@ impl SqliteMemory {
             return String::new();
         }
 
-        // Group by domain
+        // Group by domain, filtering out undecryptable entries
         let mut by_domain: std::collections::BTreeMap<&str, Vec<&SelfKnowledge>> =
             std::collections::BTreeMap::new();
         for entry in entries {
+            // Skip entries that couldn't be decrypted (key mismatch)
+            if entry.content.starts_with("[encrypted:") {
+                continue;
+            }
             by_domain.entry(&entry.domain).or_default().push(entry);
         }
 
