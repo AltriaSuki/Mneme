@@ -185,6 +185,13 @@ impl LlmClient for AnthropicClient {
 impl AnthropicClient {
     pub fn new(model: &str, timeout_secs: u64, config_base_url: Option<&str>) -> Result<Self> {
         let api_key = env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "mock".to_string());
+        if api_key == "mock" {
+            tracing::warn!(
+                "ANTHROPIC_API_KEY 未设置，API 调用将失败。\
+                 请在 .env 文件中设置，或使用 provider = \"mock\" 跳过 LLM。\
+                 详见 .env.example"
+            );
+        }
         let base_url = config_base_url
             .map(|s| s.to_string())
             .or_else(|| env::var("ANTHROPIC_BASE_URL").ok())
