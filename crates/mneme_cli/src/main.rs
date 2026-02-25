@@ -359,15 +359,15 @@ async fn main() -> anyhow::Result<()> {
     // Initialize LLM Client from config
     let timeout = config.llm.timeout_secs;
     let client: Box<dyn LlmClient> = match config.llm.provider.as_str() {
-        "anthropic" => Box::new(AnthropicClient::new(&config.llm.model, timeout)?),
-        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model, timeout)?),
+        "anthropic" => Box::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
+        "openai" | "deepseek" | "codex" => Box::new(OpenAiClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
         "mock" => Box::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
         _ => {
             tracing::warn!(
                 "Unknown provider '{}', defaulting to Anthropic",
                 config.llm.provider
             );
-            Box::new(AnthropicClient::new(&config.llm.model, timeout)?)
+            Box::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?)
         }
     };
 
@@ -381,10 +381,10 @@ async fn main() -> anyhow::Result<()> {
     // v0.8.0: Wire up LLM Dream Narrator (Phase 2) — second client for dream generation
     {
         let dream_client: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
-            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
-            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout)?),
+            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
+            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
             "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
-            _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+            _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
         };
         let narrator = Arc::new(mneme_reasoning::LlmDreamNarrator::new(dream_client));
         coordinator.set_dream_narrator(narrator).await;
@@ -418,16 +418,16 @@ async fn main() -> anyhow::Result<()> {
     // Phase 5b-1: Build multi-model router if additional profiles are configured
     if !config.models.is_empty() {
         let primary: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
-            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
-            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout)?),
+            "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
+            "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
             "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
-            _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+            _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
         };
         let mut router = mneme_reasoning::ModelRouter::new(primary);
         for profile in &config.models {
             let pclient: Arc<dyn LlmClient> = match profile.provider.as_str() {
-                "anthropic" => Arc::new(AnthropicClient::new(&profile.model, profile.timeout_secs)?),
-                "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&profile.model, profile.timeout_secs)?),
+                "anthropic" => Arc::new(AnthropicClient::new(&profile.model, profile.timeout_secs, config.llm.base_url.as_deref())?),
+                "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&profile.model, profile.timeout_secs, config.llm.base_url.as_deref())?),
                 "ollama" => {
                     use mneme_reasoning::providers::ollama::OllamaClient;
                     Arc::new(OllamaClient::new(&profile.model, profile.timeout_secs)?)
@@ -468,10 +468,10 @@ async fn main() -> anyhow::Result<()> {
         // #56: Literary reading pipeline tool
         {
             let reading_client: Arc<dyn LlmClient> = match config.llm.provider.as_str() {
-                "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
-                "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout)?),
+                "anthropic" => Arc::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
+                "openai" | "deepseek" | "codex" => Arc::new(OpenAiClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
                 "mock" => Arc::new(mneme_reasoning::providers::mock::MockProvider::new(&config.llm.model)),
-                _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout)?),
+                _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
             };
             registry.register(Box::new(mneme_reasoning::ReadingToolHandler::new(
                 reading_client, memory.clone(), coordinator.state(),

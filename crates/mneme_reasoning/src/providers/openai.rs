@@ -16,10 +16,12 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
-    pub fn new(model: &str, timeout_secs: u64) -> Result<Self> {
+    pub fn new(model: &str, timeout_secs: u64, config_base_url: Option<&str>) -> Result<Self> {
         let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| "mock".to_string());
-        let base_url = env::var("OPENAI_BASE_URL")
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string())
+        let base_url = config_base_url
+            .map(|s| s.to_string())
+            .or_else(|| env::var("OPENAI_BASE_URL").ok())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
             .trim_end_matches('/')
             .to_string();
 

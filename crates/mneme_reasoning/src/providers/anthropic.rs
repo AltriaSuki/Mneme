@@ -8,6 +8,7 @@ pub struct AnthropicClient {
     client: Client,
     api_key: String,
     model: String,
+    base_url: String,
 }
 
 use crate::llm::{CompletionParams, LlmClient};
@@ -36,9 +37,7 @@ impl LlmClient for AnthropicClient {
             });
         }
 
-        let base_url = env::var("ANTHROPIC_BASE_URL")
-            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
-        let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+        let url = format!("{}/v1/messages", &self.base_url);
 
         let (system_field, final_messages) = prepare_anthropic_messages(system, messages);
 
@@ -135,9 +134,7 @@ impl LlmClient for AnthropicClient {
             return Ok(rx);
         }
 
-        let base_url = env::var("ANTHROPIC_BASE_URL")
-            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
-        let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+        let url = format!("{}/v1/messages", &self.base_url);
 
         let (system_field, final_messages) = prepare_anthropic_messages(system, messages);
 
@@ -186,8 +183,12 @@ impl LlmClient for AnthropicClient {
 }
 
 impl AnthropicClient {
-    pub fn new(model: &str, timeout_secs: u64) -> Result<Self> {
+    pub fn new(model: &str, timeout_secs: u64, config_base_url: Option<&str>) -> Result<Self> {
         let api_key = env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "mock".to_string());
+        let base_url = config_base_url
+            .map(|s| s.to_string())
+            .or_else(|| env::var("ANTHROPIC_BASE_URL").ok())
+            .unwrap_or_else(|| "https://api.anthropic.com".to_string());
 
         Ok(Self {
             client: Client::builder()
@@ -195,6 +196,7 @@ impl AnthropicClient {
                 .build()?,
             api_key,
             model: model.to_string(),
+            base_url: base_url.trim_end_matches('/').to_string(),
         })
     }
 }
