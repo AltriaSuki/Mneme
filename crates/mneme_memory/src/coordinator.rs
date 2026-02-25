@@ -260,6 +260,41 @@ impl OrganismCoordinator {
         if let Some(state) = db.load_organism_state().await? {
             tracing::info!("Loaded persisted organism state");
             *coordinator.state.write().await = state;
+
+            // Catch-up idle dynamics: simulate the passage of time since last update.
+            // Without this, single-shot invocations never get idle recovery (no AgentLoop
+            // ticks between runs), so stress monotonically climbs and energy never recovers.
+            //
+            // Preserve boredom, curiosity, and curiosity_vector — these are interaction-driven
+            // states that shouldn't change during dormancy (organism was offline, not "bored").
+            let elapsed = chrono::Utc::now().timestamp() - coordinator.state.read().await.last_updated;
+            if elapsed > 5 {
+                let catchup_dt = (elapsed as f32).min(3600.0);
+                let idle_input = mneme_core::SensoryInput {
+                    env: mneme_core::EnvironmentMetrics::sample(),
+                    ..Default::default()
+                };
+                let mut state = coordinator.state.write().await;
+                // Save interaction-driven states before catch-up
+                let saved_boredom = state.fast.boredom;
+                let saved_curiosity = state.fast.curiosity;
+                let saved_cv = state.fast.curiosity_vector.clone();
+
+                let dynamics = coordinator.dynamics.read().await;
+                let medium_clone = state.medium.clone();
+                dynamics.step_fast(&mut state.fast, &medium_clone, &idle_input, catchup_dt);
+                let fast_clone = state.fast.clone();
+                let slow_clone = state.slow.clone();
+                dynamics.step_medium(&mut state.medium, &fast_clone, &slow_clone, &idle_input, catchup_dt);
+                drop(dynamics);
+
+                // Restore interaction-driven states
+                state.fast.boredom = saved_boredom;
+                state.fast.curiosity = saved_curiosity;
+                state.fast.curiosity_vector = saved_cv;
+                state.last_updated = chrono::Utc::now().timestamp();
+                tracing::info!("Applied {}s catch-up idle dynamics", elapsed);
+            }
         } else {
             tracing::info!("No persisted state found, using defaults");
         }
@@ -1004,6 +1039,28 @@ impl OrganismCoordinator {
 
         // Generate goal suggestions from post-sleep state (#22)
         if let Some(ref gm) = self.goal_manager {
+            // Clean up duplicates first
+            match gm.detect_conflicts().await {
+                Ok(conflicts) => {
+                    let mut abandoned = 0u32;
+                    for conflict in &conflicts {
+                        if conflict.reason == "duplicate" {
+                            // Keep the older goal (lower id), abandon the newer one
+                            let abandon_id = conflict.goal_a.max(conflict.goal_b);
+                            if let Err(e) = gm.set_status(abandon_id, crate::goals::GoalStatus::Abandoned).await {
+                                tracing::warn!("Failed to abandon duplicate goal #{}: {}", abandon_id, e);
+                            } else {
+                                abandoned += 1;
+                            }
+                        }
+                    }
+                    if abandoned > 0 {
+                        tracing::info!("Abandoned {} duplicate goals during sleep cleanup", abandoned);
+                    }
+                }
+                Err(e) => tracing::warn!("Goal conflict detection failed: {}", e),
+            }
+
             let state = self.state.read().await.clone();
             let suggestions = GoalManager::suggest_goals(&state);
             for goal in &suggestions {
@@ -1295,6 +1352,18 @@ fn extract_topic_hint(content: &str) -> Option<String> {
         .unwrap_or(trimmed)
         .trim();
     if clause.len() < 2 {
+        return None;
+    }
+    // Skip common greetings and filler — these aren't real interests
+    const STOPWORDS: &[&str] = &[
+        "你好", "您好", "嗨", "哈喽", "hello", "hi", "hey",
+        "早上好", "晚上好", "下午好", "早安", "晚安",
+        "谢谢", "感谢", "多谢", "好的", "嗯", "哦",
+        "是的", "对", "没错", "这是一个测试", "测试",
+        "再见", "拜拜", "bye",
+    ];
+    let clause_lower = clause.to_lowercase();
+    if STOPWORDS.iter().any(|w| clause_lower == *w) {
         return None;
     }
     // Cap at 30 chars to keep interests concise

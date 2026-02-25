@@ -90,8 +90,21 @@ impl GoalManager {
         self.db.load_active_goals().await
     }
 
-    /// Create a new goal.
+    /// Create a new goal, skipping if a similar active goal already exists.
     pub async fn create_goal(&self, goal: &Goal) -> Result<i64> {
+        // Dedup: check existing active goals for overlap
+        let active = self.db.load_active_goals().await.unwrap_or_default();
+        for existing in &active {
+            if existing.goal_type == goal.goal_type
+                && Self::descriptions_overlap(&existing.description, &goal.description)
+            {
+                tracing::debug!(
+                    "Skipping duplicate goal '{}' (overlaps with #{})",
+                    goal.description, existing.id
+                );
+                return Ok(existing.id);
+            }
+        }
         self.db.create_goal(goal).await
     }
 

@@ -153,37 +153,46 @@ impl Affect {
             "非常"
         };
 
-        let emotion_word = match (self.valence >= 0.0, self.arousal >= 0.5) {
-            (true, true) => {
-                if self.valence > 0.5 && self.arousal > 0.7 {
-                    "兴奋愉悦"
-                } else if self.valence > 0.5 {
-                    "开心"
-                } else {
-                    "有些期待"
-                }
+        let emotion_word = if self.valence.abs() < 0.1 {
+            // Neutral zone — valence too close to zero to call positive or negative
+            if self.arousal >= 0.5 {
+                "警觉清醒"
+            } else {
+                "放松"
             }
-            (true, false) => {
-                if self.valence > 0.5 {
-                    "满足平和"
-                } else {
-                    "放松"
+        } else {
+            match (self.valence >= 0.0, self.arousal >= 0.5) {
+                (true, true) => {
+                    if self.valence > 0.5 && self.arousal > 0.7 {
+                        "兴奋愉悦"
+                    } else if self.valence > 0.5 {
+                        "开心"
+                    } else {
+                        "有些期待"
+                    }
                 }
-            }
-            (false, true) => {
-                if self.valence < -0.5 && self.arousal > 0.7 {
-                    "烦躁不安"
-                } else if self.valence < -0.3 {
-                    "焦虑"
-                } else {
-                    "有些紧张"
+                (true, false) => {
+                    if self.valence > 0.5 {
+                        "满足平和"
+                    } else {
+                        "放松"
+                    }
                 }
-            }
-            (false, false) => {
-                if self.valence < -0.5 {
-                    "低落沮丧"
-                } else {
-                    "有点闷闷不乐"
+                (false, true) => {
+                    if self.valence < -0.5 && self.arousal > 0.7 {
+                        "烦躁不安"
+                    } else if self.valence < -0.3 {
+                        "焦虑"
+                    } else {
+                        "有些紧张"
+                    }
+                }
+                (false, false) => {
+                    if self.valence < -0.5 {
+                        "低落沮丧"
+                    } else {
+                        "有点闷闷不乐"
+                    }
                 }
             }
         };

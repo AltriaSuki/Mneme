@@ -677,13 +677,20 @@ async fn main() -> anyhow::Result<()> {
     let humanizer = Humanizer::new();
 
     // 6. Spawn AgentLoop (background tick + trigger evaluation)
+    //    Skip in single-shot mode — idle ticks (dt=60, no stimulus) run during the
+    //    LLM call and undo the interaction's state changes (e.g. boredom decrease).
     let (agent_loop, mut agent_rx) = mneme_reasoning::agent_loop::AgentLoop::new(
         coordinator.clone(),
         evaluators,
         std::time::Duration::from_secs(config.organism.tick_interval_secs),
         std::time::Duration::from_secs(config.organism.trigger_interval_secs),
     );
-    let _agent_handle = agent_loop.spawn();
+    let _agent_handle = if !single_shot {
+        Some(agent_loop.spawn())
+    } else {
+        drop(agent_loop);
+        None
+    };
 
     // Subscribe to lifecycle changes
     let mut lifecycle_rx = coordinator.subscribe_lifecycle();
