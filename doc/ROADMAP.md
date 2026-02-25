@@ -1155,6 +1155,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **stdin 管道显示交互 banner** | mneme_cli | `echo "hi" \| mneme` 显示启动消息并挂起 → `IsTerminal` 检测管道，自动单次模式 | **Fixed** ✅ |
 | **ReAct 中间推理泄露** | mneme_reasoning | 工具调用后 follow-up 迭代的推理文本直接流式输出给用户 → `stream_suppressed` 标志抑制 | **Fixed** ✅ |
 | **Tool-use 最终回复丢失** | engine + main | 迭代 0 中间文本设 `streamed_flag=true`，`stream_suppressed` 在循环末尾被重置为 false → main.rs 误判已输出，跳过最终回复。修正：重置移至循环开始，暴露 token 供调用方检查 | **Fixed** ✅ |
+| **memory_manage search 不检索 facts** | mneme_reasoning/tools | search action 只调用 `recall()`（episodes KNN），结构化知识（facts 表）无法被搜索 → 同时调用 `recall_facts_formatted()` | **Fixed** ✅ |
 
 ---
 
@@ -1863,6 +1864,7 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] ReAct 中间思考泄露到输出 → `stream_suppressed` 标志抑制 follow-up 迭代的流式输出 ✅
 - [x] stdin 管道不带 `-M` 时显示交互模式启动消息 → 自动检测 `IsTerminal`，管道输入以单次模式处理 ✅
 - [x] Tool-use 最终回复丢失 → `stream_suppressed` 重置时机从循环末尾移至开头，暴露 token 供 main.rs 检查 ✅
+- [x] memory_manage search 只检索 episodes 不检索 facts → 同时调用 `recall_facts_formatted()` 关键词匹配 ✅
 
 ---
 
