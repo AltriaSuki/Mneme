@@ -613,6 +613,9 @@ async fn main() -> anyhow::Result<()> {
         *buf = held;
     }));
 
+    // Grab stream suppression token — used to detect when tool-use suppressed the final response
+    let stream_suppressed = engine.stream_suppressed_token();
+
     // 5. Initialize Proactive Triggers via AgentLoop
     info!("Initializing proactive triggers...");
     let scheduled_eval = ScheduledTriggerEvaluator::from_config(&config.organism.schedules);
@@ -1215,7 +1218,10 @@ async fn main() -> anyhow::Result<()> {
 
                     if !routed {
                         // Reply via CLI (default)
-                        if streamed_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        // If stream was suppressed (tool use), the streamed content was only
+                        // intermediate reasoning — print the full final response non-streamed.
+                        let was_suppressed = stream_suppressed.load(std::sync::atomic::Ordering::Relaxed);
+                        if streamed_flag.load(std::sync::atomic::Ordering::Relaxed) && !was_suppressed {
                             // Streaming already printed the response; just add trailing newlines
                             println!("\n");
                         } else if single_shot {

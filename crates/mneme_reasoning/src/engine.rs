@@ -291,6 +291,11 @@ impl ReasoningEngine {
         self.on_text_chunk = Some(callback);
     }
 
+    /// Get the stream suppression token (used by CLI to detect partial streaming during tool use).
+    pub fn stream_suppressed_token(&self) -> Arc<AtomicBool> {
+        self.stream_suppressed.clone()
+    }
+
     /// #58: Cancel the currently running think() call. Safe to call from another task.
     pub fn cancel_current(&self) {
         self.cancelled.store(true, Ordering::Release);
@@ -569,6 +574,8 @@ impl ReasoningEngine {
         }
 
         // --- React Loop (Max 5 turns) ---
+        // Reset stream suppression at the start (caller checks it after think() returns)
+        self.stream_suppressed.store(false, Ordering::Release);
         let mut consecutive_permanent_fails = 0u32;
         for _iteration in 0..5 {
             final_content.clear();
@@ -690,9 +697,6 @@ impl ReasoningEngine {
                 break; // No tool calls → done
             }
         }
-
-        // Reset stream suppression after ReAct loop completes
-        self.stream_suppressed.store(false, Ordering::Release);
 
         // Silence Check: case-insensitive, whitespace-tolerant
         if is_silence_response(&final_content) {
