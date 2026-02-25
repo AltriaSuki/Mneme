@@ -231,13 +231,13 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(otel_layer)
-                .with(fmt::layer().json())
+                .with(fmt::layer().json().with_writer(std::io::stderr))
                 .init();
         } else {
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(otel_layer)
-                .with(fmt::layer())
+                .with(fmt::layer().with_writer(std::io::stderr))
                 .init();
         }
     }
@@ -530,17 +530,21 @@ async fn main() -> anyhow::Result<()> {
 
     // 4e. Set streaming text callback for real-time output
     //     Buffers text to filter out [INTENT:...] tags before they reach the terminal.
+    let single_shot = args.message.is_some();
     let stream_first_chunk = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let streamed_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stream_buf = Arc::new(std::sync::Mutex::new(String::new()));
     let sf = stream_first_chunk.clone();
     let sd = streamed_flag.clone();
     let sb = stream_buf.clone();
+    let is_single_shot = single_shot;
     engine.set_on_text_chunk(Arc::new(move |chunk: &str| {
         use std::io::Write;
         use std::sync::atomic::Ordering;
         if sf.swap(false, Ordering::Relaxed) {
-            print!("\nMneme: ");
+            if !is_single_shot {
+                print!("\nMneme: ");
+            }
         }
         sd.store(true, Ordering::Relaxed);
 
@@ -659,8 +663,6 @@ async fn main() -> anyhow::Result<()> {
     // Subscribe to lifecycle changes
     let mut lifecycle_rx = coordinator.subscribe_lifecycle();
 
-    let single_shot = args.message.is_some();
-
     if !single_shot {
         println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
     }
@@ -719,7 +721,7 @@ async fn main() -> anyhow::Result<()> {
     let cli_prompt_reader = cli_prompt.clone();
 
     if single_shot {
-        // Single-shot mode: send message and schedule shutdown after response
+        // Single-shot mode: send message, loop will break after processing one response
         let msg = args.message.as_ref().unwrap().clone();
         let content = Content {
             id: Uuid::new_v4(),
@@ -731,8 +733,9 @@ async fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
         event_tx.send(Event::UserMessage(content)).await.ok();
-        // Drop shutdown_tx so shutdown_rx resolves after response is processed
-        drop(shutdown_tx);
+        // Don't drop shutdown_tx — keep it alive so shutdown_rx never resolves.
+        // The main loop will break after processing the single response.
+        std::mem::forget(shutdown_tx);
     } else {
         tokio::task::spawn_blocking(move || {
         // Set up rustyline with history
@@ -1135,6 +1138,9 @@ async fn main() -> anyhow::Result<()> {
                 // Handle Output
                 if response.content.trim().is_empty() {
                     tracing::debug!("Mneme decided to stay silent.");
+                    if single_shot {
+                        break;
+                    }
                     // Update prompt with current state, then signal stdin loop
                     *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                     let _ = prompt_ready_tx.send(());
@@ -1189,12 +1195,22 @@ async fn main() -> anyhow::Result<()> {
                         if streamed_flag.load(std::sync::atomic::Ordering::Relaxed) {
                             // Streaming already printed the response; just add trailing newlines
                             println!("\n");
+                        } else if single_shot {
+                            // Clean output for piping — no "Mneme: " prefix
+                            println!("{}", response.content);
                         } else {
                             print_response(&response, &humanizer, None).await;
                         }
                     }
                     // #5: Record response timestamp for implicit feedback latency tracking
                     coordinator.record_response_timestamp().await;
+
+                    // Single-shot mode: exit after one response
+                    if single_shot {
+                        coordinator.save_state_with_trigger("shutdown").await;
+                        break;
+                    }
+
                     // Update prompt with current state, then signal stdin loop
                     *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                     let _ = prompt_ready_tx.send(());
@@ -1202,6 +1218,10 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => {
                 tracing::error!("Reasoning error: {}", e);
+                if single_shot {
+                    eprintln!("Error: {}", e);
+                    break;
+                }
                 // Update prompt and signal stdin loop even on error
                 *cli_prompt.lock().unwrap() = format_status_prompt(&*coordinator.state().read().await);
                 let _ = prompt_ready_tx.send(());
