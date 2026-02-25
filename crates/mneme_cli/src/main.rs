@@ -525,10 +525,13 @@ async fn main() -> anyhow::Result<()> {
     engine.set_token_budget(token_budget.clone());
 
     // 4e. Set streaming text callback for real-time output
+    //     Buffers text to filter out [INTENT:...] tags before they reach the terminal.
     let stream_first_chunk = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let streamed_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stream_buf = Arc::new(std::sync::Mutex::new(String::new()));
     let sf = stream_first_chunk.clone();
     let sd = streamed_flag.clone();
+    let sb = stream_buf.clone();
     engine.set_on_text_chunk(Arc::new(move |chunk: &str| {
         use std::io::Write;
         use std::sync::atomic::Ordering;
@@ -536,8 +539,56 @@ async fn main() -> anyhow::Result<()> {
             print!("\nMneme: ");
         }
         sd.store(true, Ordering::Relaxed);
-        print!("{}", chunk);
-        let _ = std::io::stdout().flush();
+
+        let mut buf = sb.lock().unwrap();
+        buf.push_str(chunk);
+
+        const TAG_PREFIX: &str = "[INTENT:";
+
+        // Strip complete [INTENT:...] tags, hold partial prefixes
+        loop {
+            if let Some(pos) = buf.find(TAG_PREFIX) {
+                if pos > 0 {
+                    print!("{}", &buf[..pos]);
+                    let _ = std::io::stdout().flush();
+                }
+                if let Some(end) = buf[pos..].find(']') {
+                    let after = pos + end + 1;
+                    let rest = buf[after..].to_string();
+                    *buf = rest;
+                    continue;
+                }
+                // Incomplete tag — hold in buffer
+                let held = buf[pos..].to_string();
+                *buf = held;
+                return;
+            }
+            break;
+        }
+
+        // Check if buffer tail could be start of "[INTENT:"
+        // e.g. buf ends with "[", "[I", "[IN", ... "[INTENT"
+        let safe_len = {
+            let bytes = buf.as_bytes();
+            let mut safe = buf.len();
+            for start in (0..buf.len()).rev() {
+                if bytes[start] == b'[' {
+                    let tail = &buf[start..];
+                    if TAG_PREFIX.starts_with(tail) {
+                        safe = start;
+                    }
+                    break;
+                }
+            }
+            safe
+        };
+
+        if safe_len > 0 {
+            print!("{}", &buf[..safe_len]);
+            let _ = std::io::stdout().flush();
+        }
+        let held = buf[safe_len..].to_string();
+        *buf = held;
     }));
 
     // 5. Initialize Proactive Triggers via AgentLoop
