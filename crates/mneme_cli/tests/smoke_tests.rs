@@ -3,7 +3,7 @@
 use std::process::Command;
 
 fn cli_bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_mneme_cli"))
+    Command::new(env!("CARGO_BIN_EXE_mneme"))
 }
 
 #[test]
@@ -23,8 +23,8 @@ fn test_version_flag() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("mneme_cli"),
-        "Expected crate name in --version output"
+        stdout.contains("mneme"),
+        "Expected binary name in --version output"
     );
 }
 
