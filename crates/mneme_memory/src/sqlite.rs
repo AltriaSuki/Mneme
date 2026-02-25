@@ -34,9 +34,11 @@ pub struct SqliteMemory {
 
 impl SqliteMemory {
     pub async fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
-        // Initialize embedding model first (might take a moment to load/download)
+        // Initialize embedding model (first run downloads ~100MB, may take a minute)
+        tracing::info!("Loading embedding model (首次运行需下载模型，请稍候)...");
         let embedding_model =
             Arc::new(EmbeddingModel::new().context("Failed to initialize embedding model")?);
+        tracing::info!("Embedding model ready");
 
         // Register sqlite-vec extension before opening any connections
         ensure_sqlite_vec_registered();
