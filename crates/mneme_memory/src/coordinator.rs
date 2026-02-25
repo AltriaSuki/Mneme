@@ -1117,21 +1117,27 @@ impl OrganismCoordinator {
 
         match lifecycle {
             LifecycleState::Awake => {
-                // Update medium state periodically
+                // Update both fast and medium state during idle ticks.
+                // Without step_fast(), energy and stress freeze after the last
+                // interaction and never recover toward homeostatic targets.
                 let mut state = self.state.write().await;
                 let input = SensoryInput {
                     env: mneme_core::EnvironmentMetrics::sample(),
                     ..Default::default()
                 };
+                let dynamics = self.dynamics.read().await;
+                let medium_clone = state.medium.clone();
+                dynamics.step_fast(&mut state.fast, &medium_clone, &input, 60.0);
                 let fast_clone = state.fast.clone();
                 let slow_clone = state.slow.clone();
-                self.dynamics.read().await.step_medium(
+                dynamics.step_medium(
                     &mut state.medium,
                     &fast_clone,
                     &slow_clone,
                     &input,
                     60.0,
                 );
+                drop(dynamics);
                 drop(state);
 
                 // Save state every 6 ticks (60 seconds if tick interval is 10s)
