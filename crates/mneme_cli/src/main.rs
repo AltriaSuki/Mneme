@@ -16,6 +16,7 @@ use mneme_expression::{
 use mneme_limbic::{BehaviorThresholds, LimbicSystem};
 use mneme_memory::{OrganismConfig, OrganismCoordinator, SqliteMemory};
 use mneme_reasoning::ReasoningEngine;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -161,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
     // Load .env file if it exists
     dotenv::dotenv().ok();
 
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Configurable tracing subscriber
     {
@@ -530,7 +531,22 @@ async fn main() -> anyhow::Result<()> {
 
     // 4e. Set streaming text callback for real-time output
     //     Buffers text to filter out [INTENT:...] tags before they reach the terminal.
-    let single_shot = args.message.is_some();
+    //     Detect piped stdin: if stdin is not a TTY and no -M flag, read all piped input as single-shot.
+    let single_shot = if args.message.is_some() {
+        true
+    } else if !std::io::stdin().is_terminal() {
+        // Stdin is piped — read all input and treat as single-shot
+        use std::io::Read;
+        let mut piped_input = String::new();
+        std::io::stdin().read_to_string(&mut piped_input).ok();
+        let trimmed = piped_input.trim();
+        if !trimmed.is_empty() {
+            args.message = Some(trimmed.to_string());
+        }
+        !trimmed.is_empty()
+    } else {
+        false
+    };
     let stream_first_chunk = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let streamed_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stream_buf = Arc::new(std::sync::Mutex::new(String::new()));
