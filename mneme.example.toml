@@ -2,11 +2,14 @@
 # 复制为 mneme.toml 并根据需要修改
 
 [llm]
-provider = "anthropic"           # "anthropic" | "openai" | "deepseek"
+provider = "anthropic"           # "anthropic" | "openai" | "deepseek" | "ollama" | "mock"
 model = "claude-sonnet-4-5-20250929"
-# base_url = "https://custom-endpoint.example.com/v1"
+# base_url = "https://custom-endpoint.example.com/v1"  # 自定义 API 端点（代理/中转）
 max_tokens = 4096
 temperature = 0.7
+context_budget_chars = 32000     # 上下文预算（字符数），约等于 model context window / 4
+timeout_secs = 120               # LLM API 请求超时（秒）
+# low_res_model = "qwen2:0.5b"  # 低分辨率内心独白模型（需本地 Ollama）
 
 [safety]
 tier = "restricted"              # "read_only" | "restricted" | "full"
@@ -32,8 +35,10 @@ degradation_strategy = "hard_stop"  # "hard_stop" | { degrade = { max_tokens_cap
 [organism]
 db_path = "mneme.db"
 persona_dir = "persona"
+language = "zh"                  # 系统提示语言："zh" | "en"（persona 内容不受影响）
 tick_interval_secs = 10
 trigger_interval_secs = 60
+proactivity = 0.5                # 主动性（0.0=沉默, 1.0=最大）
 
 # 日程计划（可选，不配置则默认 morning_greeting 8:00 + evening_summary 21:00）
 # [[organism.schedules]]
@@ -51,3 +56,53 @@ trigger_interval_secs = 60
 # [onebot]
 # ws_url = "ws://localhost:8080"
 # access_token = "your-token-here"
+
+# ============================================================================
+# Gateway HTTP+WebSocket 网关（可选，需 --features gateway 编译）
+# ============================================================================
+
+# [gateway]
+# host = "127.0.0.1"
+# port = 3000
+
+# ============================================================================
+# MCP 工具服务器（可选，动态扩展 Mneme 的工具能力）
+# ============================================================================
+
+# [mcp]
+# [[mcp.servers]]
+# name = "filesystem"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+# auto_connect = true              # 启动时自动连接（默认 true）
+# [mcp.servers.env]                # 传递给子进程的环境变量
+# # KEY = "value"
+
+# [[mcp.servers]]
+# name = "web-search"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-brave-search"]
+# [mcp.servers.env]
+# BRAVE_API_KEY = "your-brave-api-key"
+
+# ============================================================================
+# 多模型路由（可选，为不同任务类型指定不同 LLM）
+# ============================================================================
+
+# [[models]]
+# name = "fast"
+# provider = "ollama"
+# model = "qwen2:7b"
+# max_tokens = 2048
+# temperature = 0.5
+# timeout_secs = 30
+# preferred_tasks = ["inner_monologue", "extraction"]
+
+# [[models]]
+# name = "creative"
+# provider = "anthropic"
+# model = "claude-sonnet-4-5-20250929"
+# max_tokens = 8192
+# temperature = 0.9
+# timeout_secs = 120
+# preferred_tasks = ["dream", "creation"]
