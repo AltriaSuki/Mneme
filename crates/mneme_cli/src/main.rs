@@ -150,6 +150,10 @@ struct Args {
     /// Prometheus metrics HTTP port (requires --features prometheus)
     #[arg(long, env = "MNEME_METRICS_PORT")]
     metrics_port: Option<u16>,
+
+    /// Send a single message and exit (non-interactive mode)
+    #[arg(short = 'M', long)]
+    message: Option<String>,
 }
 
 #[tokio::main]
@@ -655,7 +659,11 @@ async fn main() -> anyhow::Result<()> {
     // Subscribe to lifecycle changes
     let mut lifecycle_rx = coordinator.subscribe_lifecycle();
 
-    println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
+    let single_shot = args.message.is_some();
+
+    if !single_shot {
+        println!("Mneme System Online. Type 'quit' to exit. Type 'sync' to fetch sources. Type 'sleep' to trigger consolidation.");
+    }
 
     // Channel for events from stdin, OneBot, Gateway, etc.
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(100);
@@ -710,7 +718,23 @@ async fn main() -> anyhow::Result<()> {
     let cli_prompt = Arc::new(std::sync::Mutex::new(String::from("> ")));
     let cli_prompt_reader = cli_prompt.clone();
 
-    tokio::task::spawn_blocking(move || {
+    if single_shot {
+        // Single-shot mode: send message and schedule shutdown after response
+        let msg = args.message.as_ref().unwrap().clone();
+        let content = Content {
+            id: Uuid::new_v4(),
+            source: "cli".to_string(),
+            author: "User".to_string(),
+            body: msg,
+            timestamp: chrono::Utc::now().timestamp(),
+            modality: Modality::Text,
+            ..Default::default()
+        };
+        event_tx.send(Event::UserMessage(content)).await.ok();
+        // Drop shutdown_tx so shutdown_rx resolves after response is processed
+        drop(shutdown_tx);
+    } else {
+        tokio::task::spawn_blocking(move || {
         // Set up rustyline with history
         let config = Config::builder()
             .edit_mode(EditMode::Emacs)
@@ -798,6 +822,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
+    }
 
     // --- MAIN EVENT LOOP ---
     // Now we listen to event_rx (stdin + OneBot), agent_rx (AgentLoop actions),
