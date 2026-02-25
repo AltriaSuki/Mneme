@@ -1144,6 +1144,12 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | ~~输出含 roleplay 动作描写~~ | prompts/broca | `*感觉有点熟悉*` 等星号旁白，人类不这样聊天 | **Fixed** ✅ |
 | ~~日常聊天用 markdown~~ | prompts/broca | 聊天中使用加粗/列表/标题，不自然 | **Fixed** ✅ |
 | ~~Persona 干扰工具调用~~ | prompts.rs | 沉浸式角色设定导致 LLM 发送空 `{}` 工具输入 → 工具说明独立为元系统层 | **Fixed** ✅ |
+| **Tracing 日志输出到 stdout** | mneme_cli | `fmt::layer()` 默认 stdout，`-M` 管道模式日志混入正文 → 所有 layer 显式 `.with_writer(stderr)` | **Fixed** ✅ |
+| **单次模式竞态** | mneme_cli | `drop(shutdown_tx)` 使 `shutdown_rx` 立即就绪，`tokio::select!` 随机选中导致无输出 → `std::mem::forget` + 显式 break | **Fixed** ✅ |
+| **默认模型名拼写错误** | mneme_core/config | `claude-4-5-sonnet-20250929` → `claude-sonnet-4-5-20250929`，无配置文件时 API 调用必失败 | **Fixed** ✅ |
+| **启动消息引用不存在命令** | mneme_cli | 提示 `sync` 命令但该命令已移除 → 更新为 `status`/`sleep` | **Fixed** ✅ |
+| **二进制名 mneme_cli** | mneme_cli | 用户需输入 `mneme_cli` 而非 `mneme`，版本号停留在 0.1.0 → `[[bin]] name = "mneme"`, v0.9.0 | **Fixed** ✅ |
+| **加密密钥未 gitignore** | .gitignore | `mneme.key` 可能被意外提交 → 添加 `*.key` 规则 | **Fixed** ✅ |
 
 ---
 
@@ -1831,6 +1837,18 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 - [x] f32 排序统一使用 `total_cmp()` 替代 `partial_cmp().unwrap_or()` — 全代码库零残留 ✅
 - [x] `mneme_reasoning` 公共 getter 添加 `#[must_use]` — temperature/topic_overlap/ResponseCache::len ✅
 - [x] `evaluation.md` §8.7/8.8/总结表同步 — 形成性课程已部分实现、91%落地率、348测试、功能6/10 ✅
+
+## 📋 Session Log: 2026-02-25 (用户视角体验测试)
+
+- [x] tracing `fmt::layer()` 默认 stdout → 显式 `.with_writer(std::io::stderr)` ✅
+- [x] 单次模式 (`-M`) 竞态修复 — `drop(shutdown_tx)` → `std::mem::forget` + 显式 break ✅
+- [x] 单次模式输出去除 "Mneme: " 前缀，流式回调感知 single_shot ✅
+- [x] CLI 二进制重命名 `mneme_cli` → `mneme`，版本同步 0.9.0，添加中文 description ✅
+- [x] 默认模型名修正 `claude-4-5-sonnet` → `claude-sonnet-4-5` ✅
+- [x] 启动消息移除不存在的 `sync` 命令 ✅
+- [x] smoke test 适配二进制重命名 ✅
+- [x] clippy `collapsible_if` 警告修复 ✅
+- [x] `.gitignore` 添加 `*.key` 防止加密密钥泄露 ✅
 
 ---
 
