@@ -525,9 +525,17 @@ async fn main() -> anyhow::Result<()> {
     engine.set_token_budget(token_budget.clone());
 
     // 4e. Set streaming text callback for real-time output
-    engine.set_on_text_chunk(Arc::new(|chunk: &str| {
+    let stream_first_chunk = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let streamed_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sf = stream_first_chunk.clone();
+    let sd = streamed_flag.clone();
+    engine.set_on_text_chunk(Arc::new(move |chunk: &str| {
         use std::io::Write;
-        // Print text chunks as they arrive (no newline, flush immediately)
+        use std::sync::atomic::Ordering;
+        if sf.swap(false, Ordering::Relaxed) {
+            print!("\nMneme: ");
+        }
+        sd.store(true, Ordering::Relaxed);
         print!("{}", chunk);
         let _ = std::io::stdout().flush();
     }));
@@ -1042,6 +1050,10 @@ async fn main() -> anyhow::Result<()> {
             engagement.set(1.0);
         }
 
+        // Reset streaming flags before each reasoning call
+        stream_first_chunk.store(true, std::sync::atomic::Ordering::Relaxed);
+        streamed_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+
         match engine.think(event.clone()).await {
             Ok(response) => {
                 // Handle Output
@@ -1098,7 +1110,12 @@ async fn main() -> anyhow::Result<()> {
 
                     if !routed {
                         // Reply via CLI (default)
-                        print_response(&response, &humanizer, None).await;
+                        if streamed_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            // Streaming already printed the response; just add trailing newlines
+                            println!("\n");
+                        } else {
+                            print_response(&response, &humanizer, None).await;
+                        }
                     }
                     // #5: Record response timestamp for implicit feedback latency tracking
                     coordinator.record_response_timestamp().await;
