@@ -113,7 +113,7 @@ async fn print_response(response: &ReasoningOutput, humanizer: &Humanizer, prefi
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(name = "mneme", author, version, about, long_about = None)]
 struct Args {
     /// Path to TOML config file
     #[arg(short, long, default_value = "mneme.toml")]

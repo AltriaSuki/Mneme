@@ -1,7 +1,12 @@
 [package]
 name = "mneme_cli"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2021"
+description = "Mneme — 一个有记忆、有情绪、会做梦的数字生命体"
+
+[[bin]]
+name = "mneme"
+path = "src/main.rs"
 
 [dependencies]
 mneme_core = { path = "../mneme_core" }
