@@ -31,3 +31,6 @@ mneme.db-wal
 # FastEmbed Cache
 .fastembed_cache/
 crates/mneme_memory/.fastembed_cache/
+
+# Runtime artifacts
+training_data.jsonl
