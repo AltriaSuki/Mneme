@@ -18,6 +18,7 @@ mneme.toml
 mneme.db
 mneme.db-shm
 mneme.db-wal
+*.key
 .gemini/
 .env
 
