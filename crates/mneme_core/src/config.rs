@@ -182,7 +182,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             provider: "anthropic".to_string(),
-            model: "claude-4-5-sonnet-20250929".to_string(),
+            model: "claude-sonnet-4-5-20250929".to_string(),
             base_url: None,
             max_tokens: 4096,
             temperature: 0.7,
@@ -407,7 +407,7 @@ impl Default for ModelProfile {
         Self {
             name: String::new(),
             provider: "anthropic".to_string(),
-            model: "claude-4-5-sonnet-20250929".to_string(),
+            model: "claude-sonnet-4-5-20250929".to_string(),
             base_url: None,
             max_tokens: 4096,
             temperature: 0.7,
