@@ -995,6 +995,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Err(e) => println!("Reload failed: {}", e),
                 }
+                if single_shot { break; }
                 continue;
             } else if content.source == "cli" && content.body.trim() == "sleep" {
                 // Manual sleep/consolidation trigger
@@ -1018,6 +1019,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Err(e) => error!("Sleep consolidation failed: {}", e),
                 }
+                if single_shot { break; }
                 continue;
             } else if content.source == "cli" && content.body.trim() == "status" {
                 // Show organism status
@@ -1051,6 +1053,7 @@ async fn main() -> anyhow::Result<()> {
                     println!("Gateway: {} active WebSocket(s)", ws_count.load(std::sync::atomic::Ordering::Relaxed));
                 }
                 println!("=======================");
+                if single_shot { break; }
                 continue;
             } else if content.source == "cli" && content.body.trim() == "like" {
                 coordinator
@@ -1062,6 +1065,7 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .await;
                 println!("👍 已记录");
+                if single_shot { break; }
                 continue;
             } else if content.source == "cli" && content.body.trim() == "dislike" {
                 coordinator
@@ -1073,6 +1077,7 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .await;
                 println!("👎 已记录");
+                if single_shot { break; }
                 continue;
             } else if content.source == "cli" && content.body.trim().starts_with("correct ") {
                 let correction = content.body.trim().strip_prefix("correct ").unwrap_or("").trim();
@@ -1089,6 +1094,7 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     println!("用法: correct <纠正内容>");
                 }
+                if single_shot { break; }
                 continue;
             } else if content.source == "cli" && (content.body.trim() == "export" || content.body.trim().starts_with("export ")) {
                 let path = content.body.trim().strip_prefix("export").unwrap().trim();
@@ -1100,6 +1106,7 @@ async fn main() -> anyhow::Result<()> {
                     },
                     Err(e) => println!("Cannot create file {}: {}", path, e),
                 }
+                if single_shot { break; }
                 continue;
             } else if content.source == "cli" && content.body.trim() == "train" {
                 match coordinator.trigger_training().await {
@@ -1107,6 +1114,7 @@ async fn main() -> anyhow::Result<()> {
                     Ok(n) => println!("Training completed on {} samples.", n),
                     Err(e) => println!("Training failed: {}", e),
                 }
+                if single_shot { break; }
                 continue;
             }
         }
