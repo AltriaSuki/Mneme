@@ -140,6 +140,9 @@ pub struct ReasoningEngine {
 
     // #1285: Tool use budget — limits tool calls per reasoning cycle
     tool_call_count: std::sync::atomic::AtomicU32,
+
+    // Suppress streaming during ReAct follow-up iterations (prevents intermediate reasoning leak)
+    stream_suppressed: Arc<AtomicBool>,
 }
 
 impl ReasoningEngine {
@@ -178,6 +181,7 @@ impl ReasoningEngine {
             router: None,
             response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
             tool_call_count: std::sync::atomic::AtomicU32::new(0),
+            stream_suppressed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -216,6 +220,7 @@ impl ReasoningEngine {
             router: None,
             response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
             tool_call_count: std::sync::atomic::AtomicU32::new(0),
+            stream_suppressed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -367,7 +372,9 @@ impl ReasoningEngine {
             match event {
                 StreamEvent::TextDelta(delta) => {
                     if let Some(ref cb) = self.on_text_chunk {
-                        cb(&delta);
+                        if !self.stream_suppressed.load(Ordering::Acquire) {
+                            cb(&delta);
+                        }
                     }
                     current_text.push_str(&delta);
                 }
@@ -675,11 +682,17 @@ impl ReasoningEngine {
                 }
 
                 final_content.clear();
+                // Suppress streaming for follow-up iterations — intermediate reasoning
+                // text (e.g. "让我换个方式") should not leak to the user.
+                self.stream_suppressed.store(true, Ordering::Release);
                 continue; // Back to ReAct loop for model to process results
             } else {
                 break; // No tool calls → done
             }
         }
+
+        // Reset stream suppression after ReAct loop completes
+        self.stream_suppressed.store(false, Ordering::Release);
 
         // Silence Check: case-insensitive, whitespace-tolerant
         if is_silence_response(&final_content) {
