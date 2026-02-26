@@ -13,6 +13,7 @@ use mneme_core::{
 use mneme_limbic::LimbicSystem;
 use mneme_memory::{LifecycleState, OrganismCoordinator, SignalType};
 use regex::Regex;
+use futures_util::future::join_all;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
@@ -682,14 +683,20 @@ impl ReasoningEngine {
                 let mut result_blocks = Vec::new();
                 let mut any_permanent_fail = false;
 
-                for (id, name, input) in &tool_uses {
+                // Execute tool calls in parallel when multiple are requested
+                for (_, name, input) in &tool_uses {
                     tracing::info!("Tool: {} input: {:?}", name, input);
-                    let outcome = self.execute_tool_with_retry(name, input).await;
+                }
+                let futures: Vec<_> = tool_uses.iter()
+                    .map(|(_, name, input)| self.execute_tool_with_retry(name, input))
+                    .collect();
+                let outcomes = join_all(futures).await;
+
+                for ((id, name, _), outcome) in tool_uses.iter().zip(outcomes) {
                     if outcome.is_error {
                         tracing::warn!("Tool '{}' failed: {}", name, outcome.content);
                         if outcome.error_kind == Some(ToolErrorKind::Permanent) {
                             any_permanent_fail = true;
-                            // #82: Record failure pattern in self_knowledge
                             self.record_tool_failure(name, &outcome.content).await;
                         }
                     }
