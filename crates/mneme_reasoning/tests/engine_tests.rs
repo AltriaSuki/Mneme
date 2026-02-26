@@ -545,6 +545,64 @@ async fn test_tool_error_does_not_crash_react_loop() {
     assert!(result.content.contains("第二次") || !result.content.is_empty());
 }
 
+// ============================================================================
+// Tests: Exploration Nudge
+// ============================================================================
+
+#[tokio::test]
+async fn test_exploration_nudge_fires_after_shallow_stop() {
+    // Model makes 1 tool call then stops → nudge should fire → model continues
+    // Sequence: tool_use → text (nudge fires) → text (final) → extraction
+    let client = MockLlmClient::new(vec![
+        tool_use_response("shell", serde_json::json!({"command": "curl ipinfo.io"})),
+        text_response("看起来是新加坡"),
+        text_response("经过深入调查，确认在成都"),
+        text_response(r#"{"facts": []}"#),
+    ]);
+
+    let tool = Box::new(MockToolHandler::shell(r#"{"ip":"1.2.3.4","city":"Singapore"}"#));
+    let memory = Arc::new(MockMemory::new());
+    let mut engine = build_engine_with_tool(client, memory.clone(), tool);
+    engine.set_exploration_nudge(true);
+
+    let result = engine.think(user_event("你知道我在哪吗")).await.unwrap();
+
+    // After nudge, the model should have continued to the deeper answer
+    assert!(
+        result.content.contains("成都"),
+        "Nudge should have pushed model past shallow answer. Got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_double_nudge_at_different_depths() {
+    // Nudge #1 after 1 tool call, nudge #2 after 3+ tool calls
+    // Sequence: tool_use → text (nudge#1) → tool_use → tool_use → text (nudge#2) → text (final) → extraction
+    let client = MockLlmClient::new(vec![
+        tool_use_response("shell", serde_json::json!({"command": "step1"})),
+        text_response("初步结果"),
+        tool_use_response("shell", serde_json::json!({"command": "step2"})),
+        tool_use_response("shell", serde_json::json!({"command": "step3"})),
+        text_response("中间结果"),
+        text_response("最终深入结论"),
+        text_response(r#"{"facts": []}"#),
+    ]);
+
+    let tool = Box::new(MockToolHandler::shell("mock output"));
+    let memory = Arc::new(MockMemory::new());
+    let mut engine = build_engine_with_tool(client, memory.clone(), tool);
+    engine.set_exploration_nudge(true);
+
+    let result = engine.think(user_event("深入调查")).await.unwrap();
+
+    assert!(
+        result.content.contains("最终深入结论"),
+        "Double nudge should push to deepest answer. Got: {}",
+        result.content
+    );
+}
+
 #[tokio::test]
 async fn test_spawn_failure_is_transient() {
     // "spawn" in error message → transient, will retry
