@@ -272,7 +272,9 @@ pub fn user_event(text: &str) -> Event {
 
 pub fn build_engine(client: MockLlmClient) -> mneme_reasoning::engine::ReasoningEngine {
     let memory: Arc<dyn Memory> = Arc::new(MockMemory::new());
-    mneme_reasoning::engine::ReasoningEngine::new(test_psyche(), memory, Box::new(client))
+    let mut engine = mneme_reasoning::engine::ReasoningEngine::new(test_psyche(), memory, Box::new(client));
+    engine.set_exploration_nudge(false);
+    engine
 }
 
 pub fn build_engine_with_tool(
@@ -288,5 +290,6 @@ pub fn build_engine_with_tool(
     let mut registry = mneme_reasoning::ToolRegistry::new();
     registry.register(tool_handler);
     engine.set_registry(Arc::new(tokio::sync::RwLock::new(registry)));
+    engine.set_exploration_nudge(false);
     engine
 }

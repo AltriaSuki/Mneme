@@ -143,6 +143,9 @@ pub struct ReasoningEngine {
 
     // Suppress streaming during ReAct follow-up iterations (prevents intermediate reasoning leak)
     stream_suppressed: Arc<AtomicBool>,
+
+    // Shallow exploration nudge: when true, nudge model to continue if it stops after 1-2 tool calls
+    exploration_nudge: bool,
 }
 
 impl ReasoningEngine {
@@ -182,6 +185,7 @@ impl ReasoningEngine {
             response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
             tool_call_count: std::sync::atomic::AtomicU32::new(0),
             stream_suppressed: Arc::new(AtomicBool::new(false)),
+            exploration_nudge: true,
         }
     }
 
@@ -221,6 +225,7 @@ impl ReasoningEngine {
             response_cache: tokio::sync::Mutex::new(crate::response_cache::ResponseCache::new()),
             tool_call_count: std::sync::atomic::AtomicU32::new(0),
             stream_suppressed: Arc::new(AtomicBool::new(false)),
+            exploration_nudge: true,
         }
     }
 
@@ -279,6 +284,11 @@ impl ReasoningEngine {
     /// Set the tool registry for dynamic dispatch
     pub fn set_registry(&mut self, registry: Arc<tokio::sync::RwLock<crate::tool_registry::ToolRegistry>>) {
         self.registry = Some(registry);
+    }
+
+    /// Disable shallow exploration nudge (useful for tests with fixed mock responses)
+    pub fn set_exploration_nudge(&mut self, enabled: bool) {
+        self.exploration_nudge = enabled;
     }
 
     /// Set the token budget tracker
@@ -585,7 +595,9 @@ impl ReasoningEngine {
         // Reset stream suppression at the start (caller checks it after think() returns)
         self.stream_suppressed.store(false, Ordering::Release);
         let mut consecutive_permanent_fails = 0u32;
-        for _iteration in 0..5 {
+        let mut tool_call_count = 0u32;
+        let mut nudged = false;
+        for _iteration in 0..8 {
             final_content.clear();
 
             // #58: Check cancellation before each LLM call
@@ -665,6 +677,7 @@ impl ReasoningEngine {
 
             // --- API native tool_use dispatch ---
             if !tool_uses.is_empty() {
+                tool_call_count += tool_uses.len() as u32;
                 tracing::info!("API tool_use: {} call(s)", tool_uses.len());
                 let mut result_blocks = Vec::new();
                 let mut any_permanent_fail = false;
@@ -710,8 +723,64 @@ impl ReasoningEngine {
                 // text (e.g. "让我换个方式") should not leak to the user.
                 self.stream_suppressed.store(true, Ordering::Release);
                 continue; // Back to ReAct loop for model to process results
+            } else if self.exploration_nudge && !nudged && tool_call_count > 0 && tool_call_count <= 2 && _iteration <= 2 {
+                // Shallow exploration nudge: model stopped after 1-2 tool calls
+                // with iterations remaining. Nudge once to encourage deeper investigation.
+                nudged = true;
+                tracing::info!("Shallow exploration nudge ({}  tool calls, iteration {})", tool_call_count, _iteration);
+                scratchpad_messages.push(Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text {
+                        text: "[系统：你还有调查手段没有用尽。如果当前结论不够确定，可以继续用工具从其他角度验证。]".to_string(),
+                    }],
+                });
+                self.stream_suppressed.store(true, Ordering::Release);
+                continue;
             } else {
                 break; // No tool calls → done
+            }
+        }
+
+        // ReAct loop exhausted with pending tool results — one final synthesis call
+        if final_content.trim().is_empty() && scratchpad_messages.last().map_or(false, |m| {
+            m.role == Role::User && m.content.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+        }) {
+            tracing::info!("ReAct loop exhausted, making final synthesis call");
+            let routed_client = match self.router {
+                Some(ref r) => Some(r.client_for(mneme_core::TaskType::Conversation).await),
+                None => None,
+            };
+            let active_client: &dyn LlmClient = match routed_client {
+                Some(ref c) => &**c,
+                None => self.client.as_ref(),
+            };
+            // No tools — force text-only response
+            let synthesis_params = CompletionParams {
+                tool_choice: None,
+                ..completion_params.clone()
+            };
+            self.stream_suppressed.store(false, Ordering::Release);
+            if let Ok(rx) = active_client
+                .stream_complete(
+                    &system_prompt,
+                    scratchpad_messages.clone(),
+                    vec![],
+                    synthesis_params,
+                )
+                .await
+            {
+                let (blocks, _, inp_tok, out_tok) = self.consume_stream(rx).await;
+                if inp_tok > 0 || out_tok > 0 {
+                    if let Some(ref budget) = self.token_budget {
+                        budget.record_usage(inp_tok, out_tok).await;
+                    }
+                }
+                for block in &blocks {
+                    if let ContentBlock::Text { text } = block {
+                        tracing::debug!("Synthesis text: {}", text);
+                        final_content.push_str(text);
+                    }
+                }
             }
         }
 
