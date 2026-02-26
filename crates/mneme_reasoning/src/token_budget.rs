@@ -45,29 +45,35 @@ impl TokenBudget {
     }
 
     /// Check current budget status against daily/monthly limits.
+    ///
+    /// Checks Exceeded on both limits first, then Warning, so a monthly
+    /// Exceeded is never shadowed by a daily Warning.
     pub async fn check_budget(&self) -> BudgetStatus {
-        // Check daily limit
-        if let Some(daily_limit) = self.config.daily_limit {
-            let daily = self.get_daily_usage().await;
-            let pct = daily as f32 / daily_limit as f32;
-            if pct >= 1.0 {
-                return BudgetStatus::Exceeded;
+        let daily_pct = match self.config.daily_limit {
+            Some(limit) if limit > 0 => {
+                Some(self.get_daily_usage().await as f32 / limit as f32)
             }
-            if pct >= self.config.warning_threshold {
-                return BudgetStatus::Warning { usage_pct: pct };
+            _ => None,
+        };
+
+        let monthly_pct = match self.config.monthly_limit {
+            Some(limit) if limit > 0 => {
+                Some(self.get_monthly_usage().await as f32 / limit as f32)
             }
+            _ => None,
+        };
+
+        // Check Exceeded first (either limit)
+        if daily_pct.is_some_and(|p| p >= 1.0) || monthly_pct.is_some_and(|p| p >= 1.0) {
+            return BudgetStatus::Exceeded;
         }
 
-        // Check monthly limit
-        if let Some(monthly_limit) = self.config.monthly_limit {
-            let monthly = self.get_monthly_usage().await;
-            let pct = monthly as f32 / monthly_limit as f32;
-            if pct >= 1.0 {
-                return BudgetStatus::Exceeded;
-            }
-            if pct >= self.config.warning_threshold {
-                return BudgetStatus::Warning { usage_pct: pct };
-            }
+        // Then check Warning (worst of the two)
+        let worst_pct = daily_pct.unwrap_or(0.0).max(monthly_pct.unwrap_or(0.0));
+        if worst_pct >= self.config.warning_threshold {
+            return BudgetStatus::Warning {
+                usage_pct: worst_pct,
+            };
         }
 
         BudgetStatus::Ok

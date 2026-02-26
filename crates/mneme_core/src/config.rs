@@ -25,22 +25,34 @@ pub struct MnemeConfig {
 
 impl MnemeConfig {
     /// Load config from a TOML file, falling back to defaults for missing fields.
-    /// After loading, env var overrides are applied.
+    /// After loading, env var overrides are applied. Validation warnings are logged.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .with_context(|| format!("Failed to read config file: {}", path.as_ref().display()))?;
         let mut config: MnemeConfig =
             toml::from_str(&content).with_context(|| "Failed to parse TOML config")?;
         config.apply_env_overrides();
+        let issues = config.validate();
+        for issue in &issues {
+            tracing::warn!("Config validation: {}", issue);
+        }
         Ok(config)
     }
 
     /// Try to load from path; if file doesn't exist, return defaults with env overrides.
+    /// Distinguishes "file not found" (info) from "file exists but invalid" (error).
     pub fn load_or_default<P: AsRef<Path>>(path: P) -> Self {
-        match Self::load(path) {
+        let p = path.as_ref();
+        if !p.exists() {
+            tracing::info!("Config file not found at {}, using defaults", p.display());
+            let mut cfg = Self::default();
+            cfg.apply_env_overrides();
+            return cfg;
+        }
+        match Self::load(p) {
             Ok(cfg) => cfg,
             Err(e) => {
-                tracing::info!("Config file not found or invalid ({}), using defaults", e);
+                tracing::error!("Config file {} exists but failed to load: {}. Using defaults.", p.display(), e);
                 let mut cfg = Self::default();
                 cfg.apply_env_overrides();
                 cfg

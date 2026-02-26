@@ -137,8 +137,10 @@ impl<'a> ContextBuilder<'a> {
         };
 
         // 3. Assemble 6-layer context with modulated budget
+        // Guard against negative or tiny factors: floor at 10% of base budget
+        let factor = modulation.context_budget_factor.max(0.1);
         let context_budget =
-            (self.context_budget_chars as f32 * modulation.context_budget_factor) as usize;
+            (self.context_budget_chars as f32 * factor) as usize;
 
         let context_layers = ContextLayers {
             user_facts: facts,

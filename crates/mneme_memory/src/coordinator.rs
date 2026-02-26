@@ -459,18 +459,26 @@ impl OrganismCoordinator {
             return Ok(InteractionResult::sleeping());
         }
 
-        // 1. Send stimulus to System 1 (limbic)
+        // 1. Analyze sentiment of the user's message FIRST — this is the ground
+        //    truth for content_valence/content_intensity fed into the ODE dynamics.
+        //    Previously we used soma.affect.valence here, which is the organism's
+        //    *current* emotional state — not the valence of the incoming message.
+        let (content_valence, content_intensity) = Self::analyze_sentiment(content);
+
+        // 2. Send stimulus to System 1 (limbic) for async emotional processing
         let stimulus = self.create_stimulus(author, content);
         let _ = self.limbic.receive_stimulus(stimulus).await;
 
-        // 2. Get somatic marker
+        // 3. Get somatic marker (used for modulation, NOT for content valence)
         let soma = self.limbic.get_somatic_marker().await;
 
-        // 3. Update fast state based on stimulus
+        // 4. Update fast state based on stimulus
         // Use effective dt=15s to represent the "attention window" of a conversation
         // turn — reading + thinking + composing. A 1s blip can't compete with 60s
         // idle ticks, causing boredom/curiosity to be unresponsive to interaction.
-        let sensory = self.create_sensory_input(content, &soma, response_delay_secs, source);
+        let sensory = self.create_sensory_input(
+            content, content_valence, content_intensity, &soma, response_delay_secs, source,
+        );
         {
             let mut state = self.state.write().await;
             let medium_clone = state.medium.clone();
@@ -486,7 +494,7 @@ impl OrganismCoordinator {
                 timestamp: Utc::now(),
                 author: author.to_string(),
                 content: content.chars().take(500).collect(),
-                emotional_valence: soma.affect.valence,
+                emotional_valence: content_valence,
             });
 
             // Keep buffer bounded (tighter cap to limit memory if sleep never fires)
@@ -776,6 +784,22 @@ impl OrganismCoordinator {
         // Transition to sleeping state
         self.set_lifecycle_state(LifecycleState::Sleeping).await;
 
+        // Run the inner logic, ensuring we always transition back to Awake
+        match self.trigger_sleep_inner().await {
+            Ok(result) => {
+                self.set_lifecycle_state(LifecycleState::Awake).await;
+                Ok(result)
+            }
+            Err(e) => {
+                tracing::error!("Sleep consolidation failed, restoring Awake state: {}", e);
+                self.set_lifecycle_state(LifecycleState::Awake).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Inner sleep logic extracted so trigger_sleep can guarantee Awake restoration.
+    async fn trigger_sleep_inner(&self) -> Result<ConsolidationResult> {
         // Get episodes for narrative weaving
         let episodes = self.episode_buffer.read().await.clone();
         let current_state = self.state.read().await.clone();
@@ -917,7 +941,7 @@ impl OrganismCoordinator {
                             let insight = format!(
                                 "梦境领悟（情绪强度{:.1}）：{}",
                                 dream.emotional_tone,
-                                &dream.narrative[..dream.narrative.len().min(200)]
+                                &dream.narrative.chars().take(66).collect::<String>()
                             );
                             if let Err(e) = db
                                 .store_self_knowledge(
@@ -1075,9 +1099,6 @@ impl OrganismCoordinator {
                 );
             }
         }
-
-        // Transition back to awake
-        self.set_lifecycle_state(LifecycleState::Awake).await;
 
         Ok(result)
     }
@@ -1278,7 +1299,9 @@ impl OrganismCoordinator {
     fn create_sensory_input(
         &self,
         content: &str,
-        soma: &SomaticMarker,
+        content_valence: f32,
+        content_intensity: f32,
+        _soma: &SomaticMarker,
         response_delay: f32,
         source: &str,
     ) -> SensoryInput {
@@ -1287,11 +1310,11 @@ impl OrganismCoordinator {
         let mut env = mneme_core::EnvironmentMetrics::sample();
         env.channel_distance = mneme_core::EnvironmentMetrics::channel_distance_for(source);
         // Surprise heuristic: any user interaction is inherently novel (base 0.3),
-        // plus arousal contribution — high-emotion messages are more surprising.
-        let surprise = (0.3 + soma.affect.arousal * 0.4).clamp(0.0, 1.0);
+        // plus intensity contribution — high-emotion messages are more surprising.
+        let surprise = (0.3 + content_intensity * 0.4).clamp(0.0, 1.0);
         SensoryInput {
-            content_valence: soma.affect.valence,
-            content_intensity: soma.affect.arousal,
+            content_valence,
+            content_intensity,
             surprise,
             is_social: true,
             response_delay_factor: response_delay,

@@ -315,22 +315,27 @@ impl DefaultDynamics {
         // Integrates affect valence over time.
         // During idle (no stimulus), mood decays faster toward neutral — the
         // organism shouldn't stay sad for hours just because of one bad interaction.
+        // Uses exponential blend (dt-stable) instead of Euler, which overshoots
+        // when dt_hours is large (e.g. user returns after 24h).
         let has_stimulus = input.is_social || input.content_intensity > 0.01;
         let effective_tau = if has_stimulus { tau } else { tau * IDLE_TAU_MULTIPLIER }; // 3x faster idle recovery
-        let d_mood = (fast.affect.valence - medium.mood_bias) / effective_tau;
-        medium.mood_bias += d_mood * dt_hours;
+        let mood_blend = 1.0 - (-dt_hours / effective_tau).exp();
+        medium.mood_bias += mood_blend * (fast.affect.valence - medium.mood_bias);
         medium.mood_bias = medium.mood_bias.clamp(-1.0, 1.0);
 
         // === Openness ===
-        // Influenced by curiosity and recent exploration outcomes
-        let d_openness = (fast.curiosity * 0.5 - medium.openness) * 0.1;
-        medium.openness += d_openness * dt_hours;
+        // Influenced by curiosity and recent exploration outcomes.
+        // Rate 0.1/hour → exponential blend for dt-stability.
+        let openness_blend = 1.0 - (-0.1 * dt_hours).exp();
+        medium.openness += openness_blend * (fast.curiosity * 0.5 - medium.openness);
         medium.openness = medium.openness.clamp(0.0, 1.0);
 
         // === Hunger/Deprivation ===
-        // Accumulates from unmet social needs
-        let d_hunger = (fast.social_need - 0.5).max(0.0) * 0.1;
-        medium.hunger += d_hunger * dt_hours;
+        // Accumulates from unmet social needs.
+        // Rate 0.1/hour → exponential blend for dt-stability.
+        let hunger_target = (fast.social_need - 0.5).max(0.0);
+        let hunger_blend = 1.0 - (-0.1 * dt_hours).exp();
+        medium.hunger += hunger_blend * (hunger_target - medium.hunger);
         medium.hunger = medium.hunger.clamp(0.0, 1.0);
 
         // === Attachment ===

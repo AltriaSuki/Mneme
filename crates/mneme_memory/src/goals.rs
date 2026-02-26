@@ -165,7 +165,7 @@ impl GoalManager {
                 description: "恢复能量到健康水平".into(),
                 priority: 0.9,
                 status: GoalStatus::Active,
-                progress: state.fast.energy / 0.5,
+                progress: (state.fast.energy / 0.5).clamp(0.0, 1.0),
                 created_at: now,
                 deadline: None,
                 parent_id: None,

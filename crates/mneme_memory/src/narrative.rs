@@ -381,7 +381,7 @@ impl NarrativeWeaver {
         if conflict_count >= 3 {
             return Some(CrisisEvent {
                 description: "价值冲突：近期多次出现内心矛盾".to_string(),
-                intensity: 0.5 + (conflict_count as f32 * 0.1),
+                intensity: (0.5 + (conflict_count as f32 * 0.1)).min(1.0),
                 timestamp: Utc::now(),
             });
         }

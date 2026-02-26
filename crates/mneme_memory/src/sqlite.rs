@@ -916,8 +916,12 @@ impl SqliteMemory {
              (id, title, content, period_start, period_end, emotional_tone, 
               themes_json, people_json, turning_points_json, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET 
+             ON CONFLICT(id) DO UPDATE SET
               title = excluded.title, content = excluded.content,
+              period_start = excluded.period_start, period_end = excluded.period_end,
+              emotional_tone = excluded.emotional_tone,
+              themes_json = excluded.themes_json, people_json = excluded.people_json,
+              turning_points_json = excluded.turning_points_json,
               updated_at = excluded.updated_at",
         )
         .bind(chapter.id)

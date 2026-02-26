@@ -1170,6 +1170,18 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **Stress/Energy dt-不稳定** | mneme_core/dynamics | `process_interaction` dt=1→15 后 Euler 积分导致 stress 从 0.26 飙升至 0.59 → 改用指数混合衰减 + 脉冲式刺激 | **Fixed** ✅ |
 | **Social need dt-不稳定** | mneme_core/dynamics | Euler `d_social * dt` 在大 dt 下不稳定 → 指数混合增长 + 脉冲式社交满足 | **Fixed** ✅ |
 | **Boredom 对交互无响应** | mneme_memory/coordinator | `process_interaction` 硬编码 dt=1.0，1 秒刺激无法对抗 60 秒 idle tick 的无聊增长 → 改为 dt=15.0（注意力窗口） | **Fixed** ✅ |
+| **content_valence 用了 organism 自身情绪** | mneme_memory/coordinator | `create_sensory_input()` 把 `soma.affect.valence`（有机体当前情绪）映射为 `content_valence`（用户消息情感），导致 ODE 对用户情绪完全无响应 → 改为直接传入 `analyze_sentiment()` 结果 | **Fixed** ✅ |
+| **episode_digest 情感标注错误** | mneme_memory/coordinator | episode buffer 的 `emotional_valence` 同样使用 `soma.affect.valence` 而非消息实际情感 → 改为使用 sentiment 分析结果，narrative weaving 数据源修正 | **Fixed** ✅ |
+| **情感分析缺少否定处理** | mneme_core/sentiment | "不开心"、"不好" 等否定前缀未处理，被当作正面词匹配 → 添加 NEGATION 前缀检测，否定正面词翻转为负面，否定负面词（双重否定）弱正面 | **Fixed** ✅ |
+| **情感分析 valence 公式上限过低** | mneme_core/sentiment | `(pos-neg)/(pos+neg+1)` 公式上限 ~0.67，多个强烈情感词也无法达到高 valence → 改用 `tanh(raw * 0.8)` 公式：1 词 ±0.66, 2 词 ±0.92, 3 词 ±0.98 | **Fixed** ✅ |
+| **trigger_sleep 失败后卡在 Sleeping** | mneme_memory/coordinator | `trigger_sleep()` 内部错误时不恢复 `LifecycleState::Awake`，后续所有交互返回 sleeping → 提取 `trigger_sleep_inner()` + match Ok/Err 均恢复 Awake | **Fixed** ✅ |
+| **token_budget 除零 panic** | mneme_reasoning/token_budget | `daily_limit=0` 或 `monthly_limit=0` 时 `usage / limit` 除零 → 添加 `limit > 0` 守卫 | **Fixed** ✅ |
+| **config validate() 从未调用** | mneme_core/config | `load()` 解析 TOML 后不调用 `validate()`，无效配置静默生效 → `load()` 末尾调用 `validate()` + 日志警告 | **Fixed** ✅ |
+| **safety 空 allowed_paths 绕过** | mneme_core/safety | `Restricted` 级别 `allowed_paths` 为空时 `any()` 返回 false，所有路径被拒 → 空列表时 fallback 到 cwd 限制 | **Fixed** ✅ |
+| **context budget 下溢** | mneme_reasoning/context | `context_budget_factor` 可能为 0 导致 budget=0 → `factor.max(0.1)` 保底 | **Fixed** ✅ |
+| **narrative chapter upsert 丢字段** | mneme_memory/sqlite | `save_narrative_chapter` ON CONFLICT 只更新 `updated_at`，title/content/themes 等 6 个字段被丢弃 → 补全所有字段 | **Fixed** ✅ |
+| **Medium dynamics Euler 过冲** | mneme_core/dynamics | `step_medium` 用 Euler 积分 `d * dt_hours`，用户离开 24h 后 dt_hours=24 导致 mood_bias 过冲 → 改用指数混合 `1 - exp(-dt/tau)` | **Fixed** ✅ |
+| **⚠️ 情感分析硬编码关键词局限** | mneme_core/sentiment | 当前基于关键词列表的情感分析无法覆盖隐喻、反讽、新词等场景，长期应替换为 ML 模型（文件头注释已标注） | **Known limitation** |
 
 ---
 
@@ -1924,4 +1936,4 @@ Mneme 是长期运行的生命体，改参数不应该要重启。使用 `arc-sw
 
 ---
 
-*最后更新: 2026-02-25*
+*最后更新: 2026-02-26*

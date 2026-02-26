@@ -92,8 +92,20 @@ impl CapabilityGuard {
             }),
             CapabilityTier::Restricted => {
                 if self.config.allowed_paths.is_empty() {
-                    // No whitelist configured — allow current directory
-                    return Ok(());
+                    // No whitelist configured — restrict to current directory
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    let canonical_path = canonicalize_best_effort(path);
+                    let canonical_cwd = canonicalize_best_effort(&cwd);
+                    if canonical_path.starts_with(&canonical_cwd) {
+                        return Ok(());
+                    }
+                    return Err(SafetyDenied {
+                        reason: format!(
+                            "Path '{}' is outside current directory in Restricted tier (no allowed_paths configured)",
+                            path.display()
+                        ),
+                        tier: self.config.tier.clone(),
+                    });
                 }
                 for allowed in &self.config.allowed_paths {
                     // Try both raw and canonical comparisons to handle symlinks (e.g. /tmp → /private/tmp on macOS)
