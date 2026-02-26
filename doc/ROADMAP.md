@@ -1181,7 +1181,10 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **context budget 下溢** | mneme_reasoning/context | `context_budget_factor` 可能为 0 导致 budget=0 → `factor.max(0.1)` 保底 | **Fixed** ✅ |
 | **narrative chapter upsert 丢字段** | mneme_memory/sqlite | `save_narrative_chapter` ON CONFLICT 只更新 `updated_at`，title/content/themes 等 6 个字段被丢弃 → 补全所有字段 | **Fixed** ✅ |
 | **Medium dynamics Euler 过冲** | mneme_core/dynamics | `step_medium` 用 Euler 积分 `d * dt_hours`，用户离开 24h 后 dt_hours=24 导致 mood_bias 过冲 → 改用指数混合 `1 - exp(-dt/tau)` | **Fixed** ✅ |
-| **⚠️ 情感分析硬编码关键词局限** | mneme_core/sentiment | 当前基于关键词列表的情感分析无法覆盖隐喻、反讽、新词等场景，长期应替换为 ML 模型（文件头注释已标注） | **Known limitation** |
+| **情感分析权重缺失致误判** | mneme_core/sentiment | "谢谢"(礼貌词)与"怕"(恐惧)权重相同，导致"谢谢你，我有点怕"判为正面 → 引入加权元组 `(&str, f32)`，礼貌词 0.3、知识兴趣词 0.3、强情感词 1.0 | **Fixed** ✅ |
+| **FOREIGN KEY 约束失败** | mneme_reasoning/engine | `record_interaction` 使用 `mneme_id` 但从未将 Mneme 自身插入 `people` 表 → 在 record 前 upsert Mneme person 记录 | **Fixed** ✅ |
+| **负面词库缺失恐惧/忧虑类** | mneme_core/sentiment | "怕"、"担心"、"忧虑"、"不安"、"委屈"、"难受"等常见负面词未收录 → 补充 14 个负面词条 | **Fixed** ✅ |
+| **⚠️ 情感分析硬编码关键词局限** | mneme_core/sentiment | 当前基于关键词列表的情感分析无法覆盖隐喻、反讽、新词等场景，长期应替换为小型神经网络（candle/ONNX 本地推理） | **Known limitation** |
 
 ---
 

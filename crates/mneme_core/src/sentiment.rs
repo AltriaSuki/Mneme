@@ -3,31 +3,58 @@
 //! Shared across crates to avoid duplicating word lists.
 //! In production, this should be replaced with an ML model.
 
-// Multi-char positive keywords (safe from substring false-positives)
-const POSITIVE: &[&str] = &[
-    "开心", "高兴", "喜欢", "喜爱", "真棒", "很好", "太好了", "不错",
-    "谢谢", "感谢", "感激", "哈哈", "有趣", "有意思", "厉害", "优秀",
-    "快乐", "幸福", "满意", "舒服", "温暖", "期待", "兴奋", "激动",
-    "太棒", "真好", "好棒", "好开心", "好高兴", "心情好", "感动",
-    "惊喜", "庆祝", "恭喜", "成功", "顺利", "完美", "精彩", "美好",
-    "可爱", "欣慰", "自豪", "骄傲", "振奋", "愉快", "畅快", "爽快",
-    "赞", "棒", "爽",
-    "😊", "❤️", "👍", "🎉", "😄", "🥰", "✨",
+// Positive keywords with weight: (keyword, weight).
+// Full-weight (1.0) = genuine emotional expression.
+// Reduced-weight (0.3) = politeness / intellectual interest — shouldn't dominate.
+const POSITIVE: &[(&str, f32)] = &[
+    ("开心", 1.0), ("高兴", 1.0), ("喜欢", 1.0), ("喜爱", 1.0),
+    ("真棒", 1.0), ("很好", 1.0), ("太好了", 1.0), ("不错", 0.5),
+    ("哈哈", 0.7), ("厉害", 0.5), ("优秀", 0.5),
+    ("快乐", 1.0), ("幸福", 1.0), ("满意", 1.0), ("舒服", 1.0),
+    ("温暖", 1.0), ("期待", 1.0), ("兴奋", 1.0), ("激动", 1.0),
+    ("太棒", 1.0), ("真好", 1.0), ("好棒", 1.0),
+    ("好开心", 1.0), ("好高兴", 1.0), ("心情好", 1.0), ("感动", 1.0),
+    ("惊喜", 1.0), ("庆祝", 1.0), ("恭喜", 0.5), ("成功", 0.5),
+    ("顺利", 0.5), ("完美", 1.0), ("精彩", 1.0), ("美好", 1.0),
+    ("可爱", 1.0), ("欣慰", 1.0), ("自豪", 1.0), ("骄傲", 1.0),
+    ("振奋", 1.0), ("愉快", 1.0), ("畅快", 1.0), ("爽快", 1.0),
+    ("赞", 0.7), ("棒", 0.7), ("爽", 0.7),
+    // Politeness — positive but mild, shouldn't outweigh negative emotions
+    ("谢谢", 0.3), ("感谢", 0.3), ("感激", 0.5),
+    // Intellectual interest — not strong emotion
+    ("有趣", 0.3), ("有意思", 0.3),
+    // Emoji
+    ("😊", 1.0), ("❤️", 1.0), ("👍", 0.7), ("🎉", 1.0),
+    ("😄", 1.0), ("🥰", 1.0), ("✨", 0.5),
 ];
 
 // Negation prefixes — if these appear right before a positive word,
 // the positive match is cancelled (e.g. "不好" negates "好").
 const NEGATION: &[&str] = &["不", "没", "别", "莫", "未"];
 
-// Multi-char negative keywords
-const NEGATIVE: &[&str] = &[
-    "难过", "伤心", "讨厌", "痛恨", "糟糕", "很差", "太差",
-    "烦躁", "烦恼", "生气", "愤怒", "失望", "焦虑", "害怕",
-    "无聊", "孤独", "沮丧", "崩溃", "绝望", "痛苦", "悲伤",
-    "郁闷", "压抑", "无助", "恐惧", "厌恶", "后悔", "懊悔",
-    "心烦", "心累", "受不了", "撑不住", "扛不住", "熬不住",
-    "裁员", "失业", "分手", "离婚", "去世", "病了", "出事",
-    "😢", "😡", "💔", "😞", "😭", "🥺",
+// Negative keywords with weight: (keyword, weight).
+const NEGATIVE: &[(&str, f32)] = &[
+    ("难过", 1.0), ("伤心", 1.0), ("讨厌", 1.0), ("痛恨", 1.0),
+    ("糟糕", 1.0), ("很差", 1.0), ("太差", 1.0),
+    ("烦躁", 1.0), ("烦恼", 1.0), ("生气", 1.0), ("愤怒", 1.0),
+    ("失望", 1.0), ("焦虑", 1.0), ("害怕", 1.0),
+    ("无聊", 0.7), ("孤独", 1.0), ("沮丧", 1.0), ("崩溃", 1.0),
+    ("绝望", 1.0), ("痛苦", 1.0), ("悲伤", 1.0),
+    ("郁闷", 1.0), ("压抑", 1.0), ("无助", 1.0), ("恐惧", 1.0),
+    ("厌恶", 1.0), ("后悔", 1.0), ("懊悔", 1.0),
+    ("心烦", 1.0), ("心累", 1.0),
+    ("受不了", 1.0), ("撑不住", 1.0), ("扛不住", 1.0), ("熬不住", 1.0),
+    // Life events — strong negative signal
+    ("裁员", 1.0), ("失业", 1.0), ("分手", 1.0), ("离婚", 1.0),
+    ("去世", 1.0), ("病了", 0.7), ("出事", 1.0),
+    // Fear / worry variants
+    ("好怕", 1.0), ("有点怕", 0.7), ("很怕", 1.0), ("太怕", 1.0),
+    ("担心", 0.7), ("忧虑", 0.7), ("不安", 0.7),
+    // Distress
+    ("委屈", 1.0), ("心酸", 1.0), ("难受", 1.0),
+    ("煎熬", 1.0), ("折磨", 1.0), ("挣扎", 1.0), ("迷茫", 0.7),
+    // Emoji
+    ("😢", 1.0), ("😡", 1.0), ("💔", 1.0), ("😞", 1.0), ("😭", 1.0), ("🥺", 0.7),
 ];
 
 const INTENSE: &[&str] = &[
@@ -45,28 +72,28 @@ pub fn analyze_sentiment(text: &str) -> (f32, f32) {
     let mut neg = 0_f32;
 
     // Count positive keywords, checking for negation
-    for kw in POSITIVE {
+    for &(kw, weight) in POSITIVE {
         if let Some(idx) = text.find(kw) {
             // Check if preceded by a negation prefix → flip to negative
             let prefix = &text[..idx];
             let negated = NEGATION.iter().any(|neg| prefix.ends_with(neg));
             if negated {
-                neg += 1.0;
+                neg += weight;
             } else {
-                pos += 1.0;
+                pos += weight;
             }
         }
     }
 
     // Count negative keywords, checking for negation (double negative → positive)
-    for kw in NEGATIVE {
+    for &(kw, weight) in NEGATIVE {
         if let Some(idx) = text.find(kw) {
             let prefix = &text[..idx];
             let negated = NEGATION.iter().any(|neg| prefix.ends_with(neg));
             if negated {
-                pos += 0.5; // double negative is weakly positive
+                pos += weight * 0.5; // double negative is weakly positive
             } else {
-                neg += 1.0;
+                neg += weight;
             }
         }
     }
@@ -163,5 +190,26 @@ mod tests {
     fn test_double_negation() {
         let (v, _) = analyze_sentiment("不难过");
         assert!(v > 0.0, "double negation should be weakly positive, got {v}");
+    }
+
+    #[test]
+    fn test_politeness_vs_fear() {
+        // "谢谢你。说实话我有点怕" — fear should dominate over politeness
+        let (v, _) = analyze_sentiment("谢谢你。说实话我有点怕");
+        assert!(v < 0.0, "fear should outweigh politeness, got {v}");
+    }
+
+    #[test]
+    fn test_intellectual_neutral() {
+        // "记忆拓扑很有意思" — intellectual interest, not strong emotion
+        let (v, _) = analyze_sentiment("记忆拓扑很有意思");
+        assert!(v.abs() < 0.5, "intellectual interest should be mild, got {v}");
+    }
+
+    #[test]
+    fn test_mixed_politeness_and_positive() {
+        // "谢谢！我真的很开心" — genuine happiness + politeness = clearly positive
+        let (v, _) = analyze_sentiment("谢谢！我真的很开心");
+        assert!(v > 0.3, "genuine happiness should still be positive, got {v}");
     }
 }

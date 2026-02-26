@@ -957,9 +957,20 @@ impl ReasoningEngine {
             tracing::info!("Social graph: created person {} ({}:{})", person_id, platform, author);
         }
 
-        // Mneme's own stable person ID
+        // Mneme's own stable person ID — ensure it exists in people table
         let mneme_id =
             uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, b"mneme:self");
+        if graph.find_person("system", "mneme").await.unwrap_or(None).is_none() {
+            let mneme_person = mneme_core::Person {
+                id: mneme_id,
+                name: "Mneme".to_string(),
+                aliases: [("system".to_string(), "mneme".to_string())].into_iter().collect(),
+            };
+            if let Err(e) = graph.upsert_person(&mneme_person).await {
+                tracing::debug!("Failed to upsert Mneme person: {}", e);
+                return;
+            }
+        }
 
         // Record the interaction (truncate summary to keep DB lean)
         let short_summary: String = summary.chars().take(200).collect();
