@@ -734,7 +734,7 @@ impl ReasoningEngine {
                 };
                 if should_nudge {
                     nudge_count += 1;
-                    let nudge_text = build_exploration_nudge(&scratchpad_messages);
+                    let nudge_text = build_exploration_nudge(nudge_count, &scratchpad_messages);
                     tracing::info!("Exploration nudge #{} ({} tool calls, iteration {})", nudge_count, tool_call_count, _iteration);
                     scratchpad_messages.push(Message {
                         role: Role::User,
@@ -1672,13 +1672,18 @@ fn format_feed_digest(items: &[mneme_core::Content]) -> String {
 // Silence & Tool Result Sanitization
 // ============================================================================
 
-/// Detect if the LLM response is a silence indicator.
-///
-/// Build a contextual exploration nudge by analyzing prior tool results.
-fn build_exploration_nudge(_messages: &[crate::api_types::Message]) -> String {
-    "[系统：你还有调查手段没有用尽。如果当前结论不够确定，可以继续用工具从其他角度验证。]".to_string()
+/// Build an exploration nudge. The message varies by depth to avoid repetition.
+/// - Nudge 0 (shallow): encourage continuing investigation
+/// - Nudge 1 (mid-plateau): encourage trying a different approach entirely
+fn build_exploration_nudge(nudge_index: u32, _messages: &[crate::api_types::Message]) -> String {
+    match nudge_index {
+        0 => "[系统：你还有调查手段没有用尽。如果当前结论不够确定，可以继续用工具从其他角度验证。]".to_string(),
+        _ => "[系统：你已经尝试了一些方法，但结论可能还不够精确。试试完全不同的思路或信息源。]".to_string(),
+    }
 }
 
+/// Detect if the LLM response is a silence indicator.
+///
 /// Handles: `[SILENCE]`, `[silence]`, `[ SILENCE ]`, `[SILENCE] ...`,
 /// and similar variations. Only matches if the *entire* trimmed content
 /// is a silence tag (possibly with trailing whitespace/punctuation).
