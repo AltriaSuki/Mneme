@@ -1,4 +1,4 @@
-use crate::api_types::{ContentBlock, Message, MessagesResponse, Role, StreamEvent, Tool};
+use crate::api_types::{ContentBlock, Message, MessagesResponse, Role, StreamEvent, Tool, ToolChoice};
 use crate::llm::{CompletionParams, LlmClient};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
@@ -6,6 +6,15 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
 use std::time::Duration;
+
+/// Map Mneme ToolChoice to OpenAI-compatible tool_choice value.
+fn map_tool_choice_openai(tc: &ToolChoice) -> Value {
+    match tc {
+        ToolChoice::Auto => json!("auto"),
+        ToolChoice::Any => json!("required"),
+        ToolChoice::Tool { name } => json!({"type": "function", "function": {"name": name}}),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct OpenAiClient {
@@ -170,6 +179,9 @@ impl LlmClient for OpenAiClient {
 
         if !openai_tools.is_empty() {
             payload["tools"] = json!(openai_tools);
+            if let Some(ref tc) = params.tool_choice {
+                payload["tool_choice"] = map_tool_choice_openai(tc);
+            }
         }
 
         let url = format!("{}/chat/completions", self.base_url);
@@ -314,6 +326,9 @@ impl LlmClient for OpenAiClient {
         });
         if !openai_tools.is_empty() {
             payload["tools"] = json!(openai_tools);
+            if let Some(ref tc) = params.tool_choice {
+                payload["tool_choice"] = map_tool_choice_openai(tc);
+            }
         }
 
         let url = format!("{}/chat/completions", self.base_url);

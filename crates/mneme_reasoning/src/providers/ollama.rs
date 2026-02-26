@@ -10,6 +10,15 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
 use std::time::Duration;
+
+/// Map ToolChoice to OpenAI-compatible format (reuses OpenAI mapping logic).
+fn map_tool_choice_ollama(tc: &crate::api_types::ToolChoice) -> Value {
+    match tc {
+        crate::api_types::ToolChoice::Auto => json!("auto"),
+        crate::api_types::ToolChoice::Any => json!("required"),
+        crate::api_types::ToolChoice::Tool { name } => json!({"type": "function", "function": {"name": name}}),
+    }
+}
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     client: Client,
@@ -140,6 +149,9 @@ impl LlmClient for OllamaClient {
         });
         if !openai_tools.is_empty() {
             payload["tools"] = json!(openai_tools);
+            if let Some(ref tc) = params.tool_choice {
+                payload["tool_choice"] = map_tool_choice_ollama(tc);
+            }
         }
 
         let url = format!("{}/chat/completions", self.base_url);
@@ -203,6 +215,9 @@ impl LlmClient for OllamaClient {
         });
         if !openai_tools.is_empty() {
             payload["tools"] = json!(openai_tools);
+            if let Some(ref tc) = params.tool_choice {
+                payload["tool_choice"] = map_tool_choice_ollama(tc);
+            }
         }
 
         let url = format!("{}/chat/completions", self.base_url);

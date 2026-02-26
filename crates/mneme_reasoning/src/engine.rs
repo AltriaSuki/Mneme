@@ -431,6 +431,7 @@ impl ReasoningEngine {
         input_text: &str,
         is_user_message: bool,
         speaker: Option<(&str, &str)>,
+        tool_choice: Option<crate::api_types::ToolChoice>,
     ) -> Result<(String, Emotion, mneme_core::Affect)> {
         use crate::api_types::{ContentBlock, Message, Role};
 
@@ -526,9 +527,10 @@ impl ReasoningEngine {
             }
         }
 
-        let completion_params = CompletionParams {
+        let mut completion_params = CompletionParams {
             max_tokens: modulated_max_tokens,
             temperature: (base_temperature + modulation.temperature_delta).clamp(0.0, 2.0),
+            tool_choice: tool_choice.clone(),
         };
 
         // === Assemble context via ContextBuilder ===
@@ -702,6 +704,8 @@ impl ReasoningEngine {
                 }
 
                 final_content.clear();
+                // After first tool use, revert to Auto so model reflects naturally
+                completion_params.tool_choice = None;
                 // Suppress streaming for follow-up iterations — intermediate reasoning
                 // text (e.g. "让我换个方式") should not leak to the user.
                 self.stream_suppressed.store(true, Ordering::Release);
@@ -1007,7 +1011,7 @@ impl ReasoningEngine {
         );
 
         let (response_text, emotion, affect) =
-            self.process_thought_loop(&prompt, false, None).await?;
+            self.process_thought_loop(&prompt, false, None, None).await?;
 
         // Parse insights from LLM response
         let insights = crate::metacognition::parse_metacognition_response(&response_text);
@@ -1154,6 +1158,7 @@ impl Reasoning for ReasoningEngine {
                         &content.body,
                         true,
                         Some((&content.source, &content.author)),
+                        None,
                     )
                     .await?;
 
@@ -1312,6 +1317,12 @@ impl Reasoning for ReasoningEngine {
                     | Trigger::Rumination { route: Some(r), .. } => Some(r.clone()),
                     _ => self.last_active_source.lock().await.clone(),
                 };
+                // Detect exploration triggers for structural tool_choice coupling
+                let is_exploration = matches!(
+                    &trigger,
+                    Trigger::Rumination { kind, .. }
+                        if kind == "curiosity_exploration" || kind == "boredom_exploration"
+                );
                 let prompt_text = match trigger {
                     Trigger::Scheduled { name, .. } => format!(
                         "It is time for the {}. Please initiate this interaction.",
@@ -1361,6 +1372,7 @@ impl Reasoning for ReasoningEngine {
                                     let params = crate::llm::CompletionParams {
                                         max_tokens: 128,
                                         temperature: 0.9,
+                                        tool_choice: None,
                                     };
                                     match low_client.complete(&prompt, vec![], vec![], params).await {
                                         Ok(resp) => {
@@ -1439,8 +1451,15 @@ impl Reasoning for ReasoningEngine {
                     }
                 };
 
+                // Structural coupling: exploration drives → forced tool use (first iteration only)
+                let exploration_tool_choice = if is_exploration {
+                    Some(crate::api_types::ToolChoice::Any)
+                } else {
+                    None
+                };
+
                 let (response_text, emotion, affect) =
-                    self.process_thought_loop(&prompt_text, false, None).await?;
+                    self.process_thought_loop(&prompt_text, false, None, exploration_tool_choice).await?;
 
                 Ok(ReasoningOutput {
                     content: response_text,
@@ -1853,6 +1872,7 @@ impl mneme_memory::DreamNarrator for LlmDreamNarrator {
         let params = CompletionParams {
             max_tokens: 500,
             temperature: 1.0,
+            tool_choice: None,
         };
 
         let response = self

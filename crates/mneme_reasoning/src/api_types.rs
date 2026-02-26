@@ -40,6 +40,22 @@ pub enum ContentBlock {
 // Tool schema types live in mneme_core::tools (v2.0.0 Phase 5a decoupling).
 pub use mneme_core::tools::{Tool, ToolInputSchema};
 
+/// Anthropic API tool_choice — structural control over tool invocation.
+///
+/// When organism internal drives (curiosity, boredom) cross thresholds,
+/// the engine sets `ToolChoice::Any` to structurally couple drive → action,
+/// analogous to how biological curiosity compels exploration behavior.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolChoice {
+    /// Model decides whether to use tools (default).
+    Auto,
+    /// Model MUST use at least one tool before responding.
+    Any,
+    /// Model MUST use this specific tool.
+    Tool { name: String },
+}
+
 // Request payload
 #[derive(Debug, Serialize)]
 pub struct MessagesRequest {
@@ -52,6 +68,8 @@ pub struct MessagesRequest {
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
 // Response payload
@@ -86,4 +104,27 @@ pub enum StreamEvent {
     Usage { input_tokens: u64, output_tokens: u64 },
     /// Error during streaming
     Error(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_choice_serialization() {
+        // Auto → {"type":"auto"}
+        let auto = serde_json::to_value(ToolChoice::Auto).unwrap();
+        assert_eq!(auto["type"], "auto");
+
+        // Any → {"type":"any"}
+        let any = serde_json::to_value(ToolChoice::Any).unwrap();
+        assert_eq!(any["type"], "any");
+
+        // Tool → {"type":"tool","name":"shell"}
+        let tool = serde_json::to_value(ToolChoice::Tool {
+            name: "shell".to_string(),
+        }).unwrap();
+        assert_eq!(tool["type"], "tool");
+        assert_eq!(tool["name"], "shell");
+    }
 }

@@ -1,4 +1,4 @@
-use crate::api_types::{ContentBlock, MessagesResponse, StreamEvent};
+use crate::api_types::{ContentBlock, MessagesResponse, StreamEvent, ToolChoice};
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -9,6 +9,10 @@ pub struct CompletionParams {
     pub max_tokens: u32,
     /// Sampling temperature (0.0 - 2.0)
     pub temperature: f32,
+    /// Structural tool invocation control (Anthropic `tool_choice`).
+    /// When internal drives (curiosity, boredom) cross thresholds,
+    /// set to `Some(ToolChoice::Any)` to structurally couple drive → action.
+    pub tool_choice: Option<ToolChoice>,
 }
 
 impl Default for CompletionParams {
@@ -16,6 +20,7 @@ impl Default for CompletionParams {
         Self {
             max_tokens: 4096,
             temperature: 0.7,
+            tool_choice: None,
         }
     }
 }

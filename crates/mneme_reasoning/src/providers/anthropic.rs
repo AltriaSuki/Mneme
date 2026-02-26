@@ -48,6 +48,7 @@ impl LlmClient for AnthropicClient {
             max_tokens: params.max_tokens,
             temperature: Some(params.temperature),
             tools,
+            tool_choice: params.tool_choice.clone(),
         };
 
         // Debug: log the request body (always at debug level; full dump with DEBUG_PAYLOAD=true)
@@ -152,6 +153,9 @@ impl LlmClient for AnthropicClient {
             body["tools"] = serde_json::to_value(&tools)?;
         }
         body["temperature"] = serde_json::json!(params.temperature);
+        if let Some(ref tc) = params.tool_choice {
+            body["tool_choice"] = serde_json::to_value(tc)?;
+        }
 
         let response = self
             .client

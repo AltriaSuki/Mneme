@@ -42,6 +42,7 @@ async fn test_real_anthropic_complete() {
     let params = CompletionParams {
         max_tokens: 128,
         temperature: 0.0,
+        tool_choice: None,
     };
 
     let response = client
@@ -84,6 +85,7 @@ async fn test_real_anthropic_stream() {
     let params = CompletionParams {
         max_tokens: 128,
         temperature: 0.0,
+        tool_choice: None,
     };
 
     let mut rx = client

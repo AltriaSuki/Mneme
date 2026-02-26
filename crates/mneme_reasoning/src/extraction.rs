@@ -115,6 +115,7 @@ async fn extract_inner(
     let params = CompletionParams {
         max_tokens: 512,  // Extraction is brief
         temperature: 0.1, // Low temperature for structured output
+        tool_choice: None,
     };
 
     let response = client

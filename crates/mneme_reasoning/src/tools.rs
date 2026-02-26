@@ -380,7 +380,7 @@ impl ReadingToolHandler {
             role: Role::User,
             content: vec![ContentBlock::Text { text: prompt }],
         }];
-        let params = CompletionParams { max_tokens: 512, temperature: 0.9 };
+        let params = CompletionParams { max_tokens: 512, temperature: 0.9, tool_choice: None };
 
         let resp = match self.llm.complete("", messages, vec![], params).await {
             Ok(r) => r,

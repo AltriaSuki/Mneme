@@ -1187,6 +1187,7 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **mood_bias 交互期间不更新** | mneme_memory/coordinator + mneme_core/dynamics | `process_interaction` 只调用 `step_fast` 未调用 `step_medium`，导致 mood_bias 在整个对话中始终不变（-0.001）→ 补充 `step_medium` 调用 + 引入 `ACTIVE_MOOD_TAU_FACTOR=0.15`（活跃对话 tau≈18min）+ 使用 `response_delay_secs` 作为真实 dt | **Fixed** ✅ |
 | **情感分析缺失修饰语+好模式** | mneme_core/sentiment | "心情特别好"不匹配"心情好"（中间有"特别"），"好消息"未收录 → 补充"特别好/非常好/好消息/升职/加薪"等正面词 + "约谈/辞退/降薪"等负面词 | **Fixed** ✅ |
 | **情感分析疑问句误判** | mneme_core/sentiment | "有没有什么不舒服"中"不舒服"触发否定逻辑（valence=-0.664），但这是疑问句而非陈述句 → 添加 INTERROGATIVE 模式（有没有/是不是/会不会等），疑问句中的否定匹配权重降至 0.15 | **Fixed** ✅ |
+| **自主探索只说不做** | mneme_reasoning/engine | curiosity_exploration / boredom_exploration 触发时 LLM 描述好奇心但不实际调用工具 → 添加 `ToolChoice` 枚举（Auto/Any/Tool），探索触发时设 `tool_choice: Any` 强制首轮工具调用，后续迭代恢复 Auto 让模型自然反思。全链路：CompletionParams → Anthropic/OpenAI/Ollama providers → engine ReAct loop | **Fixed** ✅ |
 | **⚠️ 情感分析硬编码关键词局限** | mneme_core/sentiment | 当前基于关键词列表的情感分析无法覆盖隐喻、反讽、新词等场景，长期应替换为小型神经网络（candle/ONNX 本地推理） | **Known limitation** |
 
 ---
