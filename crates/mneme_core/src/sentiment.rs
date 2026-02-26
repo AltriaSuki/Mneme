@@ -37,6 +37,11 @@ const POSITIVE: &[(&str, f32)] = &[
 // the positive match is cancelled (e.g. "不好" negates "好").
 const NEGATION: &[&str] = &["不", "没", "别", "莫", "未"];
 
+// Interrogative patterns — when these appear before a negated keyword,
+// the match is dampened because it's a question, not a statement.
+// e.g. "有没有什么不舒服" is asking about discomfort, not expressing it.
+const INTERROGATIVE: &[&str] = &["有没有", "是不是", "会不会", "能不能", "要不要"];
+
 // Negative keywords with weight: (keyword, weight).
 const NEGATIVE: &[(&str, f32)] = &[
     ("难过", 1.0), ("伤心", 1.0), ("讨厌", 1.0), ("痛恨", 1.0),
@@ -85,7 +90,9 @@ pub fn analyze_sentiment(text: &str) -> (f32, f32) {
             let prefix = &text[..idx];
             let negated = NEGATION.iter().any(|neg| prefix.ends_with(neg));
             if negated {
-                neg += weight;
+                // Dampen if inside an interrogative pattern (asking, not stating)
+                let dampen = INTERROGATIVE.iter().any(|q| prefix.contains(q));
+                neg += weight * if dampen { 0.15 } else { 1.0 };
             } else {
                 pos += weight;
             }
@@ -98,7 +105,9 @@ pub fn analyze_sentiment(text: &str) -> (f32, f32) {
             let prefix = &text[..idx];
             let negated = NEGATION.iter().any(|neg| prefix.ends_with(neg));
             if negated {
-                pos += weight * 0.5; // double negative is weakly positive
+                // Dampen if inside an interrogative pattern
+                let dampen = INTERROGATIVE.iter().any(|q| prefix.contains(q));
+                pos += weight * 0.5 * if dampen { 0.15 } else { 1.0 };
             } else {
                 neg += weight;
             }
@@ -238,5 +247,16 @@ mod tests {
     fn test_promotion_positive() {
         let (v, _) = analyze_sentiment("刚升职加薪了");
         assert!(v > 0.3, "promotion should be positive, got {v}");
+    }
+
+    #[test]
+    fn test_interrogative_dampening() {
+        // "有没有什么不舒服" is asking about discomfort, not expressing it
+        let (v, _) = analyze_sentiment("你现在感觉怎么样？有没有什么不舒服的地方？");
+        assert!(v.abs() < 0.3, "interrogative should be near-neutral, got {v}");
+
+        // But "我很不舒服" IS expressing discomfort — should still be negative
+        let (v2, _) = analyze_sentiment("我很不舒服");
+        assert!(v2 < -0.3, "direct negation should still be negative, got {v2}");
     }
 }
