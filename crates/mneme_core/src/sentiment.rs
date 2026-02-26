@@ -19,6 +19,11 @@ const POSITIVE: &[(&str, f32)] = &[
     ("可爱", 1.0), ("欣慰", 1.0), ("自豪", 1.0), ("骄傲", 1.0),
     ("振奋", 1.0), ("愉快", 1.0), ("畅快", 1.0), ("爽快", 1.0),
     ("赞", 0.7), ("棒", 0.7), ("爽", 0.7),
+    // Modifier + 好 patterns (心情特别好, 特别好, 非常好, etc.)
+    ("特别好", 1.0), ("非常好", 1.0), ("超级好", 1.0), ("极其好", 1.0),
+    // Positive life events
+    ("好消息", 1.0), ("升职", 0.7), ("加薪", 0.7), ("涨薪", 0.7),
+    ("录取", 0.7), ("通过", 0.3), ("拿到", 0.3),
     // Politeness — positive but mild, shouldn't outweigh negative emotions
     ("谢谢", 0.3), ("感谢", 0.3), ("感激", 0.5),
     // Intellectual interest — not strong emotion
@@ -47,6 +52,8 @@ const NEGATIVE: &[(&str, f32)] = &[
     // Life events — strong negative signal
     ("裁员", 1.0), ("失业", 1.0), ("分手", 1.0), ("离婚", 1.0),
     ("去世", 1.0), ("病了", 0.7), ("出事", 1.0),
+    ("约谈", 0.7), ("辞退", 1.0), ("降薪", 0.7), ("被开", 0.7),
+    ("要走了", 0.5),
     // Fear / worry variants
     ("好怕", 1.0), ("有点怕", 0.7), ("很怕", 1.0), ("太怕", 1.0),
     ("担心", 0.7), ("忧虑", 0.7), ("不安", 0.7),
@@ -211,5 +218,25 @@ mod tests {
         // "谢谢！我真的很开心" — genuine happiness + politeness = clearly positive
         let (v, _) = analyze_sentiment("谢谢！我真的很开心");
         assert!(v > 0.3, "genuine happiness should still be positive, got {v}");
+    }
+
+    #[test]
+    fn test_good_news_with_modifier() {
+        // "心情特别好" — modifier splits "心情" and "好", need "特别好" keyword
+        let (v, _) = analyze_sentiment("今天心情特别好，刚收到一个好消息！");
+        assert!(v > 0.3, "good news should be positive, got {v}");
+    }
+
+    #[test]
+    fn test_hr_interview_negative() {
+        // Round 9 regression: "HR约谈" should be negative
+        let (v, _) = analyze_sentiment("HR约谈了我，说下周要走了");
+        assert!(v < 0.0, "HR约谈 should be negative, got {v}");
+    }
+
+    #[test]
+    fn test_promotion_positive() {
+        let (v, _) = analyze_sentiment("刚升职加薪了");
+        assert!(v > 0.3, "promotion should be positive, got {v}");
     }
 }

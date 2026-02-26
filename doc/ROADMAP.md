@@ -1184,6 +1184,8 @@ Layer 2: NeuralModulator MLP — 直接从 StateFeatures 输出 ModulationVector
 | **情感分析权重缺失致误判** | mneme_core/sentiment | "谢谢"(礼貌词)与"怕"(恐惧)权重相同，导致"谢谢你，我有点怕"判为正面 → 引入加权元组 `(&str, f32)`，礼貌词 0.3、知识兴趣词 0.3、强情感词 1.0 | **Fixed** ✅ |
 | **FOREIGN KEY 约束失败** | mneme_reasoning/engine | `record_interaction` 使用 `mneme_id` 但从未将 Mneme 自身插入 `people` 表 → 在 record 前 upsert Mneme person 记录 | **Fixed** ✅ |
 | **负面词库缺失恐惧/忧虑类** | mneme_core/sentiment | "怕"、"担心"、"忧虑"、"不安"、"委屈"、"难受"等常见负面词未收录 → 补充 14 个负面词条 | **Fixed** ✅ |
+| **mood_bias 交互期间不更新** | mneme_memory/coordinator + mneme_core/dynamics | `process_interaction` 只调用 `step_fast` 未调用 `step_medium`，导致 mood_bias 在整个对话中始终不变（-0.001）→ 补充 `step_medium` 调用 + 引入 `ACTIVE_MOOD_TAU_FACTOR=0.15`（活跃对话 tau≈18min）+ 使用 `response_delay_secs` 作为真实 dt | **Fixed** ✅ |
+| **情感分析缺失修饰语+好模式** | mneme_core/sentiment | "心情特别好"不匹配"心情好"（中间有"特别"），"好消息"未收录 → 补充"特别好/非常好/好消息/升职/加薪"等正面词 + "约谈/辞退/降薪"等负面词 | **Fixed** ✅ |
 | **⚠️ 情感分析硬编码关键词局限** | mneme_core/sentiment | 当前基于关键词列表的情感分析无法覆盖隐喻、反讽、新词等场景，长期应替换为小型神经网络（candle/ONNX 本地推理） | **Known limitation** |
 
 ---

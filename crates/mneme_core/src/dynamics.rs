@@ -48,6 +48,7 @@ const NOVELTY_INTENSITY_WEIGHT: f32 = 0.3;
 
 // === Medium dynamics ===
 const IDLE_TAU_MULTIPLIER: f32 = 0.3;
+const ACTIVE_MOOD_TAU_FACTOR: f32 = 0.15; // Active conversation: tau*0.15 ≈ 18min for 2h base
 
 // === Slow dynamics ===
 const COLLAPSE_BASE_THRESHOLD: f32 = 0.5;
@@ -313,12 +314,15 @@ impl DefaultDynamics {
 
         // === Mood bias ===
         // Integrates affect valence over time.
-        // During idle (no stimulus), mood decays faster toward neutral — the
-        // organism shouldn't stay sad for hours just because of one bad interaction.
-        // Uses exponential blend (dt-stable) instead of Euler, which overshoots
-        // when dt_hours is large (e.g. user returns after 24h).
+        // Active conversation uses a shorter tau (tau * 0.15 ≈ 18min for default 2h)
+        // so mood responds meaningfully within a session. Idle uses the full tau
+        // for slow decay toward neutral.
         let has_stimulus = input.is_social || input.content_intensity > 0.01;
-        let effective_tau = if has_stimulus { tau } else { tau * IDLE_TAU_MULTIPLIER }; // 3x faster idle recovery
+        let effective_tau = if has_stimulus {
+            tau * ACTIVE_MOOD_TAU_FACTOR // ~18min: mood shifts noticeably during conversation
+        } else {
+            tau * IDLE_TAU_MULTIPLIER // ~36min: idle decay toward neutral
+        };
         let mood_blend = 1.0 - (-dt_hours / effective_tau).exp();
         medium.mood_bias += mood_blend * (fast.affect.valence - medium.mood_bias);
         medium.mood_bias = medium.mood_bias.clamp(-1.0, 1.0);

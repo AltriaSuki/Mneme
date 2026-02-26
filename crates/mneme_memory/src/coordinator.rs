@@ -487,8 +487,16 @@ impl OrganismCoordinator {
         {
             let mut state = self.state.write().await;
             let medium_clone = state.medium.clone();
-            self.dynamics.read().await
-                .step_fast(&mut state.fast, &medium_clone, &sensory, 15.0);
+            let slow_clone = state.slow.clone();
+            let dynamics = self.dynamics.read().await;
+            dynamics.step_fast(&mut state.fast, &medium_clone, &sensory, 15.0);
+            let fast_clone = state.fast.clone();
+            // Medium dynamics use actual inter-message interval (not the 15s attention window).
+            // response_delay_secs captures real elapsed time since last response.
+            // Clamp to avoid huge jumps on first message (when delay is 0 or very large).
+            let medium_dt = response_delay_secs.clamp(10.0, 3600.0);
+            dynamics.step_medium(&mut state.medium, &fast_clone, &slow_clone, &sensory, medium_dt);
+            drop(dynamics);
             state.last_updated = Utc::now().timestamp();
             tracing::debug!(
                 "Post-interaction state: energy={:.3}, stress={:.3}, valence={:.3}, mood={:.3}",
