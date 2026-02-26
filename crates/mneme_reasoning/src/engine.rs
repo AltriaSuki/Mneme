@@ -596,7 +596,7 @@ impl ReasoningEngine {
         self.stream_suppressed.store(false, Ordering::Release);
         let mut consecutive_permanent_fails = 0u32;
         let mut tool_call_count = 0u32;
-        let mut nudged = false;
+        let mut nudge_count = 0u32;
         for _iteration in 0..8 {
             final_content.clear();
 
@@ -723,19 +723,27 @@ impl ReasoningEngine {
                 // text (e.g. "让我换个方式") should not leak to the user.
                 self.stream_suppressed.store(true, Ordering::Release);
                 continue; // Back to ReAct loop for model to process results
-            } else if self.exploration_nudge && !nudged && tool_call_count > 0 && tool_call_count <= 2 && _iteration <= 2 {
-                // Shallow exploration nudge: model stopped after 1-2 tool calls
-                // with iterations remaining. Nudge once to encourage deeper investigation.
-                nudged = true;
-                tracing::info!("Shallow exploration nudge ({}  tool calls, iteration {})", tool_call_count, _iteration);
-                scratchpad_messages.push(Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::Text {
-                        text: "[系统：你还有调查手段没有用尽。如果当前结论不够确定，可以继续用工具从其他角度验证。]".to_string(),
-                    }],
-                });
-                self.stream_suppressed.store(true, Ordering::Release);
-                continue;
+            } else if self.exploration_nudge && nudge_count < 2 && tool_call_count > 0 && _iteration < 6 {
+                // Exploration nudge: model stopped with iterations remaining.
+                // Nudge 0: after 1-2 tool calls (shallow exploration)
+                // Nudge 1: after 3+ tool calls (mid-exploration plateau)
+                let should_nudge = match nudge_count {
+                    0 => tool_call_count <= 2,
+                    1 => tool_call_count >= 3,
+                    _ => false,
+                };
+                if should_nudge {
+                    nudge_count += 1;
+                    let nudge_text = build_exploration_nudge(&scratchpad_messages);
+                    tracing::info!("Exploration nudge #{} ({} tool calls, iteration {})", nudge_count, tool_call_count, _iteration);
+                    scratchpad_messages.push(Message {
+                        role: Role::User,
+                        content: vec![ContentBlock::Text { text: nudge_text }],
+                    });
+                    self.stream_suppressed.store(true, Ordering::Release);
+                    continue;
+                }
+                break;
             } else {
                 break; // No tool calls → done
             }
@@ -1666,6 +1674,11 @@ fn format_feed_digest(items: &[mneme_core::Content]) -> String {
 
 /// Detect if the LLM response is a silence indicator.
 ///
+/// Build a contextual exploration nudge by analyzing prior tool results.
+fn build_exploration_nudge(_messages: &[crate::api_types::Message]) -> String {
+    "[系统：你还有调查手段没有用尽。如果当前结论不够确定，可以继续用工具从其他角度验证。]".to_string()
+}
+
 /// Handles: `[SILENCE]`, `[silence]`, `[ SILENCE ]`, `[SILENCE] ...`,
 /// and similar variations. Only matches if the *entire* trimmed content
 /// is a silence tag (possibly with trailing whitespace/punctuation).
