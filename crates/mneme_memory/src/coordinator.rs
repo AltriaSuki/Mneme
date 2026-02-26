@@ -464,6 +464,11 @@ impl OrganismCoordinator {
         //    Previously we used soma.affect.valence here, which is the organism's
         //    *current* emotional state — not the valence of the incoming message.
         let (content_valence, content_intensity) = Self::analyze_sentiment(content);
+        tracing::debug!(
+            "Sentiment analysis: valence={:.3}, intensity={:.3} for '{}'",
+            content_valence, content_intensity,
+            content.chars().take(30).collect::<String>()
+        );
 
         // 2. Send stimulus to System 1 (limbic) for async emotional processing
         let stimulus = self.create_stimulus(author, content);
@@ -485,6 +490,11 @@ impl OrganismCoordinator {
             self.dynamics.read().await
                 .step_fast(&mut state.fast, &medium_clone, &sensory, 15.0);
             state.last_updated = Utc::now().timestamp();
+            tracing::debug!(
+                "Post-interaction state: energy={:.3}, stress={:.3}, valence={:.3}, mood={:.3}",
+                state.fast.energy, state.fast.stress,
+                state.fast.affect.valence, state.medium.mood_bias
+            );
         }
 
         // 4. Record episode for narrative
