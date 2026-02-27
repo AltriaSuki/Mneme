@@ -802,8 +802,8 @@ impl ReasoningEngine {
                     consecutive_permanent_fails = 0;
                 }
 
-                if consecutive_permanent_fails >= 2 {
-                    tracing::warn!("Tool calls failing repeatedly, aborting ReAct loop");
+                if consecutive_permanent_fails >= 3 {
+                    tracing::warn!("Tool calls failing repeatedly (3 consecutive), aborting ReAct loop");
                     break;
                 }
 
