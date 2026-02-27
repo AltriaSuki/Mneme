@@ -14,6 +14,7 @@
 use anyhow::Result;
 use chrono::Timelike;
 use chrono::Utc;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{watch, RwLock};
 
@@ -201,6 +202,10 @@ pub struct OrganismCoordinator {
     last_response_ts: Arc<RwLock<Option<i64>>>,
     /// #5: Implicit feedback — running average message length for baseline
     avg_message_len: Arc<RwLock<f32>>,
+
+    /// Sliding window of recent messages for repetition detection (surprise decay).
+    /// Capacity: 20 messages.
+    recent_messages: RwLock<VecDeque<String>>,
 }
 
 impl OrganismCoordinator {
@@ -245,6 +250,7 @@ impl OrganismCoordinator {
             health: Arc::new(RwLock::new(HealthMonitor::default())),
             last_response_ts: Arc::new(RwLock::new(None)),
             avg_message_len: Arc::new(RwLock::new(50.0)),
+            recent_messages: RwLock::new(VecDeque::with_capacity(20)),
         }
     }
 
@@ -295,6 +301,11 @@ impl OrganismCoordinator {
                 state.last_updated = chrono::Utc::now().timestamp();
                 tracing::info!("Applied {}s catch-up idle dynamics", elapsed);
             }
+
+            // Sync loaded state to limbic system so somatic markers reflect persisted state.
+            // Without this, limbic keeps its default state and modulation ignores DB values.
+            let loaded = coordinator.state.read().await.clone();
+            coordinator.limbic.set_state(loaded).await;
         } else {
             tracing::info!("No persisted state found, using defaults");
         }
@@ -323,6 +334,12 @@ impl OrganismCoordinator {
         // Load learned NeuralModulator from DB (#14)
         if let Ok(Some(nn)) = db.load_learned_neural().await {
             tracing::info!("Loaded learned NeuralModulator (blend={:.2})", nn.blend);
+            coordinator.limbic.set_neural(Some(nn)).await;
+        } else {
+            // No persisted weights — curriculum-train a fresh network
+            let mut nn = mneme_limbic::NeuralModulator::default();
+            nn.curriculum_train(100, 0.01);
+            tracing::info!("Curriculum-trained fresh NeuralModulator");
             coordinator.limbic.set_neural(Some(nn)).await;
         }
 
@@ -481,8 +498,10 @@ impl OrganismCoordinator {
         // Use effective dt=15s to represent the "attention window" of a conversation
         // turn — reading + thinking + composing. A 1s blip can't compete with 60s
         // idle ticks, causing boredom/curiosity to be unresponsive to interaction.
+        let similarity = self.compute_message_similarity(content).await;
         let sensory = self.create_sensory_input(
             content, content_valence, content_intensity, &soma, response_delay_secs, source,
+            similarity,
         );
         {
             let mut state = self.state.write().await;
@@ -571,7 +590,10 @@ impl OrganismCoordinator {
             *self.prev_somatic.write().await = Some(soma.clone());
         }
 
-        // 8. Check if we should transition to drowsy/sleep
+        // 8. Record message for repetition detection (surprise decay)
+        self.record_message(content).await;
+
+        // 9. Check if we should transition to drowsy/sleep
         self.check_lifecycle_transition().await;
 
         Ok(InteractionResult {
@@ -1041,7 +1063,7 @@ impl OrganismCoordinator {
                 }).collect();
                 nn.train(&train_samples, 0.01);
                 // Gradually increase blend as we accumulate training
-                nn.blend = (nn.blend + 0.02).min(0.5);
+                nn.blend = (nn.blend + 0.02).min(0.85);
                 let _ = db.save_learned_neural(&nn).await;
                 self.limbic.set_neural(Some(nn)).await;
                 tracing::info!("Trained NeuralModulator on {} samples", samples.len());
@@ -1155,7 +1177,7 @@ impl OrganismCoordinator {
             )
         }).collect();
         nn.train(&train_samples, 0.01);
-        nn.blend = (nn.blend + 0.02).min(0.5);
+        nn.blend = (nn.blend + 0.02).min(0.85);
         let _ = db.save_learned_neural(&nn).await;
         self.limbic.set_neural(Some(nn)).await;
 
@@ -1314,6 +1336,29 @@ impl OrganismCoordinator {
         mneme_core::sentiment::analyze_sentiment(text)
     }
 
+    /// Compute max similarity between `content` and recent messages (Jaccard on bigrams).
+    async fn compute_message_similarity(&self, content: &str) -> f32 {
+        let recent = self.recent_messages.read().await;
+        if recent.is_empty() {
+            return 0.0;
+        }
+        recent
+            .iter()
+            .rev()
+            .take(5)
+            .map(|prev| jaccard_bigram_similarity(content, prev))
+            .fold(0.0f32, f32::max)
+    }
+
+    /// Record a message into the sliding window for repetition detection.
+    async fn record_message(&self, content: &str) {
+        let mut recent = self.recent_messages.write().await;
+        recent.push_back(content.to_string());
+        if recent.len() > 20 {
+            recent.pop_front();
+        }
+    }
+
     fn create_sensory_input(
         &self,
         content: &str,
@@ -1322,14 +1367,16 @@ impl OrganismCoordinator {
         _soma: &SomaticMarker,
         response_delay: f32,
         source: &str,
+        message_similarity: f32,
     ) -> SensoryInput {
         // ADR-007: Extract topic hint for curiosity vectorization
         let topic_hint = extract_topic_hint(content);
         let mut env = mneme_core::EnvironmentMetrics::sample();
         env.channel_distance = mneme_core::EnvironmentMetrics::channel_distance_for(source);
-        // Surprise heuristic: any user interaction is inherently novel (base 0.3),
-        // plus intensity contribution — high-emotion messages are more surprising.
-        let surprise = (0.3 + content_intensity * 0.4).clamp(0.0, 1.0);
+        // Surprise heuristic: base novelty decays with repetition (similarity).
+        // When similarity > 0.7, base drops to ~0.06, allowing boredom to accumulate.
+        let base_surprise = 0.3 * (1.0 - message_similarity * 0.8);
+        let surprise = (base_surprise + content_intensity * 0.4).clamp(0.0, 1.0);
         SensoryInput {
             content_valence,
             content_intensity,
@@ -1371,6 +1418,22 @@ impl OrganismCoordinator {
             let _ = self.lifecycle_tx.send(new_state);
         }
     }
+}
+
+/// Jaccard similarity on character bigrams — cheap repetition detector.
+fn jaccard_bigram_similarity(a: &str, b: &str) -> f32 {
+    use std::collections::HashSet;
+    let bigrams = |s: &str| -> HashSet<(char, char)> {
+        s.chars().zip(s.chars().skip(1)).collect()
+    };
+    let sa = bigrams(a);
+    let sb = bigrams(b);
+    if sa.is_empty() || sb.is_empty() {
+        return 0.0;
+    }
+    let intersection = sa.intersection(&sb).count() as f32;
+    let union = sa.union(&sb).count() as f32;
+    intersection / union
 }
 
 /// Extract a topic hint from user message content for curiosity vectorization (ADR-007).
