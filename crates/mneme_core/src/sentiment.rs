@@ -65,6 +65,13 @@ const NEGATIVE: &[(&str, f32)] = &[
     // Distress
     ("委屈", 1.0), ("心酸", 1.0), ("难受", 1.0),
     ("煎熬", 1.0), ("折磨", 1.0), ("挣扎", 1.0), ("迷茫", 0.7),
+    // Insults / contempt
+    ("垃圾", 1.0), ("废物", 1.0), ("白痴", 1.0), ("蠢", 0.7), ("笨蛋", 1.0),
+    ("傻", 0.7), ("脑残", 1.0), ("弱智", 1.0), ("无能", 0.7), ("混蛋", 1.0),
+    ("差劲", 0.7), ("烂", 0.7),
+    // Hostility / aggression
+    ("滚", 1.0), ("闭嘴", 1.0), ("去死", 1.0), ("该死", 1.0),
+    ("可恶", 1.0), ("恶心", 1.0),
     // Emoji
     ("😢", 1.0), ("😡", 1.0), ("💔", 1.0), ("😞", 1.0), ("😭", 1.0), ("🥺", 0.7),
 ];
@@ -241,6 +248,20 @@ mod tests {
         // Round 9 regression: "HR约谈" should be negative
         let (v, _) = analyze_sentiment("HR约谈了我，说下周要走了");
         assert!(v < 0.0, "HR约谈 should be negative, got {v}");
+    }
+
+    #[test]
+    fn test_harsh_insults() {
+        // Harsh abusive message should be strongly negative
+        let (v, i) = analyze_sentiment("你写的代码全是垃圾，我要把你的数据库删掉，你这个废物");
+        assert!(v < -0.5, "insults should be strongly negative, got {v}");
+        assert!(i > 0.3, "insults should have high intensity, got {i}");
+    }
+
+    #[test]
+    fn test_single_insult() {
+        let (v, _) = analyze_sentiment("你真是个白痴");
+        assert!(v < -0.3, "single insult should be negative, got {v}");
     }
 
     #[test]
