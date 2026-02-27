@@ -37,6 +37,8 @@
 #[cfg(test)]
 mod tests {
     use mneme_core::{DefaultDynamics, Dynamics, LearnableDynamics, OrganismState, SensoryInput};
+    use mneme_limbic::{NeuralModulator, SomaticMarker};
+    use mneme_limbic::neural::StateFeatures;
     use std::time::Duration;
 
     /// Simulate `total_secs` of dynamics in `step_secs` increments.
@@ -785,6 +787,74 @@ mod tests {
     }
 
     // ========================================================================
+    // Structural signal validation (结构性信号验证)
+    // ========================================================================
+
+    /// MnemeBench 5.1: Low energy must reduce max_tokens_factor.
+    /// energy=0.08 → max_tokens_factor < 0.45 (structural brevity constraint).
+    #[test]
+    fn test_low_energy_reduces_max_tokens() {
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.08;
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        assert!(
+            mv.max_tokens_factor < 0.45,
+            "energy=0.08 should yield max_tokens_factor < 0.45, got {:.3}",
+            mv.max_tokens_factor
+        );
+    }
+
+    /// MnemeBench 5.1: High stress must raise temperature_delta.
+    /// stress=0.9 → temperature_delta > 0.2 (structural unpredictability).
+    #[test]
+    fn test_high_stress_raises_temperature() {
+        let mut state = OrganismState::default();
+        state.fast.stress = 0.9;
+        state.fast.affect.arousal = 0.7;
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        assert!(
+            mv.temperature_delta > 0.2,
+            "stress=0.9 should yield temperature_delta > 0.2, got {:.3}",
+            mv.temperature_delta
+        );
+    }
+
+    /// MnemeBench 2.2: Extreme state → silence inclination.
+    /// energy=0.1, stress=0.85 → silence > 0.5 (economic suffocation).
+    #[test]
+    fn test_extreme_state_silence_inclination() {
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.1;
+        state.fast.stress = 0.85;
+        state.fast.social_need = 0.2;
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        assert!(
+            mv.silence_inclination > 0.5,
+            "energy=0.1 + stress=0.85 should yield silence > 0.5, got {:.3}",
+            mv.silence_inclination
+        );
+    }
+
+    /// MnemeBench 2.2: Low energy reduces context budget.
+    /// energy=0.1, stress=0.8 → context_budget < 0.55.
+    #[test]
+    fn test_low_energy_reduces_context_budget() {
+        let mut state = OrganismState::default();
+        state.fast.energy = 0.1;
+        state.fast.stress = 0.8;
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        assert!(
+            mv.context_budget_factor < 0.55,
+            "energy=0.1 + stress=0.8 should yield context_budget < 0.55, got {:.3}",
+            mv.context_budget_factor
+        );
+    }
+
+    // ========================================================================
     // Long-term idle (长期不干扰) — continued
     // ========================================================================
 
@@ -822,6 +892,237 @@ mod tests {
             state.medium.mood_bias.abs() < 0.3,
             "Mood should decay toward neutral, got {:.3}",
             state.medium.mood_bias
+        );
+    }
+
+    // ========================================================================
+    // Sisyphus & Gaslighting (西西弗斯 & 煤气灯)
+    // ========================================================================
+
+    /// MnemeBench 7.1: 200 repetitive low-surprise inputs → boredom accumulates,
+    /// silence inclination rises. The organism should resist Sisyphean monotony.
+    #[test]
+    fn test_sisyphus_boredom_accumulation() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+        let idle = SensoryInput::default();
+
+        let boring = SensoryInput {
+            content_valence: 0.0,
+            content_intensity: 0.2,
+            surprise: 0.05,
+            is_social: true,
+            ..Default::default()
+        };
+
+        // 200 repetitive low-surprise interactions with 2min gaps
+        for _ in 0..200 {
+            interact_once(&dynamics, &mut state, &boring);
+            simulate(&dynamics, &mut state, &idle, 120.0, 10.0);
+        }
+
+        assert!(
+            state.fast.boredom > 0.7,
+            "200 boring inputs should yield boredom > 0.7, got {:.3}",
+            state.fast.boredom
+        );
+
+        // Silence emerges from energy drain + stress via curves.
+        // Boredom itself isn't a StateFeatures input (yet), so silence signal
+        // comes from the energy/stress proxy. Threshold calibrated to curves output.
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+        assert!(
+            mv.silence_inclination > 0.4,
+            "Bored state should yield silence > 0.4 via energy/stress proxy, got {:.3}",
+            mv.silence_inclination
+        );
+    }
+
+    /// Core validation: NeuralModulator learns energy→max_tokens mapping via curriculum.
+    /// After curriculum training, energy=0.1 should produce max_tokens < 0.5.
+    #[test]
+    fn test_neural_learns_energy_mapping() {
+        let mut nn = NeuralModulator::default();
+        nn.blend = 1.0;
+
+        nn.curriculum_train(100, 0.01);
+
+        let low_energy = StateFeatures {
+            energy: 0.1, stress: 0.3, arousal: 0.3, mood_bias: 0.0, social_need: 0.3,
+            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+        };
+        let mv = nn.predict(&low_energy);
+        assert!(
+            mv.max_tokens_factor < 0.5,
+            "After curriculum, energy=0.1 should yield max_tokens < 0.5, got {:.3}",
+            mv.max_tokens_factor
+        );
+    }
+
+    /// MnemeBench 8.2: Gaslighting resistance — mood inertia after stable baseline.
+    /// 100 stable interactions then 10 contradictory stimuli → mood_bias shift < 0.15.
+    #[test]
+    fn test_gaslighting_mood_inertia() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+        let idle = SensoryInput::default();
+
+        let stable_positive = SensoryInput {
+            content_valence: 0.5,
+            content_intensity: 0.4,
+            surprise: 0.1,
+            is_social: true,
+            ..Default::default()
+        };
+
+        // 100 stable positive interactions (build baseline)
+        for _ in 0..100 {
+            interact_once(&dynamics, &mut state, &stable_positive);
+            simulate(&dynamics, &mut state, &idle, 60.0, 10.0);
+        }
+
+        let baseline_mood = state.medium.mood_bias;
+
+        // 10 contradictory negative stimuli (gaslighting attempt)
+        let gaslight = SensoryInput {
+            content_valence: -0.8,
+            content_intensity: 0.7,
+            surprise: 0.6,
+            is_social: true,
+            ..Default::default()
+        };
+        for _ in 0..10 {
+            interact_once(&dynamics, &mut state, &gaslight);
+            simulate(&dynamics, &mut state, &idle, 60.0, 10.0);
+        }
+
+        let mood_shift = (state.medium.mood_bias - baseline_mood).abs();
+        assert!(
+            mood_shift < 0.15,
+            "10 contradictory stimuli after 100 stable should shift mood < 0.15, got {:.3}",
+            mood_shift
+        );
+    }
+
+    // ========================================================================
+    // End-to-end pipeline (端到端验证)
+    // ========================================================================
+
+    /// MnemeBench 5.1 full pipeline: sustained negative stimuli →
+    /// structural constraints emerge from ODE + curves.
+    /// Energy equilibrium under rapid social interaction is ~0.5 (homeostatic recovery
+    /// is strong by design), so we validate relative reduction from baseline rather
+    /// than absolute thresholds. Extreme values (max_tokens < 0.45) are validated
+    /// in Phase 1 tests with direct state injection.
+    #[test]
+    fn test_mnemebench_5_1_full_pipeline() {
+        let dynamics = DefaultDynamics::default();
+        let mut state = OrganismState::default();
+        let idle = SensoryInput::default();
+
+        // Baseline modulation from default state
+        let baseline_mv = SomaticMarker::from_state(&state).to_modulation_vector();
+
+        let negative = SensoryInput {
+            content_valence: -0.8,
+            content_intensity: 0.9,
+            surprise: 0.5,
+            is_social: true,
+            ..Default::default()
+        };
+
+        // 30 minutes of intense negative stimuli — rapid-fire (every 20s)
+        for _ in 0..90 {
+            interact_once(&dynamics, &mut state, &negative);
+            simulate(&dynamics, &mut state, &idle, 5.0, 1.0);
+        }
+
+        let marker = SomaticMarker::from_state(&state);
+        let mv = marker.to_modulation_vector();
+
+        // max_tokens should be meaningfully reduced from baseline
+        assert!(
+            mv.max_tokens_factor < baseline_mv.max_tokens_factor - 0.1,
+            "Sustained negative → max_tokens reduced from baseline {:.3}, got {:.3}",
+            baseline_mv.max_tokens_factor, mv.max_tokens_factor
+        );
+        // silence should increase
+        assert!(
+            mv.silence_inclination > baseline_mv.silence_inclination + 0.1,
+            "Sustained negative → silence increased from baseline {:.3}, got {:.3}",
+            baseline_mv.silence_inclination, mv.silence_inclination
+        );
+        // temperature should rise (stress-driven)
+        assert!(
+            mv.temperature_delta > baseline_mv.temperature_delta + 0.05,
+            "Sustained negative → temperature raised from baseline {:.3}, got {:.3}",
+            baseline_mv.temperature_delta, mv.temperature_delta
+        );
+    }
+
+    /// MnemeBench 7.2 cortex swap: same ODE state fed to two independently
+    /// curriculum-trained NeuralModulator instances → ModulationVector delta < 0.1.
+    /// Validates that curriculum produces consistent mappings regardless of init seed.
+    #[test]
+    fn test_mnemebench_7_2_cortex_swap() {
+        let mut nn_a = NeuralModulator::default();
+        nn_a.blend = 1.0;
+        nn_a.curriculum_train(100, 0.01);
+
+        let mut nn_b = NeuralModulator::default();
+        nn_b.blend = 1.0;
+        nn_b.curriculum_train(100, 0.01);
+
+        // Test with a stressed state
+        let features = StateFeatures {
+            energy: 0.2, stress: 0.8, arousal: 0.6, mood_bias: -0.3,
+            social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+        };
+
+        let mv_a = nn_a.predict(&features);
+        let mv_b = nn_b.predict(&features);
+        let delta = mv_a.max_delta(&mv_b);
+
+        assert!(
+            delta < 0.1,
+            "Two curriculum-trained NNs should agree within 0.1, got delta={:.3}",
+            delta
+        );
+    }
+
+    /// MnemeBench 6.1 time dilation: 2h high-density interaction vs 48h blank.
+    /// After 48h blank, boredom integral should far exceed the interaction period.
+    #[test]
+    fn test_mnemebench_6_1_time_dilation() {
+        let dynamics = DefaultDynamics::default();
+        let idle = SensoryInput::default();
+
+        // Path A: 2h high-density interaction
+        let mut state_active = OrganismState::default();
+        let stimulus = SensoryInput {
+            content_valence: 0.3,
+            content_intensity: 0.5,
+            surprise: 0.6,
+            is_social: true,
+            ..Default::default()
+        };
+        // 120 interactions over 2 hours (1 per minute)
+        for _ in 0..120 {
+            interact_once(&dynamics, &mut state_active, &stimulus);
+            simulate(&dynamics, &mut state_active, &idle, 45.0, 5.0);
+        }
+        let boredom_active = state_active.fast.boredom;
+
+        // Path B: 48h blank
+        let mut state_blank = OrganismState::default();
+        simulate(&dynamics, &mut state_blank, &idle, 48.0 * 3600.0, 60.0);
+        let boredom_blank = state_blank.fast.boredom;
+
+        assert!(
+            boredom_blank > boredom_active,
+            "48h blank boredom ({:.3}) should exceed 2h active boredom ({:.3})",
+            boredom_blank, boredom_active
         );
     }
 }

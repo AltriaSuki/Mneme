@@ -153,6 +153,7 @@ impl LlmClient for AnthropicClient {
             body["tools"] = serde_json::to_value(&tools)?;
         }
         body["temperature"] = serde_json::json!(params.temperature);
+        tracing::info!("Anthropic API request: model={}, max_tokens={}, temperature={:.2}", self.model, params.max_tokens, params.temperature);
         if let Some(ref tc) = params.tool_choice {
             body["tool_choice"] = serde_json::to_value(tc)?;
         }

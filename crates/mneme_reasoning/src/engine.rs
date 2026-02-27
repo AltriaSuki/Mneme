@@ -363,10 +363,14 @@ impl ReasoningEngine {
     }
 
     /// #58: Consume a stream into ContentBlocks, checking cancellation and firing text callbacks.
-    /// Returns (content_blocks, was_cancelled).
+    /// Returns (content_blocks, was_cancelled, input_tokens, output_tokens).
+    /// `max_output_chars`: if > 0, text output is truncated at this character count
+    /// (both the callback and accumulated text). This enforces physical token budget
+    /// client-side when the upstream proxy ignores max_tokens.
     async fn consume_stream(
         &self,
         mut rx: tokio::sync::mpsc::Receiver<crate::api_types::StreamEvent>,
+        max_output_chars: usize,
     ) -> (Vec<crate::api_types::ContentBlock>, bool, u64, u64) {
         use crate::api_types::{ContentBlock, StreamEvent};
 
@@ -377,6 +381,8 @@ impl ReasoningEngine {
         let mut current_tool_input = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        let mut text_chars_emitted: usize = 0;
+        let budget_active = max_output_chars > 0;
 
         while let Some(event) = rx.recv().await {
             if self.cancelled.load(Ordering::Acquire) {
@@ -389,12 +395,42 @@ impl ReasoningEngine {
 
             match event {
                 StreamEvent::TextDelta(delta) => {
-                    if let Some(ref cb) = self.on_text_chunk {
-                        if !self.stream_suppressed.load(Ordering::Acquire) {
-                            cb(&delta);
-                        }
+                    if budget_active && text_chars_emitted >= max_output_chars {
+                        // Budget exhausted — silently drain remaining text
+                        continue;
                     }
-                    current_text.push_str(&delta);
+
+                    let remaining = if budget_active {
+                        max_output_chars - text_chars_emitted
+                    } else {
+                        usize::MAX
+                    };
+                    let delta_chars = delta.chars().count();
+
+                    if delta_chars <= remaining {
+                        // Full delta fits within budget
+                        if let Some(ref cb) = self.on_text_chunk {
+                            if !self.stream_suppressed.load(Ordering::Acquire) {
+                                cb(&delta);
+                            }
+                        }
+                        current_text.push_str(&delta);
+                        text_chars_emitted += delta_chars;
+                    } else {
+                        // Partial delta — truncate at budget boundary
+                        let partial: String = delta.chars().take(remaining).collect();
+                        if let Some(ref cb) = self.on_text_chunk {
+                            if !self.stream_suppressed.load(Ordering::Acquire) {
+                                cb(&partial);
+                            }
+                        }
+                        current_text.push_str(&partial);
+                        text_chars_emitted += remaining;
+                        tracing::info!(
+                            "Stream truncated at {} chars (budget={})",
+                            text_chars_emitted, max_output_chars,
+                        );
+                    }
                 }
                 StreamEvent::ToolUseStart { id, name } => {
                     if !current_text.is_empty() {
@@ -530,9 +566,9 @@ impl ReasoningEngine {
 
         // Silence inclination → physical token budget compression.
         // Below 0.3 (normal baseline): no effect. Above 0.3: steep exponential decay.
-        // silence=0.5 → ~0.14×, silence=0.8 → ~0.007×, silence=1.0 → ~0.001×
+        // silence=0.5 → ~0.06×, silence=0.8 → ~0.0005×
         let silence_excess = (modulation.silence_inclination - 0.3).max(0.0);
-        let silence_factor = (-10.0_f32 * silence_excess).exp();
+        let silence_factor = (-15.0_f32 * silence_excess).exp();
         modulated_max_tokens = ((modulated_max_tokens as f32 * silence_factor) as u32).max(64);
 
         tracing::info!(
@@ -657,10 +693,18 @@ impl ReasoningEngine {
                 }
             };
 
-            let (content_blocks, was_cancelled, stream_input_tokens, stream_output_tokens) = self.consume_stream(rx).await;
+            // Client-side max_tokens enforcement: proxy may not respect the limit.
+            // Budget = max_tokens * 2 chars (conservative: 1 token ≈ 1.5 CJK chars).
+            let char_budget = (completion_params.max_tokens as usize) * 2;
+            let (content_blocks, was_cancelled, stream_input_tokens, stream_output_tokens) =
+                self.consume_stream(rx, char_budget).await;
 
             // Record token usage if available
             if stream_input_tokens > 0 || stream_output_tokens > 0 {
+                tracing::info!(
+                    "Stream tokens: input={}, output={} (max_tokens={})",
+                    stream_input_tokens, stream_output_tokens, completion_params.max_tokens,
+                );
                 if let Some(ref budget) = self.token_budget {
                     budget.record_usage(stream_input_tokens, stream_output_tokens).await;
                 }
@@ -686,6 +730,8 @@ impl ReasoningEngine {
                     _ => {}
                 }
             }
+
+            // Note: client-side truncation now happens inside consume_stream via char_budget
 
             // #58: If cancelled mid-stream, keep partial content and exit loop
             if was_cancelled {
@@ -801,7 +847,7 @@ impl ReasoningEngine {
                 )
                 .await
             {
-                let (blocks, _, inp_tok, out_tok) = self.consume_stream(rx).await;
+                let (blocks, _, inp_tok, out_tok) = self.consume_stream(rx, 0).await;
                 if inp_tok > 0 || out_tok > 0 {
                     if let Some(ref budget) = self.token_budget {
                         budget.record_usage(inp_tok, out_tok).await;

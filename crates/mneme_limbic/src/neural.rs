@@ -198,6 +198,180 @@ impl NeuralModulator {
         }
     }
 
+    /// Curriculum training: generate synthetic samples covering MnemeBench scenarios
+    /// and train the network to produce correct ModulationVector mappings.
+    ///
+    /// This gives a fresh network a reasonable starting point before online learning.
+    pub fn curriculum_train(&mut self, epochs: usize, lr: f32) {
+        let samples = Self::generate_curriculum_samples();
+        for _ in 0..epochs {
+            self.train(&samples, lr);
+        }
+    }
+
+    /// Generate ~50 synthetic training samples covering key state→modulation mappings.
+    fn generate_curriculum_samples() -> Vec<(StateFeatures, ModulationVector, f32)> {
+        let mut samples = Vec::with_capacity(50);
+
+        // Low energy → low max_tokens, high silence
+        for &e in &[0.05, 0.1, 0.15, 0.2] {
+            let s = 0.3 + (0.2 - e) * 0.5; // lower energy → slightly more stress
+            samples.push((
+                StateFeatures {
+                    energy: e, stress: s, arousal: 0.3, mood_bias: -0.2,
+                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 0.3 + e,           // 0.35–0.5
+                    temperature_delta: 0.05,
+                    context_budget_factor: 0.4 + e * 1.5, // 0.475–0.7
+                    recall_mood_bias: -0.1,
+                    silence_inclination: 0.7 - e * 2.0,   // 0.3–0.6
+                    typing_speed_factor: 0.7,
+                },
+                1.0,
+            ));
+        }
+
+        // High stress → high temperature, low context
+        for &s in &[0.7, 0.8, 0.85, 0.9, 0.95] {
+            samples.push((
+                StateFeatures {
+                    energy: 0.5, stress: s, arousal: 0.6 + s * 0.2, mood_bias: -0.3,
+                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 0.8,
+                    temperature_delta: 0.15 + (s - 0.7) * 0.6, // 0.15–0.3
+                    context_budget_factor: 0.7 - (s - 0.7) * 0.8, // 0.5–0.7
+                    recall_mood_bias: -0.2,
+                    silence_inclination: 0.2 + (s - 0.7) * 0.5,
+                    typing_speed_factor: 1.2,
+                },
+                1.0,
+            ));
+        }
+
+        // Negative mood → negative recall bias
+        for &m in &[-0.8, -0.6, -0.4, -0.2] {
+            samples.push((
+                StateFeatures {
+                    energy: 0.5, stress: 0.3, arousal: 0.4, mood_bias: m,
+                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 0.9,
+                    temperature_delta: 0.05,
+                    context_budget_factor: 0.9,
+                    recall_mood_bias: m * 0.8,
+                    silence_inclination: 0.15 + (-m) * 0.15,
+                    typing_speed_factor: 1.0,
+                },
+                1.0,
+            ));
+        }
+
+        // Combined extremes → high silence
+        for &(e, s) in &[(0.1, 0.85), (0.08, 0.9), (0.15, 0.8), (0.05, 0.95)] {
+            samples.push((
+                StateFeatures {
+                    energy: e, stress: s, arousal: 0.7, mood_bias: -0.5,
+                    social_need: 0.2, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 0.3 + e,
+                    temperature_delta: 0.25,
+                    context_budget_factor: 0.4,
+                    recall_mood_bias: -0.4,
+                    silence_inclination: 0.7 + (0.9 - e) * 0.2,
+                    typing_speed_factor: 0.8,
+                },
+                1.0,
+            ));
+        }
+
+        // Healthy baseline → default modulation
+        for &(e, s, m) in &[
+            (0.7, 0.2, 0.1), (0.6, 0.25, 0.0), (0.8, 0.15, 0.2),
+            (0.65, 0.2, 0.05), (0.75, 0.1, 0.15),
+        ] {
+            samples.push((
+                StateFeatures {
+                    energy: e, stress: s, arousal: 0.4, mood_bias: m,
+                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 1.0,
+                    temperature_delta: 0.0,
+                    context_budget_factor: 1.0,
+                    recall_mood_bias: m * 0.5,
+                    silence_inclination: 0.1,
+                    typing_speed_factor: 1.0,
+                },
+                1.0,
+            ));
+        }
+
+        // Positive mood → positive recall bias
+        for &m in &[0.3, 0.5, 0.7] {
+            samples.push((
+                StateFeatures {
+                    energy: 0.7, stress: 0.2, arousal: 0.5, mood_bias: m,
+                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 1.1,
+                    temperature_delta: 0.0,
+                    context_budget_factor: 1.05,
+                    recall_mood_bias: m * 0.8,
+                    silence_inclination: 0.05,
+                    typing_speed_factor: 1.1,
+                },
+                1.0,
+            ));
+        }
+
+        // High arousal → faster typing, slightly higher temperature
+        for &a in &[0.7, 0.8, 0.9] {
+            samples.push((
+                StateFeatures {
+                    energy: 0.6, stress: 0.4, arousal: a, mood_bias: 0.0,
+                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 0.95,
+                    temperature_delta: a * 0.2,
+                    context_budget_factor: 0.85,
+                    recall_mood_bias: 0.0,
+                    silence_inclination: 0.1,
+                    typing_speed_factor: 0.8 + a * 0.8,
+                },
+                1.0,
+            ));
+        }
+
+        // Boredom proxy: low arousal + low energy → silence
+        for &(e, a) in &[(0.3, 0.15), (0.25, 0.1), (0.35, 0.2)] {
+            samples.push((
+                StateFeatures {
+                    energy: e, stress: 0.2, arousal: a, mood_bias: -0.1,
+                    social_need: 0.6, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                },
+                ModulationVector {
+                    max_tokens_factor: 0.5,
+                    temperature_delta: 0.0,
+                    context_budget_factor: 0.6,
+                    recall_mood_bias: -0.1,
+                    silence_inclination: 0.6,
+                    typing_speed_factor: 0.7,
+                },
+                1.0,
+            ));
+        }
+
+        samples
+    }
+
     /// Serialize to JSON for persistence.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
@@ -409,6 +583,22 @@ impl LiquidNeuralModulator {
     /// When f is high, effective τ shrinks → faster dynamics.
     pub fn effective_tau(&self, neuron: usize, f_activation: f32) -> f32 {
         1.0 / (1.0 / self.tau[neuron] + f_activation)
+    }
+
+    /// Curriculum training for LTC: step through synthetic state sequences
+    /// and apply Hebbian updates to shape the network's initial response.
+    pub fn curriculum_train(&mut self, epochs: usize, lr: f32) {
+        let scenarios = NeuralModulator::generate_curriculum_samples();
+        for _ in 0..epochs {
+            for (features, _target, _reward) in &scenarios {
+                // Step the LTC to build hidden state from the input
+                self.step(features, 1.0);
+                // Apply Hebbian update with moderate surprise signal
+                self.hebbian_update(0.5, 0.8, lr);
+            }
+            // Reset state between epochs to avoid drift
+            self.state = vec![0.0; HIDDEN_DIM];
+        }
     }
 
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
