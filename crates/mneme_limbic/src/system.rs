@@ -264,6 +264,15 @@ impl LimbicSystem {
     /// we skip smoothing (startle response / sudden shock).
     pub async fn get_modulation_vector(&self) -> ModulationVector {
         let marker = self.get_somatic_marker().await;
+        self.compute_modulation_for(&marker).await
+    }
+
+    /// Compute modulation from a specific somatic marker (e.g., pre-ODE snapshot).
+    ///
+    /// Same pipeline as `get_modulation_vector()` but uses the provided marker
+    /// instead of reading current state. This fixes the timing issue where
+    /// post-ODE recovery would wash out extreme states before modulation.
+    pub async fn compute_modulation_for(&self, marker: &SomaticMarker) -> ModulationVector {
         let curves = self.curves.read().await;
         let thresholds = self.thresholds.read().await;
         let curves_mv = marker.to_modulation_vector_full(&curves, &thresholds);

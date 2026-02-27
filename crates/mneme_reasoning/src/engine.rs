@@ -511,7 +511,8 @@ impl ReasoningEngine {
             .curiosity_vector
             .top_interests(5);
         // === Compute Modulation Vector (temporally smoothed — emotion inertia) ===
-        let modulation = self.limbic.get_modulation_vector().await;
+        // Use pre-ODE somatic marker so extreme states aren't washed out by tick recovery.
+        let modulation = self.limbic.compute_modulation_for(&somatic_marker).await;
 
         tracing::info!(
             "Modulation: max_tokens×{:.2}, temp_delta={:+.2}, context×{:.2}, silence={:.2}",
