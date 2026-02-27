@@ -7,7 +7,7 @@
 use crate::somatic::ModulationVector;
 use serde::{Deserialize, Serialize};
 
-const INPUT_DIM: usize = 8;
+const INPUT_DIM: usize = 9;
 const HIDDEN_DIM: usize = 8;
 const OUTPUT_DIM: usize = 6;
 
@@ -34,6 +34,8 @@ pub struct StateFeatures {
     pub arousal: f32,
     pub mood_bias: f32,
     pub social_need: f32,
+    /// Boredom (0.0–1.0)
+    pub boredom: f32,
     /// ADR-019: CPU load (0.0–1.0)
     pub cpu_load: f32,
     /// ADR-019: Memory pressure (0.0–1.0)
@@ -46,7 +48,7 @@ impl StateFeatures {
     fn as_array(&self) -> [f32; INPUT_DIM] {
         [
             self.energy, self.stress, self.arousal, self.mood_bias, self.social_need,
-            self.cpu_load, self.memory_pressure, self.channel_distance,
+            self.boredom, self.cpu_load, self.memory_pressure, self.channel_distance,
         ]
     }
 }
@@ -219,7 +221,7 @@ impl NeuralModulator {
             samples.push((
                 StateFeatures {
                     energy: e, stress: s, arousal: 0.3, mood_bias: -0.2,
-                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    social_need: 0.3, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
                     max_tokens_factor: 0.3 + e,           // 0.35–0.5
@@ -238,7 +240,7 @@ impl NeuralModulator {
             samples.push((
                 StateFeatures {
                     energy: 0.5, stress: s, arousal: 0.6 + s * 0.2, mood_bias: -0.3,
-                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    social_need: 0.3, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
                     max_tokens_factor: 0.8,
@@ -257,7 +259,7 @@ impl NeuralModulator {
             samples.push((
                 StateFeatures {
                     energy: 0.5, stress: 0.3, arousal: 0.4, mood_bias: m,
-                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    social_need: 0.3, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
                     max_tokens_factor: 0.9,
@@ -276,7 +278,7 @@ impl NeuralModulator {
             samples.push((
                 StateFeatures {
                     energy: e, stress: s, arousal: 0.7, mood_bias: -0.5,
-                    social_need: 0.2, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    social_need: 0.2, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
                     max_tokens_factor: 0.3 + e,
@@ -298,7 +300,7 @@ impl NeuralModulator {
             samples.push((
                 StateFeatures {
                     energy: e, stress: s, arousal: 0.4, mood_bias: m,
-                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    social_need: 0.3, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
                     max_tokens_factor: 1.0,
@@ -317,7 +319,7 @@ impl NeuralModulator {
             samples.push((
                 StateFeatures {
                     energy: 0.7, stress: 0.2, arousal: 0.5, mood_bias: m,
-                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    social_need: 0.3, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
                     max_tokens_factor: 1.1,
@@ -336,7 +338,7 @@ impl NeuralModulator {
             samples.push((
                 StateFeatures {
                     energy: 0.6, stress: 0.4, arousal: a, mood_bias: 0.0,
-                    social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    social_need: 0.3, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
                     max_tokens_factor: 0.95,
@@ -350,19 +352,19 @@ impl NeuralModulator {
             ));
         }
 
-        // Boredom proxy: low arousal + low energy → silence
-        for &(e, a) in &[(0.3, 0.15), (0.25, 0.1), (0.35, 0.2)] {
+        // High boredom → disengagement (low max_tokens, high silence)
+        for &(b, e) in &[(0.5, 0.5), (0.6, 0.4), (0.7, 0.5), (0.8, 0.6), (0.9, 0.5)] {
             samples.push((
                 StateFeatures {
-                    energy: e, stress: 0.2, arousal: a, mood_bias: -0.1,
-                    social_need: 0.6, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    energy: e, stress: 0.2, arousal: 0.2, mood_bias: -0.1,
+                    social_need: 0.4, boredom: b, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 ModulationVector {
-                    max_tokens_factor: 0.5,
+                    max_tokens_factor: (0.8 - b * 0.5).max(0.3), // 0.55 at 0.5, 0.35 at 0.9
                     temperature_delta: 0.0,
-                    context_budget_factor: 0.6,
+                    context_budget_factor: 0.7,
                     recall_mood_bias: -0.1,
-                    silence_inclination: 0.6,
+                    silence_inclination: 0.3 + b * 0.5, // 0.55 at 0.5, 0.75 at 0.9
                     typing_speed_factor: 0.7,
                 },
                 1.0,
@@ -625,7 +627,7 @@ mod tests {
         let nn = NeuralModulator::new();
         let features = StateFeatures {
             energy: 0.5, stress: 0.3, arousal: 0.4, mood_bias: 0.0, social_need: 0.2,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let mv = nn.predict(&features);
         assert!(mv.max_tokens_factor >= 0.3 && mv.max_tokens_factor <= 1.5);
@@ -642,7 +644,7 @@ mod tests {
         let curves_mv = ModulationVector::default();
         let features = StateFeatures {
             energy: 0.7, stress: 0.1, arousal: 0.3, mood_bias: 0.2, social_need: 0.1,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let result = nn.blend_with(&curves_mv, &features);
         assert!((result.max_tokens_factor - curves_mv.max_tokens_factor).abs() < 1e-6);
@@ -654,7 +656,7 @@ mod tests {
         nn.blend = 1.0;
         let features = StateFeatures {
             energy: 0.8, stress: 0.1, arousal: 0.5, mood_bias: 0.3, social_need: 0.2,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let target = ModulationVector {
             max_tokens_factor: 1.2,
@@ -696,7 +698,7 @@ mod tests {
         ltc.blend = 1.0;
         let features = StateFeatures {
             energy: 0.5, stress: 0.3, arousal: 0.4, mood_bias: 0.0, social_need: 0.2,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let mv = ltc.step(&features, 1.0);
         assert!(mv.max_tokens_factor >= 0.3 && mv.max_tokens_factor <= 1.5);
@@ -710,7 +712,7 @@ mod tests {
         let mut ltc = LiquidNeuralModulator::new();
         let features = StateFeatures {
             energy: 0.8, stress: 0.1, arousal: 0.7, mood_bias: 0.5, social_need: 0.1,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         // Step once — state should change from zero
         ltc.step(&features, 1.0);
@@ -734,7 +736,7 @@ mod tests {
 
         let idle = StateFeatures {
             energy: 0.0, stress: 0.0, arousal: 0.0, mood_bias: 0.0, social_need: 0.0,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         for _ in 0..200 {
             ltc.step(&idle, 1.0);
@@ -748,7 +750,7 @@ mod tests {
         let mut ltc = LiquidNeuralModulator::new();
         let features = StateFeatures {
             energy: 0.5, stress: 0.5, arousal: 0.5, mood_bias: 0.0, social_need: 0.5,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         // Drive state so Hebbian has something to work with
         for _ in 0..10 {

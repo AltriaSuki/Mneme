@@ -793,6 +793,7 @@ impl OrganismCoordinator {
         let arousal = state.fast.affect.arousal;
         let mood_bias = state.medium.mood_bias;
         let social_need = state.fast.social_need;
+        let boredom = state.fast.boredom;
         drop(state);
 
         // Persist sample for batch learning during sleep
@@ -812,6 +813,7 @@ impl OrganismCoordinator {
         if feedback_valence.abs() > 0.2 {
             let features = mneme_limbic::neural::StateFeatures {
                 energy, stress, arousal, mood_bias, social_need,
+                boredom,
                 cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
             };
             // Online NeuralModulator update (small learning rate)
@@ -1064,6 +1066,7 @@ impl OrganismCoordinator {
                             arousal: s.arousal,
                             mood_bias: s.mood_bias,
                             social_need: s.social_need,
+                            boredom: 0.0,
                             cpu_load: 0.0,
                             memory_pressure: 0.0,
                             channel_distance: 0.0,
@@ -1181,7 +1184,7 @@ impl OrganismCoordinator {
                 mneme_limbic::neural::StateFeatures {
                     energy: s.energy, stress: s.stress, arousal: s.arousal,
                     mood_bias: s.mood_bias, social_need: s.social_need,
-                    cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 s.modulation.clone(),
                 s.feedback_valence,

@@ -950,7 +950,7 @@ mod tests {
 
         let low_energy = StateFeatures {
             energy: 0.1, stress: 0.3, arousal: 0.3, mood_bias: 0.0, social_need: 0.3,
-            cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
         let mv = nn.predict(&low_energy);
         assert!(
@@ -1077,7 +1077,7 @@ mod tests {
         // Test with a stressed state
         let features = StateFeatures {
             energy: 0.2, stress: 0.8, arousal: 0.6, mood_bias: -0.3,
-            social_need: 0.3, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+            social_need: 0.3, boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
         };
 
         let mv_a = nn_a.predict(&features);

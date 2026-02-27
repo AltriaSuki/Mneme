@@ -286,6 +286,7 @@ impl LimbicSystem {
             arousal: marker.affect.arousal,
             mood_bias: marker.mood_bias,
             social_need: marker.social_need,
+            boredom: marker.boredom,
             cpu_load: marker.cpu_load,
             memory_pressure: marker.memory_pressure,
             channel_distance: marker.channel_distance,

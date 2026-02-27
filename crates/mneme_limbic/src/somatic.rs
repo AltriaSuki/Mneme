@@ -231,6 +231,9 @@ pub struct SomaticMarker {
     /// Curiosity (0.0 - 1.0)
     pub curiosity: f32,
 
+    /// Boredom (0.0 - 1.0)
+    pub boredom: f32,
+
     /// Mood bias (-1.0 to 1.0)
     pub mood_bias: f32,
 
@@ -275,6 +278,7 @@ impl SomaticMarker {
             stress: state.fast.stress,
             social_need: state.fast.social_need,
             curiosity: state.fast.curiosity,
+            boredom: state.fast.boredom,
             mood_bias: state.medium.mood_bias,
             attachment_style: state.medium.attachment.style(),
             openness: state.medium.openness,
@@ -401,6 +405,9 @@ impl SomaticMarker {
             curves.energy_to_max_tokens.1,
             self.energy,
         );
+        // Boredom penalty: above 0.4, progressively reduce willingness to produce output
+        let boredom_token_penalty = (self.boredom - 0.4).max(0.0) * 0.5; // 0.0 at 0.4, 0.3 at 1.0
+        let max_tokens_factor = (max_tokens_factor - boredom_token_penalty).max(0.3);
 
         let stress_temp = lerp(
             curves.stress_to_temperature.0,
@@ -438,13 +445,14 @@ impl SomaticMarker {
             self.social_need,
         );
         let energy_silence = (1.0 - self.energy) * 0.3;
+        let boredom_silence = (self.boredom - 0.3).max(0.0) * 0.4; // 0.0 at 0.3, 0.28 at 1.0
         let stress_silence = if self.stress > t.stress_silence_min {
             0.2
         } else {
             0.0
         };
         let silence_inclination =
-            (energy_silence + social_silence + stress_silence).clamp(0.0, 1.0);
+            (energy_silence + boredom_silence + social_silence + stress_silence).clamp(0.0, 1.0);
 
         let typing_speed_factor = lerp(
             curves.arousal_to_typing.0,
