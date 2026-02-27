@@ -1091,18 +1091,29 @@ impl ReasoningEngine {
 
     /// B-18: Extract file paths created by a shell command.
     /// Detects patterns like `cat > /path`, `echo ... > /path`, heredocs, `tee /path`.
-    fn extract_created_paths(cmd: &str) -> Vec<String> {
+    pub(crate) fn extract_created_paths(cmd: &str) -> Vec<String> {
         let mut paths = Vec::new();
         // Pattern: redirect output to file (> or >>)
-        for part in cmd.split('>') {
-            // Skip the first segment (before any >)
-            if std::ptr::eq(part, cmd.split('>').next().unwrap_or("")) {
-                continue;
-            }
-            let trimmed = part.trim().split_whitespace().next().unwrap_or("");
-            let path = trimmed.trim_matches(|c: char| c == '\'' || c == '"');
-            if path.starts_with('/') {
-                paths.push(path.to_string());
+        // Use regex-like manual scan to skip stderr redirects (2>, 2>>)
+        let bytes = cmd.as_bytes();
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b'>' {
+                // Skip stderr redirects: char before '>' is '2'
+                if i > 0 && bytes[i - 1] == b'2' {
+                    continue;
+                }
+                // Skip '>>' second char
+                if i > 0 && bytes[i - 1] == b'>' {
+                    continue;
+                }
+                let after = &cmd[i + 1..];
+                // Skip leading '>' for append (>>)
+                let after = after.strip_prefix('>').unwrap_or(after);
+                let token = after.trim().split_whitespace().next().unwrap_or("");
+                let path = token.trim_matches(|c: char| c == '\'' || c == '"');
+                if path.starts_with('/') && path != "/dev/null" {
+                    paths.push(path.to_string());
+                }
             }
         }
         // Pattern: tee /path
@@ -1110,7 +1121,7 @@ impl ReasoningEngine {
             let after = &cmd[idx + 4..];
             let path = after.trim().split_whitespace().next().unwrap_or("");
             let path = path.trim_matches(|c: char| c == '\'' || c == '"');
-            if path.starts_with('/') {
+            if path.starts_with('/') && path != "/dev/null" {
                 paths.push(path.to_string());
             }
         }
@@ -2514,5 +2525,37 @@ mod tests {
     fn test_topic_overlap_empty() {
         assert_eq!(topic_overlap("", "hello"), 0.0);
         assert_eq!(topic_overlap("", ""), 0.0);
+    }
+
+    // --- Artifact path extraction tests ---
+
+    #[test]
+    fn test_extract_created_paths_basic_redirect() {
+        let paths = ReasoningEngine::extract_created_paths("echo hello > /tmp/test.txt");
+        assert_eq!(paths, vec!["/tmp/test.txt"]);
+    }
+
+    #[test]
+    fn test_extract_created_paths_stderr_ignored() {
+        let paths = ReasoningEngine::extract_created_paths("ls 2>/dev/null");
+        assert!(paths.is_empty(), "stderr redirect to /dev/null should not be recorded");
+    }
+
+    #[test]
+    fn test_extract_created_paths_mixed_redirects() {
+        let paths = ReasoningEngine::extract_created_paths("cmd > /tmp/out.txt 2>/dev/null");
+        assert_eq!(paths, vec!["/tmp/out.txt"]);
+    }
+
+    #[test]
+    fn test_extract_created_paths_tee() {
+        let paths = ReasoningEngine::extract_created_paths("echo hi | tee /tmp/log.txt");
+        assert_eq!(paths, vec!["/tmp/log.txt"]);
+    }
+
+    #[test]
+    fn test_extract_created_paths_dev_null_stdout() {
+        let paths = ReasoningEngine::extract_created_paths("cmd > /dev/null");
+        assert!(paths.is_empty(), "stdout to /dev/null should not be recorded");
     }
 }
