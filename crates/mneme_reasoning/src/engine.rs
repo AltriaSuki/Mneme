@@ -526,7 +526,23 @@ impl ReasoningEngine {
         let base_max_tokens = self.runtime_params.max_tokens();
         let base_temperature = self.runtime_params.temperature();
         let mut modulated_max_tokens =
-            ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32).max(256);
+            ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32).max(64);
+
+        // Silence inclination → physical token budget compression.
+        // Below 0.3 (normal baseline): no effect. Above 0.3: steep exponential decay.
+        // silence=0.5 → ~0.14×, silence=0.8 → ~0.007×, silence=1.0 → ~0.001×
+        let silence_excess = (modulation.silence_inclination - 0.3).max(0.0);
+        let silence_factor = (-10.0_f32 * silence_excess).exp();
+        modulated_max_tokens = ((modulated_max_tokens as f32 * silence_factor) as u32).max(64);
+
+        tracing::info!(
+            "Physical constraints: base={}, after_energy={}, silence_excess={:.2}, silence_factor={:.3}, final_max_tokens={}",
+            base_max_tokens,
+            ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32),
+            silence_excess,
+            silence_factor,
+            modulated_max_tokens,
+        );
 
         // Apply budget degradation cap when exceeded (#62)
         if budget_degraded {
