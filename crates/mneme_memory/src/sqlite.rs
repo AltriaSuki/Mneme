@@ -107,6 +107,38 @@ impl SqliteMemory {
         }
     }
 
+    /// B-5: Somatic dissonance check — cross-reference a recalled episode's
+    /// timestamp against ODE state history. Returns a penalty factor (0.0–1.0)
+    /// where 1.0 = no dissonance, lower = suspicious.
+    async fn somatic_dissonance_penalty(&self, episode_ts: i64) -> f32 {
+        // Look for state history within ±5 minutes of the episode timestamp
+        let window = 300i64;
+        let from = episode_ts - window;
+        let to = episode_ts + window;
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM organism_state_history \
+             WHERE timestamp >= ? AND timestamp <= ?",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+
+        if count > 0 {
+            // History exists near this timestamp — memory is corroborated
+            1.0
+        } else {
+            // No ODE history at this timestamp — body has no record of this event
+            tracing::warn!(
+                episode_ts,
+                "Somatic dissonance: no ODE history near episode timestamp"
+            );
+            0.15
+        }
+    }
+
     async fn migrate(&self) -> Result<()> {
         sqlx::migrate!("./migrations")
             .run(&self.pool)
@@ -278,9 +310,18 @@ impl Memory for SqliteMemory {
             // Mood-congruent recency bias
             let recency_score = (timestamp - oldest) as f32 / ts_range;
             let bias_factor = 1.0 + mood_bias * (recency_score - 0.5) * 0.6;
-            let final_score = base_score * bias_factor.max(0.1);
 
-            scored.push((final_score, id, author, body, timestamp));
+            // B-5: Somatic dissonance — penalize memories with no ODE corroboration
+            let dissonance = self.somatic_dissonance_penalty(timestamp).await;
+            let final_score = base_score * bias_factor.max(0.1) * dissonance;
+
+            let annotated_body = if dissonance < 0.5 {
+                format!("[⚠ 躯体失调·无对应身体记录] {}", body)
+            } else {
+                body
+            };
+
+            scored.push((final_score, id, author, annotated_body, timestamp));
         }
 
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -867,6 +908,33 @@ impl SqliteMemory {
             tracing::debug!("Pruned {} state history entries", total);
         }
         Ok(total)
+    }
+
+    /// B-18: Record a file created by Mneme's own tool use.
+    pub async fn record_created_artifact(&self, path: &str) {
+        let now = chrono::Utc::now().timestamp();
+        let _ = sqlx::query(
+            "INSERT OR REPLACE INTO created_artifacts (path, created_at, last_used_at) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(path)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await;
+        tracing::info!(path, "Recorded owned artifact");
+    }
+
+    /// B-18: Check if a file path is a self-created artifact.
+    pub async fn is_owned_artifact(&self, path: &str) -> bool {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM created_artifacts WHERE path = ?",
+        )
+        .bind(path)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0)
+            > 0
     }
 
     /// Load all narrative chapters

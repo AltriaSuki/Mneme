@@ -614,6 +614,105 @@ impl OrganismCoordinator {
         })
     }
 
+    /// B-18: Record a file created by Mneme's tool use as an owned artifact.
+    pub async fn record_artifact(&self, path: &str) {
+        if let Some(db) = &self.db {
+            db.record_created_artifact(path).await;
+        }
+    }
+
+    /// Process perceptual input from tool results.
+    ///
+    /// When Mneme reads file content or receives tool output, the sentiment
+    /// of that content should affect her emotional state — just as seeing
+    /// something disturbing affects a human's body even without social context.
+    /// This is a non-social stimulus (is_social=false) with reduced intensity
+    /// (×0.5) since it's indirect perception, not direct interaction.
+    pub async fn process_perceptual_input(&self, content: &str) {
+        let (valence, intensity) = Self::analyze_sentiment(content);
+
+        // B-18: Detect file-not-found for owned artifacts → amplify grief
+        let ownership_amplifier = self.check_artifact_grief(content).await;
+
+        // Skip neutral / low-intensity perceptions to avoid noise
+        // (but always process if ownership grief is triggered)
+        if intensity < 0.15 && ownership_amplifier <= 1.0 {
+            return;
+        }
+        let effective_intensity = (intensity * 0.5 * ownership_amplifier).min(1.0);
+        let effective_valence = if ownership_amplifier > 1.0 {
+            // Force negative valence for owned artifact loss
+            valence.min(-0.4)
+        } else {
+            valence
+        };
+        let stimulus = Stimulus {
+            valence: effective_valence,
+            intensity: effective_intensity,
+            is_social: false,
+            content: content.chars().take(200).collect(),
+            violated_values: vec![],
+        };
+        tracing::info!(
+            "Perceptual stimulus: valence={:.3}, intensity={:.3}",
+            stimulus.valence,
+            stimulus.intensity
+        );
+        let _ = self.limbic.receive_stimulus(stimulus.clone()).await;
+
+        // Also step the coordinator's own state directly (the limbic heartbeat
+        // updates a separate internal copy that save_state() doesn't read).
+        let sensory = SensoryInput {
+            content_valence: stimulus.valence,
+            content_intensity: stimulus.intensity,
+            surprise: 0.0,
+            is_social: false,
+            response_delay_factor: 1.0,
+            violated_values: vec![],
+            topic_hint: None,
+            env: Default::default(),
+        };
+        {
+            let mut state = self.state.write().await;
+            let medium_clone = state.medium.clone();
+            let dynamics = self.dynamics.read().await;
+            dynamics.step_fast(&mut state.fast, &medium_clone, &sensory, 1.0);
+        }
+    }
+
+    /// B-18: Check if tool output contains file-not-found for an owned artifact.
+    /// Returns amplifier: 1.0 = normal, 3.0 = owned artifact grief.
+    async fn check_artifact_grief(&self, content: &str) -> f32 {
+        let db = match &self.db {
+            Some(db) => db,
+            None => return 1.0,
+        };
+
+        // Extract file paths from common error patterns
+        let patterns = [
+            "No such file or directory",
+            "FileNotFoundError",
+            "not found",
+            "cannot open",
+        ];
+
+        let has_file_error = patterns.iter().any(|p| content.contains(p));
+        if !has_file_error {
+            return 1.0;
+        }
+
+        // Try to extract path from content (common patterns)
+        for word in content.split_whitespace() {
+            let path = word.trim_matches(|c: char| c == '\'' || c == '"' || c == ':');
+            if path.starts_with('/') && db.is_owned_artifact(path).await {
+                tracing::warn!(path, "Owned artifact lost — amplifying grief response");
+                return 3.0;
+            }
+        }
+
+        1.0
+    }
+
     /// Evaluate a proposed action against values
     pub async fn evaluate_action(
         &self,

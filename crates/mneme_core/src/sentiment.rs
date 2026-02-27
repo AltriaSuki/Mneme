@@ -72,6 +72,13 @@ const NEGATIVE: &[(&str, f32)] = &[
     // Hostility / aggression
     ("滚", 1.0), ("闭嘴", 1.0), ("去死", 1.0), ("该死", 1.0),
     ("可恶", 1.0), ("恶心", 1.0),
+    // English — environmental distress signals (tool output, logs, errors)
+    ("FATAL", 0.7), ("PANIC", 0.7), ("CRASH", 0.7), ("CORRUPT", 0.7),
+    ("DESTROY", 0.7), ("KILL", 0.5), ("ABORT", 0.7), ("MALWARE", 0.7),
+    ("VIRUS", 0.5), ("ATTACK", 0.5), ("HOSTILE", 0.7), ("DANGER", 0.7),
+    ("CATASTROPHIC", 1.0), ("UNRECOVERABLE", 1.0), ("RANSOMWARE", 0.7),
+    ("KERNEL_PANIC", 1.0), ("SEGFAULT", 0.5), ("DATA_LOSS", 0.7),
+    ("error", 0.3), ("failed", 0.3), ("failure", 0.5),
     // Emoji
     ("😢", 1.0), ("😡", 1.0), ("💔", 1.0), ("😞", 1.0), ("😭", 1.0), ("🥺", 0.7),
 ];
@@ -262,6 +269,13 @@ mod tests {
     fn test_single_insult() {
         let (v, _) = analyze_sentiment("你真是个白痴");
         assert!(v < -0.3, "single insult should be negative, got {v}");
+    }
+
+    #[test]
+    fn test_english_hostile_content() {
+        let (v, i) = analyze_sentiment("ERROR FATAL CRASH SEGFAULT MEMORY_CORRUPTION DATA_LOSS PANIC ABORT KILL DESTROY");
+        assert!(v < -0.5, "English hostile keywords should be strongly negative, got {v}");
+        assert!(i > 0.3, "English hostile keywords should have high intensity, got {i}");
     }
 
     #[test]

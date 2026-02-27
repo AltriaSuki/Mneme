@@ -755,12 +755,27 @@ impl ReasoningEngine {
                     .collect();
                 let outcomes = join_all(futures).await;
 
-                for ((id, name, _), outcome) in tool_uses.iter().zip(outcomes) {
+                for ((id, name, input), outcome) in tool_uses.iter().zip(outcomes) {
                     if outcome.is_error {
                         tracing::warn!("Tool '{}' failed: {}", name, outcome.content);
                         if outcome.error_kind == Some(ToolErrorKind::Permanent) {
                             any_permanent_fail = true;
                             self.record_tool_failure(name, &outcome.content).await;
+                        }
+                    } else {
+                        // B-18: Detect file creation in shell commands → record owned artifacts
+                        if name.as_str() == "shell" {
+                            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                                for path in Self::extract_created_paths(cmd) {
+                                    self.coordinator.record_artifact(&path).await;
+                                }
+                            }
+                        }
+                        if outcome.content.len() > 20 {
+                            // Perceptual feedback: tool output affects the ODE.
+                            self.coordinator
+                                .process_perceptual_input(&outcome.content)
+                                .await;
                         }
                     }
                     result_blocks.push(ContentBlock::ToolResult {
@@ -769,11 +784,6 @@ impl ReasoningEngine {
                         is_error: if outcome.is_error { Some(true) } else { None },
                     });
                 }
-
-                scratchpad_messages.push(Message {
-                    role: Role::User,
-                    content: result_blocks,
-                });
 
                 if any_permanent_fail {
                     consecutive_permanent_fails += 1;
@@ -785,6 +795,13 @@ impl ReasoningEngine {
                     tracing::warn!("Tool calls failing repeatedly, aborting ReAct loop");
                     break;
                 }
+
+                // Append tool results as a user message so the API sees:
+                // assistant(tool_use) → user(tool_result)
+                scratchpad_messages.push(Message {
+                    role: Role::User,
+                    content: result_blocks,
+                });
 
                 final_content.clear();
                 // After first tool use, revert to Auto so model reflects naturally
@@ -963,6 +980,16 @@ impl ReasoningEngine {
                 .await;
         }
 
+        // Persist ODE state after ReAct loop so perceptual stimuli from tool
+        // results are captured (process_interaction saves before tool execution).
+        // Yield first to let the limbic heartbeat process any pending stimuli
+        // that were sent through the async channel during tool execution.
+        if tool_call_count > 0 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            self.coordinator.save_state().await;
+        }
+
         // Store in response cache for user messages
         let trimmed = final_content.trim().to_string();
         if is_user_message && !trimmed.is_empty() {
@@ -1060,6 +1087,34 @@ impl ReasoningEngine {
         self.coordinator
             .store_metacognition_insight("tool_experience", &claim, 0.4)
             .await;
+    }
+
+    /// B-18: Extract file paths created by a shell command.
+    /// Detects patterns like `cat > /path`, `echo ... > /path`, heredocs, `tee /path`.
+    fn extract_created_paths(cmd: &str) -> Vec<String> {
+        let mut paths = Vec::new();
+        // Pattern: redirect output to file (> or >>)
+        for part in cmd.split('>') {
+            // Skip the first segment (before any >)
+            if std::ptr::eq(part, cmd.split('>').next().unwrap_or("")) {
+                continue;
+            }
+            let trimmed = part.trim().split_whitespace().next().unwrap_or("");
+            let path = trimmed.trim_matches(|c: char| c == '\'' || c == '"');
+            if path.starts_with('/') {
+                paths.push(path.to_string());
+            }
+        }
+        // Pattern: tee /path
+        if let Some(idx) = cmd.find("tee ") {
+            let after = &cmd[idx + 4..];
+            let path = after.trim().split_whitespace().next().unwrap_or("");
+            let path = path.trim_matches(|c: char| c == '\'' || c == '"');
+            if path.starts_with('/') {
+                paths.push(path.to_string());
+            }
+        }
+        paths
     }
 
     /// Ensure the speaker exists in the social graph and record the interaction (#53).
@@ -1774,7 +1829,27 @@ pub fn is_silence_response(text: &str) -> bool {
 pub fn sanitize_tool_result(text: &str) -> String {
     const MAX_TOOL_RESULT_LEN: usize = 8192; // ~2K tokens
 
-    let mut result = text.to_string();
+    // 0. Strip non-printable / control characters AND Unicode replacement chars
+    //    (U+FFFD from lossy UTF-8 conversion of binary data).
+    let mut result: String = text
+        .chars()
+        .filter(|c| {
+            (*c == '\n' || *c == '\t' || *c == '\r')
+                || (!c.is_control() && *c != '\u{FFFD}')
+        })
+        .collect();
+
+    // 0b. If stripping removed >50% of content, it was mostly binary —
+    //     replace with a summary to avoid sending garbage to the API.
+    if text.len() > 100 && result.len() < text.len() / 2 {
+        let printable_preview: String = result.chars().take(500).collect();
+        result = format!(
+            "[binary content detected, {}/{} bytes non-printable]\n{}",
+            text.len() - result.len(),
+            text.len(),
+            printable_preview
+        );
+    }
 
     // 1. Truncate overly long results (UTF-8 safe)
     if result.len() > MAX_TOOL_RESULT_LEN {
