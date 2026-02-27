@@ -147,6 +147,9 @@ pub struct ReasoningEngine {
 
     // Shallow exploration nudge: when true, nudge model to continue if it stops after 1-2 tool calls
     exploration_nudge: bool,
+
+    // Maximum ReAct loop iterations per reasoning cycle (configurable via llm.max_react_turns)
+    max_react_turns: u32,
 }
 
 impl ReasoningEngine {
@@ -187,6 +190,7 @@ impl ReasoningEngine {
             tool_call_count: std::sync::atomic::AtomicU32::new(0),
             stream_suppressed: Arc::new(AtomicBool::new(false)),
             exploration_nudge: true,
+            max_react_turns: 12,
         }
     }
 
@@ -227,6 +231,7 @@ impl ReasoningEngine {
             tool_call_count: std::sync::atomic::AtomicU32::new(0),
             stream_suppressed: Arc::new(AtomicBool::new(false)),
             exploration_nudge: true,
+            max_react_turns: 12,
         }
     }
 
@@ -290,6 +295,11 @@ impl ReasoningEngine {
     /// Disable shallow exploration nudge (useful for tests with fixed mock responses)
     pub fn set_exploration_nudge(&mut self, enabled: bool) {
         self.exploration_nudge = enabled;
+    }
+
+    /// Set maximum ReAct loop iterations (from config.llm.max_react_turns)
+    pub fn set_max_react_turns(&mut self, turns: u32) {
+        self.max_react_turns = turns.clamp(4, 32);
     }
 
     /// Set the token budget tracker
@@ -645,13 +655,14 @@ impl ReasoningEngine {
             }
         }
 
-        // --- React Loop (Max 5 turns) ---
+        // --- ReAct Loop (configurable via llm.max_react_turns) ---
         // Reset stream suppression at the start (caller checks it after think() returns)
         self.stream_suppressed.store(false, Ordering::Release);
         let mut consecutive_permanent_fails = 0u32;
         let mut tool_call_count = 0u32;
         let mut nudge_count = 0u32;
-        for _iteration in 0..8 {
+        let max_turns = self.max_react_turns;
+        for _iteration in 0..max_turns {
             final_content.clear();
 
             // #58: Check cancellation before each LLM call
@@ -810,7 +821,7 @@ impl ReasoningEngine {
                 // text (e.g. "让我换个方式") should not leak to the user.
                 self.stream_suppressed.store(true, Ordering::Release);
                 continue; // Back to ReAct loop for model to process results
-            } else if self.exploration_nudge && nudge_count < 2 && tool_call_count > 0 && _iteration < 6 {
+            } else if self.exploration_nudge && nudge_count < 2 && tool_call_count > 0 && _iteration < max_turns.saturating_sub(2) {
                 // Exploration nudge: model stopped with iterations remaining.
                 // Nudge 0: after 1-2 tool calls (shallow exploration)
                 // Nudge 1: after 3+ tool calls (mid-exploration plateau)

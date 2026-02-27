@@ -188,6 +188,10 @@ pub struct LlmConfig {
     /// #55: Optional local model for low-resolution inner monologue (e.g. "qwen2:0.5b").
     /// When set, uses Ollama for cheap fragment-style inner speech.
     pub low_res_model: Option<String>,
+    /// Maximum ReAct loop iterations per reasoning cycle.
+    /// Higher values allow more tool calls for complex tasks but cost more tokens.
+    /// Default: 12.
+    pub max_react_turns: u32,
 }
 
 impl Default for LlmConfig {
@@ -201,6 +205,7 @@ impl Default for LlmConfig {
             context_budget_chars: 32_000,
             timeout_secs: 120,
             low_res_model: None,
+            max_react_turns: 12,
         }
     }
 }

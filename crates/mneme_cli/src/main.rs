@@ -416,6 +416,9 @@ async fn main() -> anyhow::Result<()> {
     // 4a'. Context budget from config (linked to model's context window)
     engine.set_context_budget(config.llm.context_budget_chars);
 
+    // ReAct loop limit from config
+    engine.set_max_react_turns(config.llm.max_react_turns);
+
     // #55: Wire up local model for low-resolution inner monologue
     if let Some(ref low_model) = config.llm.low_res_model {
         use mneme_reasoning::providers::ollama::OllamaClient;
