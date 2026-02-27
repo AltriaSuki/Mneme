@@ -325,6 +325,17 @@ impl OrganismCoordinator {
             }
         }
 
+        // Load persisted recent messages for repetition detection
+        if let Ok(msgs) = db.load_recent_messages(20).await {
+            if !msgs.is_empty() {
+                tracing::info!("Loaded {} recent messages for repetition detection", msgs.len());
+                let mut recent = coordinator.recent_messages.write().await;
+                for m in msgs {
+                    recent.push_back(m);
+                }
+            }
+        }
+
         // Load learned ModulationCurves from DB
         if let Ok(Some(curves)) = db.load_learned_curves().await {
             coordinator.limbic.set_curves(curves).await;
@@ -1351,11 +1362,19 @@ impl OrganismCoordinator {
     }
 
     /// Record a message into the sliding window for repetition detection.
+    /// Also persists to SQLite so similarity survives across process restarts.
     async fn record_message(&self, content: &str) {
         let mut recent = self.recent_messages.write().await;
         recent.push_back(content.to_string());
         if recent.len() > 20 {
             recent.pop_front();
+        }
+        drop(recent);
+        // Persist to DB
+        if let Some(ref db) = self.db {
+            if let Err(e) = db.save_recent_message(content, 20).await {
+                tracing::warn!("Failed to persist recent_message: {}", e);
+            }
         }
     }
 

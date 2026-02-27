@@ -1679,6 +1679,42 @@ impl SqliteMemory {
                 .context("Failed to query last episode timestamp")?;
         Ok(ts)
     }
+
+    // =========================================================================
+    // Recent messages (repetition detection persistence)
+    // =========================================================================
+
+    /// Load the most recent N messages for repetition detection.
+    pub async fn load_recent_messages(&self, limit: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT content FROM recent_messages ORDER BY id DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to load recent_messages")?;
+        // Reverse so oldest is first (VecDeque order)
+        Ok(rows.into_iter().rev().map(|r| r.0).collect())
+    }
+
+    /// Append a message and prune to keep at most `max_keep` entries.
+    pub async fn save_recent_message(&self, content: &str, max_keep: i64) -> Result<()> {
+        sqlx::query("INSERT INTO recent_messages (content) VALUES (?)")
+            .bind(content)
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert recent_message")?;
+        // Prune old entries
+        sqlx::query(
+            "DELETE FROM recent_messages WHERE id NOT IN \
+             (SELECT id FROM recent_messages ORDER BY id DESC LIMIT ?)",
+        )
+        .bind(max_keep)
+        .execute(&self.pool)
+        .await
+        .context("Failed to prune recent_messages")?;
+        Ok(())
+    }
 }
 
 // =============================================================================
