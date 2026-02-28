@@ -233,6 +233,8 @@ impl Memory for SqliteMemory {
             let body = self.decrypt_body(&body_raw);
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
+            // B-10: Physical memory degradation — old/weak memories lose detail
+            let body = degrade_by_strength(&body, strength);
             let distance: f64 = row.get("distance");
             let similarity = (1.0 - distance) as f32;
             let score = similarity * strength as f32;
@@ -303,6 +305,8 @@ impl Memory for SqliteMemory {
             let body = self.decrypt_body(&body_raw);
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
+            // B-10: Physical memory degradation — old/weak memories lose detail
+            let body = degrade_by_strength(&body, strength);
             let distance: f64 = row.get("distance");
             let similarity = (1.0 - distance) as f32;
             let base_score = similarity * strength as f32;
@@ -1877,6 +1881,52 @@ impl SqliteMemory {
         .await
         .context("Failed to prune recent_messages")?;
         Ok(())
+    }
+}
+
+// =============================================================================
+// Memory Degradation (B-10: Memory is Reconstruction)
+// =============================================================================
+
+/// Degrade memory content based on strength — physical information loss.
+///
+/// Low-strength memories lose detail progressively. This is NOT a narrative
+/// hint ("this memory is old") — it's actual truncation of the text the LLM
+/// receives, forcing naturally vaguer responses. Respects Physical Isolation Law.
+///
+/// - strength > 0.4: full fidelity
+/// - strength 0.2–0.4: truncate to ~60% of chars
+/// - strength 0.1–0.2: truncate to ~30% of chars
+/// - strength < 0.1: first sentence only
+fn degrade_by_strength(body: &str, strength: f64) -> String {
+    if strength > 0.4 || body.is_empty() {
+        return body.to_string();
+    }
+
+    let chars: Vec<char> = body.chars().collect();
+    let total = chars.len();
+
+    if strength > 0.2 {
+        // Moderate decay: keep ~60%
+        let keep = (total as f64 * 0.6).ceil() as usize;
+        let truncated: String = chars[..keep.min(total)].iter().collect();
+        format!("{}……", truncated.trim_end())
+    } else if strength > 0.1 {
+        // Heavy decay: keep ~30%
+        let keep = (total as f64 * 0.3).ceil() as usize;
+        let truncated: String = chars[..keep.min(total)].iter().collect();
+        format!("{}……（记忆模糊）", truncated.trim_end())
+    } else {
+        // Near-forgotten: first sentence only
+        let first_sentence = body
+            .split_once(['。', '！', '？', '.', '!', '?'])
+            .map(|(s, _)| format!("{}。", s))
+            .unwrap_or_else(|| {
+                let keep = (total as f64 * 0.15).ceil() as usize;
+                let t: String = chars[..keep.min(total)].iter().collect();
+                format!("{}……", t.trim_end())
+            });
+        format!("{}（只剩模糊印象）", first_sentence)
     }
 }
 
