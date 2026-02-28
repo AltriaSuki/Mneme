@@ -549,6 +549,18 @@ impl OrganismCoordinator {
             );
         }
 
+        // 1d. §14.1 Déjà vu: check if message contains code matching an owned artifact.
+        //     Recognition of self-created content triggers surprise + arousal spike.
+        let deja_vu_path = if let Some(ref db) = self.db {
+            db.check_content_ownership(content).await
+        } else {
+            None
+        };
+        if let Some(ref path) = deja_vu_path {
+            content_intensity = (content_intensity + 0.4).clamp(0.0, 1.0);
+            tracing::info!(path, "Déjà vu: recognized own artifact in message");
+        }
+
         // 2. Send stimulus to System 1 (limbic) for async emotional processing
         let stimulus = self.create_stimulus(author, content);
         let _ = self.limbic.receive_stimulus(stimulus).await;
@@ -573,6 +585,11 @@ impl OrganismCoordinator {
             soma.affect.arousal = (soma.affect.arousal + belief_tension * 0.25).clamp(0.0, 1.0);
             // Energy drain from internal conflict
             soma.energy = (soma.energy - belief_tension * 0.15).clamp(0.0, 1.0);
+        }
+
+        // 3d. §14.1: Déjà vu recognition → surprise spike (arousal without stress)
+        if deja_vu_path.is_some() {
+            soma.affect.arousal = (soma.affect.arousal + 0.3).clamp(0.0, 1.0);
         }
 
         // 4. Update fast state based on stimulus

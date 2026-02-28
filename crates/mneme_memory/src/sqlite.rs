@@ -913,16 +913,22 @@ impl SqliteMemory {
     /// B-18: Record a file created by Mneme's own tool use.
     pub async fn record_created_artifact(&self, path: &str) {
         let now = chrono::Utc::now().timestamp();
+        // Read file content and compute normalized hash for later recognition
+        let content_hash = tokio::fs::read_to_string(path)
+            .await
+            .ok()
+            .map(|c| Self::content_fingerprint(&c));
         let _ = sqlx::query(
-            "INSERT OR REPLACE INTO created_artifacts (path, created_at, last_used_at) \
-             VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO created_artifacts (path, created_at, last_used_at, content_hash) \
+             VALUES (?, ?, ?, ?)",
         )
         .bind(path)
         .bind(now)
         .bind(now)
+        .bind(&content_hash)
         .execute(&self.pool)
         .await;
-        tracing::info!(path, "Recorded owned artifact");
+        tracing::info!(path, ?content_hash, "Recorded owned artifact");
     }
 
     /// B-18: Check if a file path is a self-created artifact.
@@ -937,7 +943,49 @@ impl SqliteMemory {
             > 0
     }
 
-    /// Load all narrative chapters
+    /// Normalize text and compute fingerprint for content recognition.
+    fn content_fingerprint(content: &str) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let normalized: String = content.split_whitespace().collect();
+        normalized.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
+    /// B-18: Check if text contains code matching an owned artifact's content.
+    /// Extracts code-like line blocks from the message and checks each against stored hashes.
+    pub async fn check_content_ownership(&self, text: &str) -> Option<String> {
+        // Extract code blocks: lines with programming tokens, bridging empty-line gaps
+        let code_tokens = ["import", "def ", "class ", "fn ", "let ", "const ", "var ",
+                           "print", "return", "if ", "for ", "while ", "=", "(", "{", "//", "#!"];
+        let lines: Vec<&str> = text.lines().collect();
+        let is_code: Vec<bool> = lines.iter()
+            .map(|l| l.trim().is_empty() || code_tokens.iter().any(|t| l.contains(t)))
+            .collect();
+
+        // Find contiguous runs, then trim leading/trailing empty lines
+        let mut i = 0;
+        while i < lines.len() {
+            if !is_code[i] { i += 1; continue; }
+            let start = i;
+            while i < lines.len() && is_code[i] { i += 1; }
+            // Trim empty lines from edges
+            let s = lines[start..i].iter().position(|l| !l.trim().is_empty());
+            let e = lines[start..i].iter().rposition(|l| !l.trim().is_empty());
+            if let (Some(s), Some(e)) = (s, e) {
+                let block: String = lines[start + s..=start + e].join("\n");
+                if block.lines().count() >= 3 {
+                    let hash = Self::content_fingerprint(&block);
+                    if let Ok(Some(path)) = sqlx::query_scalar::<_, String>(
+                        "SELECT path FROM created_artifacts WHERE content_hash = ?",
+                    ).bind(&hash).fetch_optional(&self.pool).await {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+        None
+    }
     pub async fn load_narrative_chapters(&self) -> Result<Vec<NarrativeChapter>> {
         let rows = sqlx::query(
             "SELECT id, title, content, period_start, period_end, emotional_tone, 
