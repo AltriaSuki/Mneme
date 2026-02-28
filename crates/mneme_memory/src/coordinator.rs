@@ -354,6 +354,15 @@ impl OrganismCoordinator {
             coordinator.limbic.set_neural(Some(nn)).await;
         }
 
+        // Load learned LTC weights (Hebbian w_rec)
+        if let Ok(Some(ltc)) = db.load_learned_ltc().await {
+            tracing::info!("Loaded learned LTC (blend={:.2})", ltc.blend);
+            coordinator.limbic.set_ltc(Some(ltc)).await;
+        } else {
+            coordinator.limbic.set_ltc(Some(mneme_limbic::LiquidNeuralModulator::new())).await;
+            tracing::info!("Initialized fresh LTC");
+        }
+
         // Load learned dynamics parameters
         if let Ok(Some(ld)) = db.load_learned_dynamics().await {
             tracing::info!(
@@ -977,15 +986,21 @@ impl OrganismCoordinator {
                 boredom,
                 cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
             };
-            // Online NeuralModulator update (small learning rate)
+            // Online NeuralModulator update (small learning rate) + persist
             if let Some(mut nn) = self.limbic.get_neural().await {
                 nn.train(&[(features.clone(), modulation.clone(), feedback_valence)], 0.002);
-                self.limbic.set_neural(Some(nn)).await;
+                self.limbic.set_neural(Some(nn.clone())).await;
+                if let Some(ref db) = self.db {
+                    let _ = db.save_learned_neural(&nn).await;
+                }
             }
-            // Online LTC Hebbian update
+            // Online LTC Hebbian update + persist
             if let Some(mut ltc) = self.limbic.get_ltc().await {
                 ltc.hebbian_update(arousal, feedback_valence, 0.005);
-                self.limbic.set_ltc(Some(ltc)).await;
+                self.limbic.set_ltc(Some(ltc.clone())).await;
+                if let Some(ref db) = self.db {
+                    let _ = db.save_learned_ltc(&ltc).await;
+                }
             }
         }
     }

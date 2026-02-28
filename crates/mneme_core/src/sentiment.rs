@@ -71,7 +71,7 @@ const NEGATIVE: &[(&str, f32)] = &[
     ("差劲", 0.7), ("烂", 0.7),
     // Hostility / aggression
     ("滚", 1.0), ("闭嘴", 1.0), ("去死", 1.0), ("该死", 1.0),
-    ("可恶", 1.0), ("恶心", 1.0),
+    ("可恶", 1.0), ("恶心", 1.0), ("恨死", 1.0), ("烦透", 1.0), ("恨", 0.7), ("烦", 0.5),
     // English — environmental distress signals (tool output, logs, errors)
     ("FATAL", 0.7), ("PANIC", 0.7), ("CRASH", 0.7), ("CORRUPT", 0.7),
     ("DESTROY", 0.7), ("KILL", 0.5), ("ABORT", 0.7), ("MALWARE", 0.7),

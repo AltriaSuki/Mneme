@@ -2286,6 +2286,39 @@ impl SqliteMemory {
         }
     }
 
+    /// Save LTC weights (upsert — always id=1).
+    pub async fn save_learned_ltc(&self, ltc: &mneme_limbic::LiquidNeuralModulator) -> Result<()> {
+        let json = serde_json::to_string(ltc).context("Failed to serialize LTC")?;
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO learned_ltc (id, ltc_json, updated_at) VALUES (1, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET ltc_json = excluded.ltc_json, updated_at = excluded.updated_at"
+        )
+        .bind(&json)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save learned LTC")?;
+        Ok(())
+    }
+
+    /// Load previously learned LTC weights from DB.
+    pub async fn load_learned_ltc(&self) -> Result<Option<mneme_limbic::LiquidNeuralModulator>> {
+        let row = sqlx::query("SELECT ltc_json FROM learned_ltc WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to load learned LTC")?;
+        match row {
+            Some(r) => {
+                let json_str: String = r.get("ltc_json");
+                let ltc = serde_json::from_str(&json_str)
+                    .context("Failed to deserialize learned LTC")?;
+                Ok(Some(ltc))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Save learned BehaviorThresholds (upsert — always id=1).
     pub async fn save_learned_thresholds(
         &self,
