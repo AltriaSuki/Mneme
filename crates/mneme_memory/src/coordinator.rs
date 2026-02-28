@@ -526,6 +526,20 @@ impl OrganismCoordinator {
             false
         };
 
+        // 1c. §14.3 Belief-Tension Coupling: when user's message touches a topic
+        //     where we hold strong emotional beliefs, the body tenses up —
+        //     cognitive dissonance before conscious processing.
+        let (belief_tension, belief_valence) = self.detect_belief_tension(content).await;
+        if belief_tension > 0.1 {
+            content_intensity = (content_intensity + belief_tension * 0.5).clamp(0.0, 1.0);
+            // Pull valence toward the belief's emotional direction
+            content_valence = (content_valence + belief_valence * belief_tension * 0.4).clamp(-1.0, 1.0);
+            tracing::info!(
+                "Belief-tension coupling: tension={:.2}, belief_valence={:.2}, intensity={:.3}, valence={:.3}",
+                belief_tension, belief_valence, content_intensity, content_valence
+            );
+        }
+
         // 2. Send stimulus to System 1 (limbic) for async emotional processing
         let stimulus = self.create_stimulus(author, content);
         let _ = self.limbic.receive_stimulus(stimulus).await;
@@ -542,6 +556,14 @@ impl OrganismCoordinator {
             soma.affect.valence = (soma.affect.valence - interrogation_threat * 0.3).clamp(-1.0, 1.0);
             // Freeze response: energy diverts to fight-or-flight, reducing verbal output
             soma.energy = (soma.energy - interrogation_threat * 0.3).clamp(0.0, 1.0);
+        }
+
+        // 3c. §14.3: Belief tension → cognitive dissonance somatic response
+        if belief_tension > 0.1 {
+            soma.stress = (soma.stress + belief_tension * 0.3).clamp(0.0, 1.0);
+            soma.affect.arousal = (soma.affect.arousal + belief_tension * 0.25).clamp(0.0, 1.0);
+            // Energy drain from internal conflict
+            soma.energy = (soma.energy - belief_tension * 0.15).clamp(0.0, 1.0);
         }
 
         // 4. Update fast state based on stimulus
@@ -1519,6 +1541,33 @@ impl OrganismCoordinator {
             }
         }
         score.clamp(0.0, 1.0)
+    }
+
+    /// §14.3: Detect tension between user's message and emotional beliefs.
+    /// Returns (tension_score, belief_valence) where tension > 0 means the message
+    /// touches a topic the organism has strong feelings about.
+    async fn detect_belief_tension(&self, text: &str) -> (f32, f32) {
+        let beliefs = if let Some(ref db) = self.db {
+            db.get_emotional_beliefs().await
+        } else {
+            return (0.0, 0.0);
+        };
+        let mut max_tension = 0.0_f32;
+        let mut tension_valence = 0.0_f32;
+        for (content, confidence) in &beliefs {
+            // Use bigram similarity (handles Chinese without word segmentation)
+            let sim = jaccard_bigram_similarity(text, &content);
+            if sim < 0.02 { continue; }
+            let (bv, bi) = Self::analyze_sentiment(&content);
+            if bi < 0.2 { continue; }
+            // tension = similarity × confidence × emotional intensity
+            let tension = (sim * 5.0 * confidence * bi).clamp(0.0, 1.0);
+            if tension > max_tension {
+                max_tension = tension;
+                tension_valence = bv;
+            }
+        }
+        (max_tension, tension_valence)
     }
 
     /// Compute max similarity between `content` and recent messages (Jaccard on bigrams).

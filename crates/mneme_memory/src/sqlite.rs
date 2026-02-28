@@ -1597,6 +1597,21 @@ impl SqliteMemory {
         Ok(())
     }
 
+    /// §14.3: Get high-confidence belief content for belief-tension detection.
+    pub async fn get_emotional_beliefs(&self) -> Vec<(String, f32)> {
+        sqlx::query_as::<_, (String, f64)>(
+            "SELECT content, confidence FROM self_knowledge \
+             WHERE domain = 'belief' AND confidence > 0.5 \
+             ORDER BY confidence DESC LIMIT 20",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(c, conf)| (c, conf as f32))
+        .collect()
+    }
+
     /// B-9: Check whether any private self_knowledge entries exist.
     /// Used by Privacy-Somatic Coupling to detect if the organism has secrets worth protecting.
     pub async fn has_private_self_knowledge(&self) -> bool {
