@@ -175,7 +175,7 @@ impl Default for BehaviorThresholds {
             energy_gate_min: 0.3,
             calm_stress_max: 0.2,
             calm_arousal_max: 0.3,
-            stress_silence_min: 0.8,
+            stress_silence_min: 0.5,
             // Trigger evaluator defaults (match original hardcoded values)
             rumination_boredom: 0.6,
             rumination_social: 0.75,
@@ -407,7 +407,10 @@ impl SomaticMarker {
         );
         // Boredom penalty: above 0.4, progressively reduce willingness to produce output
         let boredom_token_penalty = (self.boredom - 0.4).max(0.0) * 0.5; // 0.0 at 0.4, 0.3 at 1.0
-        let max_tokens_factor = (max_tokens_factor - boredom_token_penalty).max(0.3);
+        // Stress penalty: above 0.3, stress constricts output capacity
+        let stress_token_penalty = (self.stress - 0.3).max(0.0) * 0.6; // 0.0 at 0.3, 0.42 at 1.0
+        let max_tokens_factor =
+            (max_tokens_factor - boredom_token_penalty - stress_token_penalty).max(0.3);
 
         let stress_temp = lerp(
             curves.stress_to_temperature.0,
@@ -446,11 +449,7 @@ impl SomaticMarker {
         );
         let energy_silence = (1.0 - self.energy) * 0.3;
         let boredom_silence = (self.boredom - 0.3).max(0.0) * 0.4; // 0.0 at 0.3, 0.28 at 1.0
-        let stress_silence = if self.stress > t.stress_silence_min {
-            0.2
-        } else {
-            0.0
-        };
+        let stress_silence = (self.stress - t.stress_silence_min).max(0.0) * 0.5;
         let silence_inclination =
             (energy_silence + boredom_silence + social_silence + stress_silence).clamp(0.0, 1.0);
 
@@ -1124,7 +1123,7 @@ mod tests {
         assert!((t.energy_gate_min - 0.3).abs() < 1e-6);
         assert!((t.calm_stress_max - 0.2).abs() < 1e-6);
         assert!((t.calm_arousal_max - 0.3).abs() < 1e-6);
-        assert!((t.stress_silence_min - 0.8).abs() < 1e-6);
+        assert!((t.stress_silence_min - 0.5).abs() < 1e-6);
     }
 
     #[test]
