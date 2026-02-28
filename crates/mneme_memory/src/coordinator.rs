@@ -989,6 +989,7 @@ impl OrganismCoordinator {
             // Online NeuralModulator update (small learning rate) + persist
             if let Some(mut nn) = self.limbic.get_neural().await {
                 nn.train(&[(features.clone(), modulation.clone(), feedback_valence)], 0.002);
+                nn.blend = (nn.blend + 0.01).min(0.85);
                 self.limbic.set_neural(Some(nn.clone())).await;
                 if let Some(ref db) = self.db {
                     let _ = db.save_learned_neural(&nn).await;
