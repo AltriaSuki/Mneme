@@ -997,6 +997,7 @@ impl OrganismCoordinator {
             // Online LTC Hebbian update + persist
             if let Some(mut ltc) = self.limbic.get_ltc().await {
                 ltc.hebbian_update(arousal, feedback_valence, 0.005);
+                ltc.blend = (ltc.blend + 0.01).min(0.6);
                 self.limbic.set_ltc(Some(ltc.clone())).await;
                 if let Some(ref db) = self.db {
                     let _ = db.save_learned_ltc(&ltc).await;
