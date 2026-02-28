@@ -545,10 +545,12 @@ impl ReasoningEngine {
                 somatic_marker: self.limbic.get_somatic_marker().await,
                 state_snapshot: self.coordinator.state().read().await.clone(),
                 lifecycle: self.coordinator.lifecycle_state().await,
+                content_valence: 0.0,
             }
         };
 
         let somatic_marker = interaction_result.somatic_marker;
+        let content_valence = interaction_result.content_valence;
 
         // === Extract curiosity interests (ADR-007 behavior loop) ===
         let top_interests = interaction_result
@@ -987,7 +989,7 @@ impl ReasoningEngine {
             // Record modulation sample for offline curve learning
             let modulation = self.limbic.get_modulation_vector().await;
             self.coordinator
-                .record_modulation_sample(&modulation, final_affect.valence)
+                .record_modulation_sample(&modulation, content_valence)
                 .await;
         }
 

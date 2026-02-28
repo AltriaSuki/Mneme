@@ -650,6 +650,7 @@ impl OrganismCoordinator {
             somatic_marker: soma,
             state_snapshot: self.state.read().await.clone(),
             lifecycle: *self.lifecycle_state.read().await,
+            content_valence,
         })
     }
 
@@ -1678,6 +1679,9 @@ pub struct InteractionResult {
 
     /// Current lifecycle state
     pub lifecycle: LifecycleState,
+
+    /// Content valence from sentiment analysis (reward signal for Hebbian learning)
+    pub content_valence: f32,
 }
 
 impl InteractionResult {
@@ -1687,6 +1691,7 @@ impl InteractionResult {
             somatic_marker: SomaticMarker::from_state(&default_state),
             state_snapshot: default_state,
             lifecycle: LifecycleState::Sleeping,
+            content_valence: 0.0,
         }
     }
 }
