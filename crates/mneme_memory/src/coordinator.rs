@@ -699,6 +699,7 @@ impl OrganismCoordinator {
             state_snapshot: self.state.read().await.clone(),
             lifecycle: *self.lifecycle_state.read().await,
             content_valence,
+            deja_vu_path: deja_vu_path.clone(),
         })
     }
 
@@ -1765,6 +1766,9 @@ pub struct InteractionResult {
 
     /// Content valence from sentiment analysis (reward signal for Hebbian learning)
     pub content_valence: f32,
+
+    /// §14.1: Path of owned artifact recognized via déjà vu (content fingerprint match)
+    pub deja_vu_path: Option<String>,
 }
 
 impl InteractionResult {
@@ -1775,6 +1779,7 @@ impl InteractionResult {
             state_snapshot: default_state,
             lifecycle: LifecycleState::Sleeping,
             content_valence: 0.0,
+            deja_vu_path: None,
         }
     }
 }

@@ -70,6 +70,7 @@ impl<'a> ContextBuilder<'a> {
         top_interests: &[(&str, f32)],
         is_user_message: bool,
         intent_context: String,
+        deja_vu_path: Option<&str>,
     ) -> Result<AssembledContext> {
         // Curiosity context for prompt
         let curiosity_context = if top_interests.is_empty() {
@@ -96,10 +97,28 @@ impl<'a> ContextBuilder<'a> {
                 .join(" ");
             format!("{} {}", input_text, curiosity_suffix)
         };
-        let recalled_episodes = self
+        let mut recalled_episodes = self
             .memory
             .recall_reconstructed(&recall_query, modulation.recall_mood_bias, stress)
             .await?;
+
+        // §14.1: When déjà vu fires, augment recall with artifact path so the vector
+        // search naturally surfaces the creation episode. No hardcoded conclusions.
+        if let Some(path) = deja_vu_path {
+            let deja_vu_recall = self
+                .memory
+                .recall_reconstructed(
+                    &format!("创建文件 {}", path),
+                    modulation.recall_mood_bias,
+                    stress,
+                )
+                .await
+                .unwrap_or_default();
+            if !deja_vu_recall.is_empty() {
+                recalled_episodes = format!("{}\n\n{}", deja_vu_recall, recalled_episodes);
+            }
+        }
+
         let facts = self
             .memory
             .recall_facts_formatted(input_text)

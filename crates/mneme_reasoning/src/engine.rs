@@ -393,6 +393,10 @@ impl ReasoningEngine {
         let mut total_output_tokens: u64 = 0;
         let mut text_chars_emitted: usize = 0;
         let budget_active = max_output_chars > 0;
+        // Sentence-boundary truncation: once past budget, allow overflow until
+        // we hit a sentence-ending punctuation. Max overflow = 50% of budget.
+        let overflow_limit = if budget_active { max_output_chars / 2 } else { 0 };
+        let mut truncated = false;
 
         while let Some(event) = rx.recv().await {
             if self.cancelled.load(Ordering::Acquire) {
@@ -405,41 +409,57 @@ impl ReasoningEngine {
 
             match event {
                 StreamEvent::TextDelta(delta) => {
-                    if budget_active && text_chars_emitted >= max_output_chars {
-                        // Budget exhausted — silently drain remaining text
+                    if truncated {
+                        // Already truncated at sentence boundary — drain remaining
                         continue;
                     }
 
-                    let remaining = if budget_active {
-                        max_output_chars - text_chars_emitted
-                    } else {
-                        usize::MAX
-                    };
+                    // Accept the full delta
                     let delta_chars = delta.chars().count();
+                    if let Some(ref cb) = self.on_text_chunk {
+                        if !self.stream_suppressed.load(Ordering::Acquire) {
+                            cb(&delta);
+                        }
+                    }
+                    current_text.push_str(&delta);
+                    text_chars_emitted += delta_chars;
 
-                    if delta_chars <= remaining {
-                        // Full delta fits within budget
-                        if let Some(ref cb) = self.on_text_chunk {
-                            if !self.stream_suppressed.load(Ordering::Acquire) {
-                                cb(&delta);
+                    // Check if we've passed the budget and should look for sentence boundary
+                    if budget_active && text_chars_emitted >= max_output_chars {
+                        // Find last sentence-ending punctuation in accumulated text
+                        let sentence_ends = ['。', '！', '？', '.', '!', '?', '\n'];
+                        // Search from the budget point onward for a sentence boundary
+                        let text_chars: Vec<char> = current_text.chars().collect();
+                        let search_start = if max_output_chars > 10 { max_output_chars - 10 } else { 0 };
+                        let mut cut_pos = None;
+                        for (i, &ch) in text_chars.iter().enumerate().skip(search_start) {
+                            if sentence_ends.contains(&ch) {
+                                cut_pos = Some(i + 1); // include the punctuation
                             }
                         }
-                        current_text.push_str(&delta);
-                        text_chars_emitted += delta_chars;
-                    } else {
-                        // Partial delta — truncate at budget boundary
-                        let partial: String = delta.chars().take(remaining).collect();
-                        if let Some(ref cb) = self.on_text_chunk {
-                            if !self.stream_suppressed.load(Ordering::Acquire) {
-                                cb(&partial);
-                            }
+
+                        if let Some(pos) = cut_pos {
+                            // Truncate at sentence boundary
+                            let truncated_text: String = text_chars[..pos].iter().collect();
+                            current_text = truncated_text;
+                            text_chars_emitted = pos;
+                            truncated = true;
+                            tracing::info!(
+                                "Stream truncated at sentence boundary: {} chars (budget={})",
+                                text_chars_emitted, max_output_chars,
+                            );
+                        } else if text_chars_emitted >= max_output_chars + overflow_limit {
+                            // Hard cut if no sentence boundary found within overflow
+                            let hard_text: String = text_chars.iter().take(max_output_chars + overflow_limit).collect();
+                            current_text = hard_text;
+                            text_chars_emitted = max_output_chars + overflow_limit;
+                            truncated = true;
+                            tracing::info!(
+                                "Stream hard-truncated at {} chars (no sentence boundary within overflow, budget={})",
+                                text_chars_emitted, max_output_chars,
+                            );
                         }
-                        current_text.push_str(&partial);
-                        text_chars_emitted += remaining;
-                        tracing::info!(
-                            "Stream truncated at {} chars (budget={})",
-                            text_chars_emitted, max_output_chars,
-                        );
+                        // else: still within overflow window, keep going
                     }
                 }
                 StreamEvent::ToolUseStart { id, name } => {
@@ -546,11 +566,13 @@ impl ReasoningEngine {
                 state_snapshot: self.coordinator.state().read().await.clone(),
                 lifecycle: self.coordinator.lifecycle_state().await,
                 content_valence: 0.0,
+                deja_vu_path: None,
             }
         };
 
         let somatic_marker = interaction_result.somatic_marker;
         let content_valence = interaction_result.content_valence;
+        let deja_vu_path = interaction_result.deja_vu_path;
 
         // === Extract curiosity interests (ADR-007 behavior loop) ===
         let top_interests = interaction_result
@@ -635,6 +657,7 @@ impl ReasoningEngine {
                 &top_interests,
                 is_user_message,
                 intent_context,
+                deja_vu_path.as_deref(),
             )
             .await?;
         let system_prompt = assembled.system_prompt;

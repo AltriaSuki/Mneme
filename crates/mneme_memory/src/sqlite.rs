@@ -957,11 +957,31 @@ impl SqliteMemory {
     pub async fn check_content_ownership(&self, text: &str) -> Option<String> {
         // Extract code blocks: lines with programming tokens, bridging empty-line gaps
         let code_tokens = ["import", "def ", "class ", "fn ", "let ", "const ", "var ",
-                           "print", "return", "if ", "for ", "while ", "=", "(", "{", "//", "#!"];
+                           "print", "return", "if ", "for ", "while ", "=", "(", "{",
+                           "//", "#", "\"\"\"", "'''", "->"];
         let lines: Vec<&str> = text.lines().collect();
-        let is_code: Vec<bool> = lines.iter()
-            .map(|l| l.trim().is_empty() || code_tokens.iter().any(|t| l.contains(t)))
-            .collect();
+
+        // Track triple-quote state: lines inside """...""" or '''...''' are code
+        let mut in_triple_quote = false;
+        let mut is_code: Vec<bool> = Vec::with_capacity(lines.len());
+        for l in &lines {
+            let trimmed = l.trim();
+            // Count triple-quote toggles on this line
+            let dq_count = trimmed.matches("\"\"\"").count();
+            let sq_count = trimmed.matches("'''").count();
+            let toggles = dq_count + sq_count;
+
+            let code = in_triple_quote
+                || trimmed.is_empty()
+                || code_tokens.iter().any(|t| l.contains(t))
+                || l.starts_with(' ') || l.starts_with('\t');
+            is_code.push(code);
+
+            // Odd number of triple-quotes toggles the state
+            if toggles % 2 == 1 {
+                in_triple_quote = !in_triple_quote;
+            }
+        }
 
         // Find contiguous runs, then trim leading/trailing empty lines
         let mut i = 0;
