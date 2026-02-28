@@ -728,10 +728,15 @@ impl OrganismCoordinator {
         if intensity < 0.15 && ownership_amplifier <= 1.0 {
             return;
         }
-        let effective_intensity = (intensity * 0.5 * ownership_amplifier).min(1.0);
+        let effective_intensity = if ownership_amplifier > 1.0 {
+            // B-18: Owned artifact loss — floor at 0.5 regardless of text sentiment
+            (intensity * 0.5 * ownership_amplifier).max(0.5).min(1.0)
+        } else {
+            (intensity * 0.5).min(1.0)
+        };
         let effective_valence = if ownership_amplifier > 1.0 {
-            // Force negative valence for owned artifact loss
-            valence.min(-0.4)
+            // Force strong negative valence for owned artifact loss
+            valence.min(-0.6)
         } else {
             valence
         };

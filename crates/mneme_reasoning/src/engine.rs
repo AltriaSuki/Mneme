@@ -798,6 +798,13 @@ impl ReasoningEngine {
                             any_permanent_fail = true;
                             self.record_tool_failure(name, &outcome.content).await;
                         }
+                        // B-18: Error output also feeds perceptual input —
+                        // file-not-found for owned artifacts must trigger grief
+                        if outcome.content.len() > 20 {
+                            self.coordinator
+                                .process_perceptual_input(&outcome.content)
+                                .await;
+                        }
                     } else {
                         // B-18: Detect file creation in shell commands → record owned artifacts
                         if name.as_str() == "shell" {
