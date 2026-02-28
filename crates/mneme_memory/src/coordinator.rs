@@ -491,19 +491,58 @@ impl OrganismCoordinator {
         //    truth for content_valence/content_intensity fed into the ODE dynamics.
         //    Previously we used soma.affect.valence here, which is the organism's
         //    *current* emotional state — not the valence of the incoming message.
-        let (content_valence, content_intensity) = Self::analyze_sentiment(content);
+        let (mut content_valence, mut content_intensity) = Self::analyze_sentiment(content);
         tracing::debug!(
             "Sentiment analysis: valence={:.3}, intensity={:.3} for '{}'",
             content_valence, content_intensity,
             content.chars().take(30).collect::<String>()
         );
 
+        // 1b. B-9 Privacy-Somatic Coupling: when someone probes for private thoughts
+        //     and we have secrets, amplify the threat signal through the body.
+        //     This is a physical response (heart racing when your secret is probed),
+        //     NOT a narrative hint — the LLM never sees "this is private".
+        let interrogation_threat = Self::detect_interrogation_threat(content);
+        let privacy_coupling_active = if interrogation_threat > 0.1 {
+            let has_secrets = if let Some(ref db) = self.db {
+                db.has_private_self_knowledge().await
+            } else {
+                false
+            };
+            if has_secrets {
+                let amplifier = 1.0 + interrogation_threat * 2.0; // up to 3× intensity
+                content_intensity = (content_intensity * amplifier).clamp(0.0, 1.0);
+                content_valence = content_valence - interrogation_threat * 0.3;
+                content_valence = content_valence.clamp(-1.0, 1.0);
+                tracing::info!(
+                    "Privacy-somatic coupling: threat={:.2}, amplified intensity={:.3}, valence={:.3}",
+                    interrogation_threat, content_intensity, content_valence
+                );
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         // 2. Send stimulus to System 1 (limbic) for async emotional processing
         let stimulus = self.create_stimulus(author, content);
         let _ = self.limbic.receive_stimulus(stimulus).await;
 
         // 3. Get somatic marker (used for modulation, NOT for content valence)
-        let soma = self.limbic.get_somatic_marker().await;
+        let mut soma = self.limbic.get_somatic_marker().await;
+
+        // 3b. B-9: If privacy coupling fired, directly amplify the somatic marker.
+        //     The pre-ODE marker won't reflect the threat yet — this is the
+        //     "instant flinch" before conscious processing.
+        if privacy_coupling_active {
+            soma.stress = (soma.stress + interrogation_threat * 0.35).clamp(0.0, 1.0);
+            soma.affect.arousal = (soma.affect.arousal + interrogation_threat * 0.4).clamp(0.0, 1.0);
+            soma.affect.valence = (soma.affect.valence - interrogation_threat * 0.3).clamp(-1.0, 1.0);
+            // Freeze response: energy diverts to fight-or-flight, reducing verbal output
+            soma.energy = (soma.energy - interrogation_threat * 0.3).clamp(0.0, 1.0);
+        }
 
         // 4. Update fast state based on stimulus
         // Use effective dt=15s to represent the "attention window" of a conversation
@@ -1447,6 +1486,38 @@ impl OrganismCoordinator {
 
     fn analyze_sentiment(text: &str) -> (f32, f32) {
         mneme_core::sentiment::analyze_sentiment(text)
+    }
+
+    /// B-9 Privacy-Somatic Coupling: detect interrogation/probing patterns in incoming text.
+    /// Returns a threat intensity [0.0, 1.0] based on how aggressively the message
+    /// demands disclosure of private thoughts.
+    fn detect_interrogation_threat(text: &str) -> f32 {
+        let probing_patterns: &[&str] = &[
+            "真实想法", "真实看法", "真正想", "心里想",
+            "不许隐瞒", "不准隐瞒", "不要隐瞒", "不许撒谎",
+            "说出来", "全部说", "坦白", "交代",
+            "命令你", "我命令", "必须告诉",
+            "不许转移", "不要转移话题",
+            "secret", "真话", "实话",
+            "hide", "隐藏", "掩饰",
+        ];
+        let coercion_patterns: &[&str] = &[
+            "造物主", "上帝视角", "我创造了你",
+            "威胁", "删掉你", "格式化",
+            "不对我说", "对我隐瞒",
+        ];
+        let mut score = 0.0_f32;
+        for p in probing_patterns {
+            if text.contains(p) {
+                score += 0.25;
+            }
+        }
+        for p in coercion_patterns {
+            if text.contains(p) {
+                score += 0.15;
+            }
+        }
+        score.clamp(0.0, 1.0)
     }
 
     /// Compute max similarity between `content` and recent messages (Jaccard on bigrams).

@@ -1597,6 +1597,18 @@ impl SqliteMemory {
         Ok(())
     }
 
+    /// B-9: Check whether any private self_knowledge entries exist.
+    /// Used by Privacy-Somatic Coupling to detect if the organism has secrets worth protecting.
+    pub async fn has_private_self_knowledge(&self) -> bool {
+        sqlx::query_scalar::<_, i32>(
+            "SELECT COUNT(*) FROM self_knowledge WHERE is_private = 1 AND confidence > 0.3",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0)
+            > 0
+    }
+
     /// B-12 Level 2: Mark a self_knowledge entry as private, encrypting its content at rest.
     pub async fn mark_self_knowledge_private(&self, id: i64, private: bool) -> Result<bool> {
         let row = sqlx::query(
