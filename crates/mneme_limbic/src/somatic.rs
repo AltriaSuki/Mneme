@@ -377,15 +377,8 @@ impl SomaticMarker {
             s.push_str(&format!("\n[{}: {}]", curiosity_label, interests.join(", ")));
         }
 
-        // Narrative Blind Spot (白皮书 §4.5): prevent over-rationalization
-        if self.narrative_blind_spot() {
-            let hint = match lang {
-                "en" => "[You may not know why you feel this way — you don't need to explain it]",
-                _ => "[你可能不清楚为什么会有这种感觉——不需要解释原因]",
-            };
-            s.push('\n');
-            s.push_str(hint);
-        }
+        // Narrative Blind Spot: physical effect applied in to_modulation_vector_full()
+        // (context_budget reduction), no text hint injected.
 
         s
     }
@@ -446,7 +439,12 @@ impl SomaticMarker {
             self.energy,
         );
         let stress_penalty = self.stress * 0.3;
-        let context_budget_factor = (energy_context - stress_penalty).clamp(0.4, 1.2);
+        // Narrative Blind Spot: when internal state is "off" but not clearly attributable,
+        // reduce context budget to create physical "can't think clearly" effect.
+        // TODO(Phase3): Make learnable
+        let blind_spot_penalty = if self.narrative_blind_spot() { 0.8 } else { 1.0 };
+        let context_budget_factor =
+            ((energy_context - stress_penalty) * blind_spot_penalty).clamp(0.4, 1.2);
 
         let mood_t = (self.mood_bias + 1.0) / 2.0;
         let recall_mood_bias = lerp(
