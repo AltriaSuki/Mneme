@@ -66,6 +66,20 @@ impl ModulationVector {
         ];
         deltas.into_iter().fold(0.0f32, f32::max)
     }
+
+    /// L2 norm of the difference between two ModulationVectors.
+    /// Used by Safety Envelope to detect neural divergence from curves baseline.
+    #[must_use]
+    pub fn l2_divergence(&self, other: &Self) -> f32 {
+        let sq = |a: f32, b: f32| (a - b) * (a - b);
+        (sq(self.max_tokens_factor, other.max_tokens_factor)
+            + sq(self.temperature_delta, other.temperature_delta)
+            + sq(self.context_budget_factor, other.context_budget_factor)
+            + sq(self.recall_mood_bias, other.recall_mood_bias)
+            + sq(self.silence_inclination, other.silence_inclination)
+            + sq(self.typing_speed_factor, other.typing_speed_factor))
+        .sqrt()
+    }
 }
 
 impl Default for ModulationVector {

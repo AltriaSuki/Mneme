@@ -123,6 +123,7 @@ impl NeuralModulator {
     }
 
     /// Blend neural prediction with curves-based ModulationVector.
+    /// Safety Envelope: auto-reduce effective blend when neural diverges too far from curves.
     pub fn blend_with(&self, curves_mv: &ModulationVector, features: &StateFeatures) -> ModulationVector {
         if self.blend <= 0.0 {
             return curves_mv.clone();
@@ -131,7 +132,15 @@ impl NeuralModulator {
         if self.blend >= 1.0 {
             return neural_mv;
         }
-        curves_mv.lerp(&neural_mv, self.blend)
+        // Phase II Safety Envelope: clamp blend when divergence exceeds threshold
+        // TODO(Phase3): Make threshold learnable
+        let divergence = curves_mv.l2_divergence(&neural_mv);
+        let effective_blend = if divergence > 0.5 {
+            self.blend.min(0.3)
+        } else {
+            self.blend
+        };
+        curves_mv.lerp(&neural_mv, effective_blend)
     }
 
     /// Train on a batch of samples using reward-weighted gradient descent.
@@ -529,7 +538,8 @@ impl LiquidNeuralModulator {
     }
 
     /// Read the current hidden state into a ModulationVector (no state mutation).
-    fn readout(&self) -> ModulationVector {
+    /// Public for prediction-error surprise computation (Phase II Step 4).
+    pub fn readout(&self) -> ModulationVector {
         let mut raw = [0.0f32; OUTPUT_DIM];
         for (i, r) in raw.iter_mut().enumerate() {
             let mut sum = self.b_out[i];
@@ -550,6 +560,7 @@ impl LiquidNeuralModulator {
     }
 
     /// Blend LTC output with curves-based ModulationVector.
+    /// Safety Envelope: auto-reduce effective blend when neural diverges too far from curves.
     pub fn blend_with(&mut self, curves_mv: &ModulationVector, features: &StateFeatures, dt_secs: f32) -> ModulationVector {
         if self.blend <= 0.0 {
             return curves_mv.clone();
@@ -558,7 +569,15 @@ impl LiquidNeuralModulator {
         if self.blend >= 1.0 {
             return ltc_mv;
         }
-        curves_mv.lerp(&ltc_mv, self.blend)
+        // Phase II Safety Envelope: clamp blend when divergence exceeds threshold
+        // TODO(Phase3): Make threshold learnable
+        let divergence = curves_mv.l2_divergence(&ltc_mv);
+        let effective_blend = if divergence > 0.5 {
+            self.blend.min(0.3)
+        } else {
+            self.blend
+        };
+        curves_mv.lerp(&ltc_mv, effective_blend)
     }
 
     /// ADR-017: Hebbian weight update modulated by surprise/reward.
