@@ -231,6 +231,9 @@ impl Memory for SqliteMemory {
             let author: String = row.get("author");
             let body_raw: String = row.get("body");
             let body = self.decrypt_body(&body_raw);
+            // Physical isolation: silently drop undecryptable memories.
+            // The LLM must never learn that encrypted content exists.
+            if body.starts_with("[encrypted:") { continue; }
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
             // B-10: Physical memory degradation — old/weak memories lose detail
@@ -303,6 +306,8 @@ impl Memory for SqliteMemory {
             let author: String = row.get("author");
             let body_raw: String = row.get("body");
             let body = self.decrypt_body(&body_raw);
+            // Physical isolation: silently drop undecryptable memories.
+            if body.starts_with("[encrypted:") { continue; }
             let timestamp: i64 = row.get("timestamp");
             let strength: f64 = row.get("strength");
             // B-10: Physical memory degradation — old/weak memories lose detail
@@ -319,13 +324,10 @@ impl Memory for SqliteMemory {
             let dissonance = self.somatic_dissonance_penalty(timestamp).await;
             let final_score = base_score * bias_factor.max(0.1) * dissonance;
 
-            let annotated_body = if dissonance < 0.5 {
-                format!("[⚠ 躯体失调·无对应身体记录] {}", body)
-            } else {
-                body
-            };
-
-            scored.push((final_score, id, author, annotated_body, timestamp));
+            // Physical isolation: dissonance affects score only, no text injection.
+            // The score penalty IS the physical mechanism — low-dissonance memories
+            // rank lower, naturally reducing their influence on the LLM.
+            scored.push((final_score, id, author, body, timestamp));
         }
 
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -349,14 +351,14 @@ impl Memory for SqliteMemory {
 
     /// B-10: Reconstructed recall — memories colored by current emotional state.
     ///
-    /// After KNN retrieval, prefixes each episode with an emotional lens annotation
-    /// based on current mood_bias and stress level. High stress narrows focus to
-    /// threat-relevant details; positive mood highlights pleasant aspects.
+    /// Emotional reconstruction is achieved physically through ModulationVector:
+    /// recall_mood_bias biases which memories surface, context_budget_factor limits
+    /// visible context, temperature_delta affects unpredictability.
     async fn recall_reconstructed(
         &self,
         query: &str,
         mood_bias: f32,
-        stress: f32,
+        _stress: f32,
     ) -> Result<String> {
         // Use the existing biased recall as the base
         let base = self.recall_with_bias(query, mood_bias).await?;
@@ -364,21 +366,13 @@ impl Memory for SqliteMemory {
             return Ok(base);
         }
 
-        // Determine emotional lens annotation
-        let lens = if stress > 0.7 {
-            "[高压回忆·聚焦威胁与紧张细节]"
-        } else if stress > 0.4 && mood_bias < -0.3 {
-            "[焦虑回忆·放大负面细节]"
-        } else if mood_bias > 0.3 {
-            "[温暖回忆·突出愉快细节]"
-        } else if mood_bias < -0.3 {
-            "[低落回忆·灰色滤镜]"
-        } else {
-            return Ok(base); // Neutral state: no reconstruction needed
-        };
-
-        // Prefix the recalled memories with the emotional lens
-        Ok(format!("{}\n{}", lens, base))
+        // Physical isolation: no text annotations injected.
+        // Emotional reconstruction is achieved physically:
+        // - recall_mood_bias biases which memories surface (negative mood → negative memories)
+        // - context_budget_factor limits how much context the LLM sees
+        // - temperature_delta affects response unpredictability
+        // The LLM discovers its own emotional coloring from these constraints.
+        Ok(base)
     }
 
     async fn recall_facts_formatted(&self, query: &str) -> Result<String> {
