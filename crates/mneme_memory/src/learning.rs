@@ -16,6 +16,9 @@ pub struct ModulationSample {
     pub arousal: f32,
     pub mood_bias: f32,
     pub social_need: f32,
+    /// Phase II: boredom for complete StateFeatures reconstruction
+    #[serde(default)]
+    pub boredom: f32,
     pub modulation: ModulationVector,
     pub feedback_valence: f32,
     pub timestamp: i64,
@@ -230,6 +233,7 @@ mod tests {
             arousal: 0.4,
             mood_bias: 0.0,
             social_need: 0.5,
+            boredom: 0.0,
             modulation: mv,
             feedback_valence: valence,
             timestamp: 0,

@@ -1678,6 +1678,11 @@ impl SqliteMemory {
         .collect()
     }
 
+    /// Phase II Step 6: Expose embedding for belief tension cosine similarity.
+    pub fn embed_text(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        self.embedding_model.embed(text)
+    }
+
     /// B-9: Check whether any private self_knowledge entries exist.
     /// Used by Privacy-Somatic Coupling to detect if the organism has secrets worth protecting.
     pub async fn has_private_self_knowledge(&self) -> bool {
@@ -2227,13 +2232,14 @@ impl SqliteMemory {
             .context("Failed to serialize modulation vector")?;
 
         let result = sqlx::query(
-            "INSERT INTO modulation_samples (energy, stress, arousal, mood_bias, social_need, modulation_json, feedback_valence, timestamp, consumed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"
+            "INSERT INTO modulation_samples (energy, stress, arousal, mood_bias, social_need, boredom, modulation_json, feedback_valence, timestamp, consumed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)"
         )
         .bind(sample.energy as f64)
         .bind(sample.stress as f64)
         .bind(sample.arousal as f64)
         .bind(sample.mood_bias as f64)
         .bind(sample.social_need as f64)
+        .bind(sample.boredom as f64)
         .bind(&modulation_json)
         .bind(sample.feedback_valence as f64)
         .bind(sample.timestamp)
@@ -2249,7 +2255,7 @@ impl SqliteMemory {
         use mneme_limbic::ModulationVector;
 
         let rows = sqlx::query(
-            "SELECT id, energy, stress, arousal, mood_bias, social_need, modulation_json, feedback_valence, timestamp FROM modulation_samples WHERE consumed = 0 ORDER BY timestamp ASC"
+            "SELECT id, energy, stress, arousal, mood_bias, social_need, boredom, modulation_json, feedback_valence, timestamp FROM modulation_samples WHERE consumed = 0 ORDER BY timestamp ASC"
         )
         .fetch_all(&self.pool)
         .await
@@ -2268,6 +2274,7 @@ impl SqliteMemory {
                 arousal: row.get::<f64, _>("arousal") as f32,
                 mood_bias: row.get::<f64, _>("mood_bias") as f32,
                 social_need: row.get::<f64, _>("social_need") as f32,
+                boredom: row.get::<f64, _>("boredom") as f32,
                 modulation,
                 feedback_valence: row.get::<f64, _>("feedback_valence") as f32,
                 timestamp: row.get("timestamp"),
@@ -2295,6 +2302,39 @@ impl SqliteMemory {
             .await
             .context("Failed to mark samples consumed")?;
         Ok(())
+    }
+
+    /// Phase II Step 3: Sample a random mini-batch from experience buffer for LTC training.
+    pub async fn sample_experience_batch(&self, batch_size: usize) -> Result<Vec<crate::learning::ModulationSample>> {
+        use mneme_limbic::ModulationVector;
+
+        let rows = sqlx::query(
+            "SELECT id, energy, stress, arousal, mood_bias, social_need, boredom, modulation_json, feedback_valence, timestamp FROM modulation_samples ORDER BY RANDOM() LIMIT ?"
+        )
+        .bind(batch_size as i64)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to sample experience batch")?;
+
+        let mut samples = Vec::with_capacity(rows.len());
+        for row in rows {
+            let json_str: String = row.get("modulation_json");
+            let modulation: ModulationVector = serde_json::from_str(&json_str)
+                .context("Failed to deserialize modulation vector")?;
+            samples.push(crate::learning::ModulationSample {
+                id: row.get("id"),
+                energy: row.get::<f64, _>("energy") as f32,
+                stress: row.get::<f64, _>("stress") as f32,
+                arousal: row.get::<f64, _>("arousal") as f32,
+                mood_bias: row.get::<f64, _>("mood_bias") as f32,
+                social_need: row.get::<f64, _>("social_need") as f32,
+                boredom: row.get::<f64, _>("boredom") as f32,
+                modulation,
+                feedback_valence: row.get::<f64, _>("feedback_valence") as f32,
+                timestamp: row.get("timestamp"),
+            });
+        }
+        Ok(samples)
     }
 
     /// Save learned ModulationCurves (upsert — always id=1).

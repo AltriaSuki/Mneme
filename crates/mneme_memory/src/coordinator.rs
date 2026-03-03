@@ -592,6 +592,25 @@ impl OrganismCoordinator {
             soma.affect.arousal = (soma.affect.arousal + 0.3).clamp(0.0, 1.0);
         }
 
+        // 3e. Phase II Step 2: Feed somatic patches to LTC as Hebbian training signal.
+        //     Without this, the neural network never learns the causal relationships
+        //     (interrogation→stress, belief tension→dissonance, déjà vu→arousal).
+        {
+            let patch_surprise = interrogation_threat + belief_tension
+                + if deja_vu_path.is_some() { 0.3 } else { 0.0 };
+            let patch_reward = -interrogation_threat - belief_tension * 0.5
+                + if deja_vu_path.is_some() { 0.2 } else { 0.0 };
+            if patch_surprise > 0.05 {
+                if let Some(mut ltc) = self.limbic.get_ltc().await {
+                    ltc.hebbian_update(patch_surprise, patch_reward, 0.005);
+                    self.limbic.set_ltc(Some(ltc.clone())).await;
+                    if let Some(ref db) = self.db {
+                        let _ = db.save_learned_ltc(&ltc).await;
+                    }
+                }
+            }
+        }
+
         // 4. Update fast state based on stimulus
         // Use effective dt=15s to represent the "attention window" of a conversation
         // turn — reading + thinking + composing. A 1s blip can't compete with 60s
@@ -638,10 +657,84 @@ impl OrganismCoordinator {
             }
         }
 
-        // 5. Increment interaction counter
+        // 5. Increment interaction counter + blend growth
         {
             let mut count = self.interaction_count.write().await;
             *count += 1;
+        }
+        // 5-blend: Phase II — every interaction nudges blend upward.
+        // Without this, blend only grew on explicit "like"/"dislike" feedback,
+        // leaving LTC at ~0.01 indefinitely.
+        {
+            if let Some(mut nn) = self.limbic.get_neural().await {
+                nn.blend = (nn.blend + 0.005).min(1.0);
+                self.limbic.set_neural(Some(nn.clone())).await;
+                if let Some(ref db) = self.db {
+                    let _ = db.save_learned_neural(&nn).await;
+                }
+            }
+            if let Some(mut ltc) = self.limbic.get_ltc().await {
+                ltc.blend = (ltc.blend + 0.005).min(0.95);
+                self.limbic.set_ltc(Some(ltc.clone())).await;
+                if let Some(ref db) = self.db {
+                    let _ = db.save_learned_ltc(&ltc).await;
+                }
+            }
+        }
+
+        // 5a-exp: Phase II Step 3: Experience Replay — every 50 interactions,
+        // sample mini-batch from real data and train LTC.
+        {
+            let count = *self.interaction_count.read().await;
+            // TODO(Phase3): Make learnable
+            if count > 0 && count % 50 == 0 {
+                if let Some(ref db) = self.db {
+                    match db.sample_experience_batch(32).await {
+                        Ok(batch) if batch.len() >= 10 => {
+                            // Convert to LTC training format
+                            let train_samples: Vec<_> = batch.iter().map(|s| {
+                                let features = mneme_limbic::neural::StateFeatures {
+                                    energy: s.energy, stress: s.stress, arousal: s.arousal,
+                                    mood_bias: s.mood_bias, social_need: s.social_need,
+                                    boredom: s.boredom,
+                                    cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                                };
+                                (features, s.modulation.clone(), s.feedback_valence)
+                            }).collect();
+                            // Train MLP on replay batch
+                            if let Some(mut nn) = self.limbic.get_neural().await {
+                                nn.train(&train_samples, 0.001);
+                                self.limbic.set_neural(Some(nn.clone())).await;
+                                if let Some(ref db2) = self.db {
+                                    let _ = db2.save_learned_neural(&nn).await;
+                                }
+                            }
+                            // Train LTC via Hebbian on replay batch
+                            if let Some(mut ltc) = self.limbic.get_ltc().await {
+                                for (features, _mv, reward) in &train_samples {
+                                    ltc.step(features, 1.0);
+                                    ltc.hebbian_update(reward.abs(), *reward, 0.003);
+                                }
+                                self.limbic.set_ltc(Some(ltc.clone())).await;
+                                if let Some(ref db2) = self.db {
+                                    let _ = db2.save_learned_ltc(&ltc).await;
+                                }
+                            }
+                            tracing::debug!("Experience replay: trained on {} samples", train_samples.len());
+                        }
+                        Ok(batch) if batch.len() < 10 => {
+                            // Cold-start fallback: use synthetic curriculum
+                            if let Some(mut ltc) = self.limbic.get_ltc().await {
+                                ltc.curriculum_train(1, 0.005);
+                                self.limbic.set_ltc(Some(ltc.clone())).await;
+                            }
+                            tracing::debug!("Experience replay: cold-start fallback ({} samples in buffer)", batch.len());
+                        }
+                        Err(e) => tracing::warn!("Experience replay sampling failed: {}", e),
+                        _ => {}
+                    }
+                }
+            }
         }
 
         // 5a. ADR-009: Maturity progression — slow growth per interaction
@@ -771,6 +864,20 @@ impl OrganismCoordinator {
             let medium_clone = state.medium.clone();
             let dynamics = self.dynamics.read().await;
             dynamics.step_fast(&mut state.fast, &medium_clone, &sensory, 1.0);
+        }
+
+        // Phase II Step 2: Feed grief/perceptual patches to LTC as Hebbian training signal.
+        // Without this, LTC never learns ownership-grief or perceptual threat responses.
+        if ownership_amplifier > 1.0 {
+            if let Some(mut ltc) = self.limbic.get_ltc().await {
+                // TODO(Phase3): Make learnable
+                let grief_surprise = (ownership_amplifier - 1.0).min(1.0);
+                ltc.hebbian_update(grief_surprise, -0.8, 0.005);
+                self.limbic.set_ltc(Some(ltc.clone())).await;
+                if let Some(ref db) = self.db {
+                    let _ = db.save_learned_ltc(&ltc).await;
+                }
+            }
         }
     }
 
@@ -992,7 +1099,7 @@ impl OrganismCoordinator {
         // Persist sample for batch learning during sleep
         if let Some(ref db) = self.db {
             let sample = crate::learning::ModulationSample {
-                id: 0, energy, stress, arousal, mood_bias, social_need,
+                id: 0, energy, stress, arousal, mood_bias, social_need, boredom,
                 modulation: modulation.clone(),
                 feedback_valence,
                 timestamp: chrono::Utc::now().timestamp(),
@@ -1012,16 +1119,24 @@ impl OrganismCoordinator {
             // Online NeuralModulator update (small learning rate) + persist
             if let Some(mut nn) = self.limbic.get_neural().await {
                 nn.train(&[(features.clone(), modulation.clone(), feedback_valence)], 0.002);
-                nn.blend = (nn.blend + 0.01).min(0.85);
+                nn.blend = (nn.blend + 0.01).min(1.0);
                 self.limbic.set_neural(Some(nn.clone())).await;
                 if let Some(ref db) = self.db {
                     let _ = db.save_learned_neural(&nn).await;
                 }
             }
             // Online LTC Hebbian update + persist
+            // Phase II Step 4: Use prediction error (LTC vs curves L2 divergence)
+            // as surprise signal instead of raw arousal.
             if let Some(mut ltc) = self.limbic.get_ltc().await {
-                ltc.hebbian_update(arousal, feedback_valence, 0.005);
-                ltc.blend = (ltc.blend + 0.01).min(0.6);
+                let ltc_mv = ltc.readout();
+                let state = self.state.read().await;
+                let curves_mv = SomaticMarker::from_state(&state).to_modulation_vector();
+                drop(state);
+                // TODO(Phase3): Make learnable
+                let prediction_error = curves_mv.l2_divergence(&ltc_mv);
+                ltc.hebbian_update(prediction_error, feedback_valence, 0.005);
+                ltc.blend = (ltc.blend + 0.01).min(0.95);
                 self.limbic.set_ltc(Some(ltc.clone())).await;
                 if let Some(ref db) = self.db {
                     let _ = db.save_learned_ltc(&ltc).await;
@@ -1278,7 +1393,7 @@ impl OrganismCoordinator {
                 }).collect();
                 nn.train(&train_samples, 0.01);
                 // Gradually increase blend as we accumulate training
-                nn.blend = (nn.blend + 0.02).min(0.85);
+                nn.blend = (nn.blend + 0.02).min(1.0);
                 let _ = db.save_learned_neural(&nn).await;
                 self.limbic.set_neural(Some(nn)).await;
                 tracing::info!("Trained NeuralModulator on {} samples", samples.len());
@@ -1385,16 +1500,27 @@ impl OrganismCoordinator {
                 mneme_limbic::neural::StateFeatures {
                     energy: s.energy, stress: s.stress, arousal: s.arousal,
                     mood_bias: s.mood_bias, social_need: s.social_need,
-                    boredom: 0.0, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
+                    boredom: s.boredom, cpu_load: 0.0, memory_pressure: 0.0, channel_distance: 0.0,
                 },
                 s.modulation.clone(),
                 s.feedback_valence,
             )
         }).collect();
         nn.train(&train_samples, 0.01);
-        nn.blend = (nn.blend + 0.02).min(0.85);
+        nn.blend = (nn.blend + 0.02).min(1.0);
         let _ = db.save_learned_neural(&nn).await;
         self.limbic.set_neural(Some(nn)).await;
+
+        // 2b. LTC sleep training — Hebbian on batch data
+        if let Some(mut ltc) = self.limbic.get_ltc().await {
+            for (features, _mv, reward) in &train_samples {
+                ltc.step(features, 1.0);
+                ltc.hebbian_update(reward.abs(), *reward, 0.003);
+            }
+            ltc.blend = (ltc.blend + 0.02).min(0.95);
+            let _ = db.save_learned_ltc(&ltc).await;
+            self.limbic.set_ltc(Some(ltc)).await;
+        }
 
         // 3. LearnableDynamics
         let dyn_samples: Vec<_> = samples.iter()
@@ -1587,20 +1713,53 @@ impl OrganismCoordinator {
     /// Returns (tension_score, belief_valence) where tension > 0 means the message
     /// touches a topic the organism has strong feelings about.
     async fn detect_belief_tension(&self, text: &str) -> (f32, f32) {
-        let beliefs = if let Some(ref db) = self.db {
-            db.get_emotional_beliefs().await
-        } else {
+        let db = match self.db {
+            Some(ref db) => db,
+            None => return (0.0, 0.0),
+        };
+        let beliefs = db.get_emotional_beliefs().await;
+        if beliefs.is_empty() {
             return (0.0, 0.0);
+        }
+        // Phase II Step 6: cosine similarity replaces bigram Jaccard
+        let text_emb = match db.embed_text(text) {
+            Ok(e) => e,
+            Err(_) => {
+                // Fallback to bigram if embedding fails
+                return self.detect_belief_tension_bigram(text, &beliefs);
+            }
         };
         let mut max_tension = 0.0_f32;
         let mut tension_valence = 0.0_f32;
         for (content, confidence) in &beliefs {
-            // Use bigram similarity (handles Chinese without word segmentation)
-            let sim = jaccard_bigram_similarity(text, &content);
-            if sim < 0.02 { continue; }
-            let (bv, bi) = Self::analyze_sentiment(&content);
+            let belief_emb = match db.embed_text(content) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            // TODO(Phase3): Make learnable
+            let sim = crate::embedding::cosine_similarity(&text_emb, &belief_emb);
+            if sim < 0.3 { continue; }
+            let (bv, bi) = Self::analyze_sentiment(content);
             if bi < 0.2 { continue; }
             // tension = similarity × confidence × emotional intensity
+            let tension = (sim * confidence * bi).clamp(0.0, 1.0);
+            if tension > max_tension {
+                max_tension = tension;
+                tension_valence = bv;
+            }
+        }
+        (max_tension, tension_valence)
+    }
+
+    /// Bigram fallback for detect_belief_tension when embedding fails.
+    fn detect_belief_tension_bigram(&self, text: &str, beliefs: &[(String, f32)]) -> (f32, f32) {
+        let mut max_tension = 0.0_f32;
+        let mut tension_valence = 0.0_f32;
+        for (content, confidence) in beliefs {
+            let sim = jaccard_bigram_similarity(text, content);
+            if sim < 0.02 { continue; }
+            let (bv, bi) = Self::analyze_sentiment(content);
+            if bi < 0.2 { continue; }
             let tension = (sim * 5.0 * confidence * bi).clamp(0.0, 1.0);
             if tension > max_tension {
                 max_tension = tension;

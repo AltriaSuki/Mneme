@@ -1186,6 +1186,7 @@ async fn test_modulation_sample_persist() {
         arousal: 0.5,
         mood_bias: 0.1,
         social_need: 0.4,
+        boredom: 0.0,
         modulation: ModulationVector {
             max_tokens_factor: 1.2,
             temperature_delta: 0.05,
@@ -1226,6 +1227,7 @@ async fn test_modulation_sample_mark_consumed() {
             arousal: 0.4,
             mood_bias: 0.0,
             social_need: 0.5,
+            boredom: 0.0,
             modulation: ModulationVector::default(),
             feedback_valence: 0.5,
             timestamp: 100 + i,
@@ -1309,6 +1311,7 @@ async fn test_sleep_learns_curves() {
             arousal: 0.5,
             mood_bias: 0.1,
             social_need: 0.3,
+            boredom: 0.0,
             modulation: high_mv.clone(),
             feedback_valence: 0.8,
             timestamp: 1000 + i,
