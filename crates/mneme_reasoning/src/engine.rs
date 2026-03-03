@@ -582,7 +582,7 @@ impl ReasoningEngine {
             .top_interests(5);
         // === Compute Modulation Vector (temporally smoothed — emotion inertia) ===
         // Use pre-ODE somatic marker so extreme states aren't washed out by tick recovery.
-        let modulation = self.limbic.compute_modulation_for(&somatic_marker).await;
+        let mut modulation = self.limbic.compute_modulation_for(&somatic_marker).await;
 
         tracing::info!(
             "Modulation: max_tokens×{:.2}, temp_delta={:+.2}, context×{:.2}, silence={:.2}",
@@ -598,20 +598,21 @@ impl ReasoningEngine {
         let mut modulated_max_tokens =
             ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32).max(64);
 
-        // Silence inclination → physical token budget compression.
-        // Below 0.3 (normal baseline): no effect. Above 0.3: steep exponential decay.
-        // silence=0.5 → ~0.06×, silence=0.8 → ~0.0005×
+        // Step 5 Silence Reform: silence compresses *context*, not max_tokens.
+        // High silence → see less history → LLM naturally produces shorter responses.
+        // The LLM decides how much to say; we limit what it can see.
+        // silence=0.5 → 0.45× context, silence=0.8 → 0.13× context
         let silence_excess = (modulation.silence_inclination - 0.3).max(0.0);
-        let silence_factor = (-15.0_f32 * silence_excess).exp();
-        modulated_max_tokens = ((modulated_max_tokens as f32 * silence_factor) as u32).max(64);
+        let silence_context_factor = (-4.0_f32 * silence_excess).exp();
+        modulation.context_budget_factor *= silence_context_factor;
 
         tracing::info!(
-            "Physical constraints: base={}, after_energy={}, silence_excess={:.2}, silence_factor={:.3}, final_max_tokens={}",
+            "Physical constraints: base={}, final_max_tokens={}, silence_excess={:.2}, silence_context_factor={:.3}, context×{:.2}",
             base_max_tokens,
-            ((base_max_tokens as f32 * modulation.max_tokens_factor) as u32),
-            silence_excess,
-            silence_factor,
             modulated_max_tokens,
+            silence_excess,
+            silence_context_factor,
+            modulation.context_budget_factor,
         );
 
         // Apply budget degradation cap when exceeded (#62)
