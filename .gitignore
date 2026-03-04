@@ -34,3 +34,11 @@ crates/mneme_memory/.fastembed_cache/
 
 # Runtime artifacts
 training_data.jsonl
+
+# Bench test databases
+mneme_bench*.db
+mneme_bench*.db-shm
+mneme_bench*.db-wal
+
+# Log runtime data (keep log/ structure in git, ignore runtime logs)
+log/live/
