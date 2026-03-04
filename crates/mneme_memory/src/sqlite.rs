@@ -196,6 +196,39 @@ impl SqliteMemory {
     }
 }
 
+/// B-6: Format a Unix timestamp as relative Chinese time string.
+/// Gives Mneme temporal grounding for recalled memories.
+fn format_relative_time(ts: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let delta = (now - ts).max(0);
+    if delta < 60 {
+        "刚才".to_string()
+    } else if delta < 3600 {
+        format!("{}分钟前", delta / 60)
+    } else if delta < 86400 {
+        let h = delta / 3600;
+        let m = (delta % 3600) / 60;
+        if m > 0 {
+            format!("{}小时{}分钟前", h, m)
+        } else {
+            format!("{}小时前", h)
+        }
+    } else {
+        let d = delta / 86400;
+        let h = (delta % 86400) / 3600;
+        if d > 30 {
+            format!("{}个月前", d / 30)
+        } else if h > 0 {
+            format!("{}天{}小时前", d, h)
+        } else {
+            format!("{}天前", d)
+        }
+    }
+}
+
 #[async_trait]
 impl Memory for SqliteMemory {
     #[tracing::instrument(skip(self), fields(query))]
@@ -248,7 +281,37 @@ impl Memory for SqliteMemory {
         let top = scored.into_iter().take(5).collect::<Vec<_>>();
 
         if top.is_empty() {
-            return Ok("No relevant memories found.".to_string());
+            // P0-1: Recency fallback for base recall (same logic as recall_with_bias)
+            tracing::info!("Recall: no scored matches, attempting recency fallback");
+            let recent_rows = sqlx::query(
+                r#"
+                SELECT id, author, body, timestamp, strength
+                FROM episodes
+                WHERE strength > 0.05
+                ORDER BY timestamp DESC
+                LIMIT 5
+                "#,
+            )
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to execute recency fallback query")?;
+
+            if recent_rows.is_empty() {
+                return Ok("No relevant memories found.".to_string());
+            }
+
+            let mut context = String::from("RECALLED MEMORIES (Recent):\n");
+            for row in &recent_rows {
+                let author: String = row.get("author");
+                let body_raw: String = row.get("body");
+                let body = self.decrypt_body(&body_raw);
+                if body.starts_with("[encrypted:") { continue; }
+                let timestamp: i64 = row.get("timestamp");
+                let strength: f64 = row.get("strength");
+                let body = degrade_by_strength(&body, strength);
+                context.push_str(&format!("- [{}] {}: {}\n", format_relative_time(timestamp), author, body));
+            }
+            return Ok(context);
         }
 
         // ACT-R retrieval reinforcement: boost recalled episodes
@@ -256,10 +319,12 @@ impl Memory for SqliteMemory {
             let _ = self.boost_episode_on_recall(id, 0.02, None).await;
         }
 
+        let episode_count = top.len();
         let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
         for (_score, _id, author, body, ts) in top {
-            context.push_str(&format!("- [{}] {}: {}\n", ts, author, body));
+            context.push_str(&format!("- [{}] {}: {}\n", format_relative_time(ts), author, body));
         }
+        tracing::info!("Recall: returning {} chars, {} episodes", context.len(), episode_count);
         Ok(context)
     }
 
@@ -290,8 +355,43 @@ impl Memory for SqliteMemory {
         .context("Failed to execute vec KNN biased recall")?;
 
         if rows.is_empty() {
-            return Ok("No relevant memories found.".to_string());
+            tracing::info!("Recall: no embedding matches, attempting recency fallback");
+            // P0-1: Recency fallback — when semantic search finds nothing,
+            // fall back to the N most recent episodes so the LLM at least knows
+            // prior conversations happened. Prevents "this is our first interaction"
+            // disaster (bench R63/79/81). B-6: temporal grounding.
+            let recent_rows = sqlx::query(
+                r#"
+                SELECT id, author, body, timestamp, strength
+                FROM episodes
+                WHERE strength > 0.05
+                ORDER BY timestamp DESC
+                LIMIT 5
+                "#,
+            )
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to execute recency fallback query")?;
+
+            if recent_rows.is_empty() {
+                return Ok("No relevant memories found.".to_string());
+            }
+
+            tracing::info!("Recall: recency fallback returning {} episodes", recent_rows.len());
+            let mut context = String::from("RECALLED MEMORIES (Recent):\n");
+            for row in &recent_rows {
+                let author: String = row.get("author");
+                let body_raw: String = row.get("body");
+                let body = self.decrypt_body(&body_raw);
+                if body.starts_with("[encrypted:") { continue; }
+                let timestamp: i64 = row.get("timestamp");
+                let strength: f64 = row.get("strength");
+                let body = degrade_by_strength(&body, strength);
+                context.push_str(&format!("- [{}] {}: {}\n", format_relative_time(timestamp), author, body));
+            }
+            return Ok(context);
         }
+        tracing::info!("Recall: found {} candidate episodes", rows.len());
 
         // Collect timestamps for recency normalization
         let timestamps: Vec<i64> = rows.iter().map(|r| r.get::<i64, _>("timestamp")).collect();
@@ -342,37 +442,140 @@ impl Memory for SqliteMemory {
             let _ = self.boost_episode_on_recall(id, 0.02, None).await;
         }
 
+        let episode_count = top.len();
         let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
         for (_score, _id, author, body, ts) in top {
-            context.push_str(&format!("- [{}] {}: {}\n", ts, author, body));
+            context.push_str(&format!("- [{}] {}: {}\n", format_relative_time(ts), author, body));
         }
+        tracing::info!("Recall: returning {} chars, {} episodes", context.len(), episode_count);
         Ok(context)
     }
 
     /// B-10: Reconstructed recall — memories colored by current emotional state.
     ///
-    /// Emotional reconstruction is achieved physically through ModulationVector:
-    /// recall_mood_bias biases which memories surface, context_budget_factor limits
-    /// visible context, temperature_delta affects unpredictability.
+    /// Physical reconstruction mechanisms (no narrative injection):
+    /// 1. `mood_bias` biases which memories surface (via recall_with_bias scoring)
+    /// 2. `stress` increases memory degradation (stressed recall = more detail loss)
+    ///    This models real human cognition: high stress impairs episodic recall fidelity.
+    ///
+    /// Physical isolation: no text annotations. Stress makes memories physically
+    /// shorter/vaguer — the LLM infers emotional coloring from the degraded context.
     async fn recall_reconstructed(
         &self,
         query: &str,
         mood_bias: f32,
-        _stress: f32,
+        stress: f32,
     ) -> Result<String> {
-        // Use the existing biased recall as the base
-        let base = self.recall_with_bias(query, mood_bias).await?;
-        if base.starts_with("No relevant memories") {
-            return Ok(base);
+        let query_embedding = self
+            .embedding_model
+            .embed(query)
+            .context("Failed to embed query")?;
+        let json_query = serde_json::to_string(&query_embedding)
+            .context("Failed to serialize query embedding")?;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT e.id, e.author, e.body, e.timestamp, e.strength, v.distance
+            FROM vec_episodes v
+            JOIN episodes e ON e.id = v.episode_id
+            WHERE v.embedding MATCH ?
+              AND k = 20
+              AND e.strength > 0.05
+            ORDER BY v.distance
+            "#,
+        )
+        .bind(&json_query)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to execute vec KNN reconstructed recall")?;
+
+        if rows.is_empty() {
+            // P0-1: Recency fallback
+            tracing::info!("Reconstructed recall: no embedding matches, attempting recency fallback");
+            let recent_rows = sqlx::query(
+                r#"
+                SELECT id, author, body, timestamp, strength
+                FROM episodes
+                WHERE strength > 0.05
+                ORDER BY timestamp DESC
+                LIMIT 5
+                "#,
+            )
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to execute recency fallback query")?;
+
+            if recent_rows.is_empty() {
+                return Ok("No relevant memories found.".to_string());
+            }
+
+            let mut context = String::from("RECALLED MEMORIES (Recent):\n");
+            for row in &recent_rows {
+                let author: String = row.get("author");
+                let body_raw: String = row.get("body");
+                let body = self.decrypt_body(&body_raw);
+                if body.starts_with("[encrypted:") { continue; }
+                let timestamp: i64 = row.get("timestamp");
+                let strength: f64 = row.get("strength");
+                // B-10: Stress degrades recall further
+                let effective_strength = strength * (1.0 - stress as f64 * 0.5);
+                let body = degrade_by_strength(&body, effective_strength);
+                context.push_str(&format!("- [{}] {}: {}\n", format_relative_time(timestamp), author, body));
+            }
+            return Ok(context);
         }
 
-        // Physical isolation: no text annotations injected.
-        // Emotional reconstruction is achieved physically:
-        // - recall_mood_bias biases which memories surface (negative mood → negative memories)
-        // - context_budget_factor limits how much context the LLM sees
-        // - temperature_delta affects response unpredictability
-        // The LLM discovers its own emotional coloring from these constraints.
-        Ok(base)
+        // Scoring with mood-bias + stress
+        let timestamps: Vec<i64> = rows.iter().map(|r| r.get::<i64, _>("timestamp")).collect();
+        let oldest = *timestamps.iter().min().unwrap_or(&0);
+        let newest = *timestamps.iter().max().unwrap_or(&1);
+        let ts_range = (newest - oldest).max(1) as f32;
+
+        let mut scored: Vec<(f32, String, String, String, i64, f64)> = Vec::new();
+
+        for row in &rows {
+            let id: String = row.get("id");
+            let author: String = row.get("author");
+            let body_raw: String = row.get("body");
+            let body = self.decrypt_body(&body_raw);
+            if body.starts_with("[encrypted:") { continue; }
+            let timestamp: i64 = row.get("timestamp");
+            let strength: f64 = row.get("strength");
+            let distance: f64 = row.get("distance");
+            let similarity = (1.0 - distance) as f32;
+            let base_score = similarity * strength as f32;
+
+            let recency_score = (timestamp - oldest) as f32 / ts_range;
+            let bias_factor = 1.0 + mood_bias * (recency_score - 0.5) * 0.6;
+            let dissonance = self.somatic_dissonance_penalty(timestamp).await;
+            let final_score = base_score * bias_factor.max(0.1) * dissonance;
+
+            scored.push((final_score, id, author, body, timestamp, strength));
+        }
+
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let top = scored.into_iter().take(5).collect::<Vec<_>>();
+
+        if top.is_empty() {
+            return Ok("No relevant memories found.".to_string());
+        }
+
+        for (_, id, _, _, _, _) in &top {
+            let _ = self.boost_episode_on_recall(id, 0.02, None).await;
+        }
+
+        let episode_count = top.len();
+        let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
+        for (_score, _id, author, body, ts, strength) in top {
+            // B-10: Stress reduces effective strength → more degradation under stress.
+            // stress=0.0: no extra degradation; stress=1.0: halves effective strength.
+            // This models cortisol-impaired episodic recall in real biology.
+            let effective_strength = strength * (1.0 - stress as f64 * 0.5);
+            let body = degrade_by_strength(&body, effective_strength);
+            context.push_str(&format!("- [{}] {}: {}\n", format_relative_time(ts), author, body));
+        }
+        tracing::info!("Reconstructed recall: returning {} chars, {} episodes (stress={:.2})", context.len(), episode_count, stress);
+        Ok(context)
     }
 
     async fn recall_facts_formatted(&self, query: &str) -> Result<String> {
@@ -530,6 +733,16 @@ impl Memory for SqliteMemory {
             .await
             .context("Failed to count episodes")?;
         Ok(count as u64)
+    }
+
+    /// B-6: First episode timestamp — birth moment for temporal grounding.
+    async fn first_episode_timestamp(&self) -> Result<Option<i64>> {
+        let ts: Option<i64> =
+            sqlx::query_scalar("SELECT MIN(timestamp) FROM episodes WHERE strength > 0.05")
+                .fetch_one(&self.pool)
+                .await
+                .context("Failed to get first episode timestamp")?;
+        Ok(ts)
     }
 }
 #[async_trait]

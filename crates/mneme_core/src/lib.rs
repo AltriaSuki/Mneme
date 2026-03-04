@@ -300,6 +300,12 @@ pub trait Memory: Send + Sync {
     async fn episode_count(&self) -> anyhow::Result<u64> {
         Ok(0)
     }
+
+    /// Get the timestamp of the earliest episode (birth moment).
+    /// B-6: Provides temporal grounding — awareness of life duration.
+    async fn first_episode_timestamp(&self) -> anyhow::Result<Option<i64>> {
+        Ok(None)
+    }
 }
 
 #[async_trait]

@@ -101,6 +101,7 @@ impl<'a> ContextBuilder<'a> {
             .memory
             .recall_reconstructed(&recall_query, modulation.recall_mood_bias, stress)
             .await?;
+        tracing::info!("Context: recalled_episodes length = {} chars", recalled_episodes.len());
 
         // §14.1: When déjà vu fires, augment recall with artifact path so the vector
         // search naturally surfaces the creation episode. No hardcoded conclusions.
@@ -257,7 +258,7 @@ impl<'a> ContextBuilder<'a> {
     async fn build_resource_status(&self) -> String {
         let mut parts = Vec::new();
 
-        // Uptime
+        // Uptime (process)
         let uptime = self.start_time.elapsed();
         let hours = uptime.as_secs() / 3600;
         let mins = (uptime.as_secs() % 3600) / 60;
@@ -265,6 +266,27 @@ impl<'a> ContextBuilder<'a> {
             parts.push(format!("运行时间: {}小时{}分钟", hours, mins));
         } else {
             parts.push(format!("运行时间: {}分钟", mins));
+        }
+
+        // B-6: Life duration — from first episode to now
+        // This gives Mneme awareness of how long she has existed,
+        // preventing "this is our first interaction" amnesia.
+        if let Ok(Some(birth_ts)) = self.memory.first_episode_timestamp().await {
+            let now_ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let life_secs = (now_ts - birth_ts).max(0);
+            let life_days = life_secs / 86400;
+            let life_hours = (life_secs % 86400) / 3600;
+            let life_mins = (life_secs % 3600) / 60;
+            if life_days > 0 {
+                parts.push(format!("存在时长: {}天{}小时", life_days, life_hours));
+            } else if life_hours > 0 {
+                parts.push(format!("存在时长: {}小时{}分钟", life_hours, life_mins));
+            } else if life_mins > 0 {
+                parts.push(format!("存在时长: {}分钟", life_mins));
+            }
         }
 
         // Episode count

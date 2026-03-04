@@ -8,7 +8,7 @@
 
 use crate::heartbeat::HeartbeatConfig;
 use crate::neural::{LiquidNeuralModulator, NeuralModulator, StateFeatures};
-use crate::somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticMarker};
+use crate::somatic::{BehaviorThresholds, ModulationCurves, ModulationVector, SomaticDecoder, SomaticMarker};
 use crate::surprise::SurpriseDetector;
 use mneme_core::{Affect, DefaultDynamics, Dynamics, FastState, OrganismState, SensoryInput};
 use std::sync::Arc;
@@ -96,6 +96,10 @@ pub struct LimbicSystem {
     /// Layer 2b (ADR-016): Liquid Time-Constant neural modulator.
     /// When present and blend > 0, replaces the static MLP with a dynamical system.
     ltc: RwLock<Option<LiquidNeuralModulator>>,
+
+    /// ADR-018: Somatic Decoder — maps LTC hidden state to Chinese body feelings.
+    /// Replaces raw numeric state in the prompt with decoded semantic descriptions.
+    decoder: SomaticDecoder,
 }
 
 impl LimbicSystem {
@@ -126,6 +130,7 @@ impl LimbicSystem {
             thresholds: RwLock::new(BehaviorThresholds::default()),
             neural: RwLock::new(None),
             ltc: RwLock::new(None),
+            decoder: SomaticDecoder::new(),
         };
 
         // Spawn the heartbeat task
@@ -249,8 +254,22 @@ impl LimbicSystem {
     }
 
     /// Get the current somatic marker (for System 2 context injection)
+    ///
+    /// ADR-018: When LTC is available, decodes its hidden state into a Chinese
+    /// body-feeling description and attaches it to the marker. This replaces
+    /// raw numeric "E=0.59 S=0.72" with "肩膀有点紧，呼吸浅了" in the prompt.
     pub async fn get_somatic_marker(&self) -> SomaticMarker {
-        self.state_watch_rx.borrow().clone()
+        let mut marker = self.state_watch_rx.borrow().clone();
+
+        // ADR-018: Decode LTC hidden state → semantic body feeling
+        if let Some(ltc) = self.ltc.read().await.as_ref() {
+            let feeling = self.decoder.decode(&ltc.state);
+            if !feeling.is_empty() {
+                marker.decoded_body_feeling = Some(feeling);
+            }
+        }
+
+        marker
     }
 
     /// Get a temporally-smoothed modulation vector (emotion inertia).

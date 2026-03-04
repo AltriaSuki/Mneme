@@ -274,6 +274,13 @@ pub struct SomaticMarker {
     /// ADR-019: Channel distance (0.0–1.0)
     #[serde(default)]
     pub channel_distance: f32,
+
+    /// ADR-018: Decoded body feeling from SomaticDecoder (LTC hidden → Chinese description).
+    /// When populated, `format_for_prompt_opacity` uses this instead of raw numbers.
+    /// Physical isolation: this is a semantic projection of the LTC hidden state,
+    /// not a narrative injection.
+    #[serde(default)]
+    pub decoded_body_feeling: Option<String>,
 }
 
 impl SomaticMarker {
@@ -301,6 +308,7 @@ impl SomaticMarker {
             cpu_load: state.fast.env.cpu_load,
             memory_pressure: state.fast.env.memory_pressure,
             channel_distance: state.fast.env.channel_distance,
+            decoded_body_feeling: None, // Filled later by LimbicSystem if LTC available
         }
     }
 
@@ -331,36 +339,55 @@ impl SomaticMarker {
 
     /// ADR-009: Format with progressive opacity based on maturity level.
     /// maturity 0.0 = fully transparent (exact numbers), 1.0 = opaque (no text hints).
+    ///
+    /// ADR-018: When `decoded_body_feeling` is populated (from SomaticDecoder),
+    /// we use the decoded Chinese body description instead of raw numeric state.
+    /// This physically isolates the LTC hidden state from the LLM prompt.
     pub fn format_for_prompt_opacity(&self, lang: &str, maturity: f32) -> String {
         // Level 4 (maturity >= 0.9): no text hints — behavior 100% from structural constraints
         if maturity >= 0.9 {
             return String::new();
         }
 
-        let affect_desc = self.affect.describe();
-        let (state_label, emotion_label, curiosity_label) = match lang {
-            "en" => ("Internal State", "Current Emotion", "Current Curiosities"),
-            _ => ("内部状态", "当前情绪", "当前好奇方向"),
+        let (body_label, emotion_label, curiosity_label) = match lang {
+            "en" => ("Body Feeling", "Current Emotion", "Current Curiosities"),
+            _ => ("身体感受", "当前情绪", "当前好奇方向"),
         };
 
-        let state_line = if maturity < 0.3 {
-            // Level 0-1: transparent — exact numeric values
-            format!(
-                "[{}: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]",
-                state_label,
-                self.energy, self.stress, self.mood_bias, self.affect.valence, self.affect.arousal,
-            )
-        } else if maturity < 0.7 {
-            // Level 2: semi-opaque — qualitative ranges
-            let e = qual_level(self.energy);
-            let s = qual_level(self.stress);
-            let m = qual_signed(self.mood_bias);
-            format!("[{}: E={} S={} M={}]", state_label, e, s, m)
+        // ADR-018: If SomaticDecoder has produced a body feeling, use it
+        // instead of raw numeric state at ALL maturity levels < 0.9.
+        // This replaces "E=0.59 S=0.72 M=-0.15" with "肩膀有点紧，呼吸浅了".
+        let state_line = if let Some(ref feeling) = self.decoded_body_feeling {
+            if feeling.is_empty() {
+                // Decoder returned nothing — fallback to affect description only
+                String::new()
+            } else {
+                format!("[{}: {}]", body_label, feeling)
+            }
         } else {
-            // Level 3: opaque — only affect description, no internals
-            String::new()
+            // No decoder available — use legacy numeric format
+            let state_label = match lang {
+                "en" => "Internal State",
+                _ => "内部状态",
+            };
+            if maturity < 0.3 {
+                format!(
+                    "[{}: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]",
+                    state_label,
+                    self.energy, self.stress, self.mood_bias,
+                    self.affect.valence, self.affect.arousal,
+                )
+            } else if maturity < 0.7 {
+                let e = qual_level(self.energy);
+                let s = qual_level(self.stress);
+                let m = qual_signed(self.mood_bias);
+                format!("[{}: E={} S={} M={}]", state_label, e, s, m)
+            } else {
+                String::new()
+            }
         };
 
+        let affect_desc = self.affect.describe();
         let mut s = if state_line.is_empty() {
             format!("[{}: {}]", emotion_label, affect_desc)
         } else {
