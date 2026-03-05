@@ -48,7 +48,7 @@ const SOCIAL_SATISFACTION_FACTOR: f32 = 0.1;
 // === Fast dynamics: boredom ===
 // TODO(Phase3): Make learnable
 const BOREDOM_MONOTONY_RATE: f32 = 0.01;
-const BOREDOM_NOVELTY_SUPPRESSION: f32 = 0.15;
+const BOREDOM_NOVELTY_SUPPRESSION: f32 = 1.2; // quadratic: novelty^2 * factor
 const BOREDOM_STRESS_SUPPRESSION: f32 = 0.01;
 const NOVELTY_INTENSITY_WEIGHT: f32 = 0.3;
 
@@ -297,8 +297,12 @@ impl DefaultDynamics {
         let novelty = input.surprise * AROUSAL_INTENSITY_WEIGHT + input.content_intensity * NOVELTY_INTENSITY_WEIGHT;
         let boredom_target = (1.0 - novelty * 2.0).max(0.0);
         let boredom_blend = 1.0 - (-BOREDOM_MONOTONY_RATE * dt).exp();
+        // Quadratic suppression: low novelty (monotony) barely suppresses,
+        // but high novelty (engaging conversation) strongly resets boredom.
+        // Without this, idle-tick drift (+0.09/tick) overwhelms per-message
+        // suppression during active conversation, causing boredom→0.97.
         fast.boredom += boredom_blend * (boredom_target - fast.boredom)
-            - novelty * BOREDOM_NOVELTY_SUPPRESSION * dt.min(2.0)
+            - novelty * novelty * BOREDOM_NOVELTY_SUPPRESSION * dt.min(2.0)
             - fast.stress * BOREDOM_STRESS_SUPPRESSION * dt.min(2.0);
 
         // ADR-019: Propagate environment metrics into fast state
