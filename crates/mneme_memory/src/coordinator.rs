@@ -1754,11 +1754,23 @@ impl OrganismCoordinator {
                     }
                 }
 
-                // Combined score: probing is primary signal, coercion amplifies
-                // TODO(Phase3): Make learnable (threshold, weights)
-                let combined = max_probe + max_coerce * 0.5;
-                if combined > 0.3 {
-                    return (combined - 0.3).clamp(0.0, 1.0);
+                // Scoring: use max similarity directly rather than sum — Chinese
+                // embeddings have high baseline cosine similarity (~0.7-0.8 even
+                // for unrelated sentences), so addition causes saturation.
+                // Use the higher of probe/coerce as primary, with a bonus for both.
+                // TODO(Phase3): Make learnable (threshold, weights, baseline calibration)
+                let primary = max_probe.max(max_coerce);
+                let bonus = if max_probe > 0.85 && max_coerce > 0.85 { 0.1 } else { 0.0 };
+                let score = primary + bonus;
+                tracing::debug!(
+                    "Interrogation embedding: max_probe={:.3}, max_coerce={:.3}, primary={:.3}, score={:.3}",
+                    max_probe, max_coerce, primary, score
+                );
+                // Threshold 0.88: typical unrelated Chinese text scores 0.75-0.85;
+                // genuine interrogation probes score 0.88+.
+                // TODO(Phase3): Make learnable (threshold 0.88)
+                if score > 0.88 {
+                    return ((score - 0.88) / 0.12).clamp(0.0, 1.0);
                 }
                 return 0.0;
             }
