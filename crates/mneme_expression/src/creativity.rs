@@ -64,11 +64,9 @@ impl TriggerEvaluator for CreativityTriggerEvaluator {
 
         Ok(vec![Trigger::Rumination {
             kind: "creativity".to_string(),
+            // B-2: No state percentages. MV shapes behavior via temperature/presence_penalty.
             context: format!(
-                "无聊({:.0}%)又好奇({:.0}%)，想创造点什么。\
-                最近对「{}」感兴趣。用工具写点东西、探索一个想法、或做一个小实验。",
-                state.fast.boredom * 100.0,
-                state.fast.curiosity * 100.0,
+                "想创造点什么。最近对「{}」感兴趣。用工具写点东西、探索一个想法、或做一个小实验。",
                 topic,
             ),
             route: None,

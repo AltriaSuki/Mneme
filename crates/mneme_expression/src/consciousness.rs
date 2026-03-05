@@ -131,13 +131,14 @@ impl ConsciousnessGate {
     }
 
     /// Build seed content from body feelings for the monologue prompt.
+    /// B-2: Only body feeling text (decoded from SomaticDecoder), no intensity percentages.
     fn build_seed(feelings: &[(String, f32)]) -> String {
         if feelings.is_empty() {
             return "内部状态发生了变化".to_string();
         }
         feelings
             .iter()
-            .map(|(text, intensity)| format!("{}(强度{:.0}%)", text, intensity * 100.0))
+            .map(|(text, _intensity)| text.clone())
             .collect::<Vec<_>>()
             .join("；")
     }
@@ -419,8 +420,9 @@ mod tests {
         let seed = ConsciousnessGate::build_seed(&feelings);
         assert!(seed.contains("有点累了"));
         assert!(seed.contains("心跳加快"));
-        assert!(seed.contains("50%"));
-        assert!(seed.contains("80%"));
+        // B-2: No intensity percentages in seed text
+        assert!(!seed.contains('%'), "should not contain percentages: {}", seed);
+        assert_eq!(seed, "有点累了；心跳加快");
     }
 
     #[test]

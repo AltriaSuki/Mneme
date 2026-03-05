@@ -343,71 +343,49 @@ impl SomaticMarker {
     /// ADR-018: When `decoded_body_feeling` is populated (from SomaticDecoder),
     /// we use the decoded Chinese body description instead of raw numeric state.
     /// This physically isolates the LTC hidden state from the LLM prompt.
+    ///
+    /// B-2 compliance: No raw state values (energy, stress, valence, arousal) as text.
+    /// The only permitted text channels are:
+    ///   - decoded_body_feeling (ADR-018: decoded representation, not raw numbers)
+    ///   - curiosity topic names (factual content, no intensity percentages)
+    /// All other state influence flows through ModulationVector (temperature, max_tokens, etc.).
     pub fn format_for_prompt_opacity(&self, lang: &str, maturity: f32) -> String {
         // Level 4 (maturity >= 0.9): no text hints — behavior 100% from structural constraints
         if maturity >= 0.9 {
             return String::new();
         }
 
-        let (body_label, emotion_label, curiosity_label) = match lang {
-            "en" => ("Body Feeling", "Current Emotion", "Current Curiosities"),
-            _ => ("身体感受", "当前情绪", "当前好奇方向"),
+        let (body_label, curiosity_label) = match lang {
+            "en" => ("Body Feeling", "Current Curiosities"),
+            _ => ("身体感受", "当前好奇方向"),
         };
 
-        // ADR-018: If SomaticDecoder has produced a body feeling, use it
-        // instead of raw numeric state at ALL maturity levels < 0.9.
-        // This replaces "E=0.59 S=0.72 M=-0.15" with "肩膀有点紧，呼吸浅了".
-        let state_line = if let Some(ref feeling) = self.decoded_body_feeling {
-            if feeling.is_empty() {
-                // Decoder returned nothing — fallback to affect description only
-                String::new()
-            } else {
-                format!("[{}: {}]", body_label, feeling)
+        // ADR-018: If SomaticDecoder has produced a body feeling, use it.
+        // B-2: No legacy numeric fallback — when decoder is absent, no state text at all.
+        let mut parts: Vec<String> = Vec::new();
+
+        if let Some(ref feeling) = self.decoded_body_feeling {
+            if !feeling.is_empty() {
+                parts.push(format!("[{}: {}]", body_label, feeling));
             }
-        } else {
-            // No decoder available — use legacy numeric format
-            let state_label = match lang {
-                "en" => "Internal State",
-                _ => "内部状态",
-            };
-            if maturity < 0.3 {
-                format!(
-                    "[{}: E={:.2} S={:.2} M={:.2} A={:.2}/{:.2}]",
-                    state_label,
-                    self.energy, self.stress, self.mood_bias,
-                    self.affect.valence, self.affect.arousal,
-                )
-            } else if maturity < 0.7 {
-                let e = qual_level(self.energy);
-                let s = qual_level(self.stress);
-                let m = qual_signed(self.mood_bias);
-                format!("[{}: E={} S={} M={}]", state_label, e, s, m)
-            } else {
-                String::new()
-            }
-        };
+        }
+        // B-2: Removed [当前情绪: affect.describe()] — that was state→text leakage.
+        // Emotion influence flows through MV's temperature_delta and recall_mood_bias.
 
-        let affect_desc = self.affect.describe();
-        let mut s = if state_line.is_empty() {
-            format!("[{}: {}]", emotion_label, affect_desc)
-        } else {
-            format!("{}\n[{}: {}]", state_line, emotion_label, affect_desc)
-        };
-
-        // ADR-007: Inject curiosity direction
+        // ADR-007: Inject curiosity direction (topic names only, no intensity percentages)
         if !self.curiosity_interests.is_empty() {
-            let interests: Vec<String> = self
+            let topics: Vec<&str> = self
                 .curiosity_interests
                 .iter()
-                .map(|(t, i)| format!("{}({:.0}%)", t, i * 100.0))
+                .map(|(t, _)| t.as_str())
                 .collect();
-            s.push_str(&format!("\n[{}: {}]", curiosity_label, interests.join(", ")));
+            parts.push(format!("[{}: {}]", curiosity_label, topics.join(", ")));
         }
 
         // Narrative Blind Spot: physical effect applied in to_modulation_vector_full()
         // (context_budget reduction), no text hint injected.
 
-        s
+        parts.join("\n")
     }
 
     /// Convert somatic marker to a structural modulation vector.
@@ -631,16 +609,6 @@ impl SomaticMarker {
 /// Linear interpolation helper
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t.clamp(0.0, 1.0)
-}
-
-/// ADR-009: Qualitative level for 0.0–1.0 values (opacity Level 2).
-fn qual_level(v: f32) -> &'static str {
-    if v < 0.3 { "low" } else if v < 0.7 { "mid" } else { "high" }
-}
-
-/// ADR-009: Qualitative level for -1.0–1.0 signed values (opacity Level 2).
-fn qual_signed(v: f32) -> &'static str {
-    if v < -0.3 { "neg" } else if v > 0.3 { "pos" } else { "neutral" }
 }
 
 // ============================================================================
@@ -1086,12 +1054,9 @@ mod tests {
         let marker = SomaticMarker::from_state(&state);
         let prompt = marker.format_for_prompt();
 
-        // Should be compact numeric format, not verbose Chinese text
-        assert!(prompt.starts_with("[内部状态:"));
-        assert!(prompt.contains("E="));
-        assert!(prompt.contains("S="));
-        assert!(prompt.contains("M="));
-        assert!(prompt.contains("A="));
+        // B-2: Default state with no decoder produces empty (no state text leakage).
+        // All state influence flows through ModulationVector.
+        assert!(prompt.is_empty(), "expected empty prompt but got: {}", prompt);
     }
 
     #[test]

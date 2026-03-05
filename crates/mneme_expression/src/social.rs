@@ -83,9 +83,9 @@ impl TriggerEvaluator for SocialTriggerEvaluator {
 
         Ok(vec![Trigger::Rumination {
             kind: "social_outreach".to_string(),
+            // B-2: No state percentages. Keep factual context (name, time, notes).
             context: format!(
-                "社交需求很高({:.0}%)，想和{}聊聊。上次互动: {}。{}",
-                state.fast.social_need * 100.0,
+                "想和{}聊聊。上次互动: {}。{}",
                 contact.person.name,
                 contact
                     .last_interaction_ts

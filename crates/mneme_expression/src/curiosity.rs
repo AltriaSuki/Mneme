@@ -65,11 +65,10 @@ impl TriggerEvaluator for CuriosityTriggerEvaluator {
 
         Ok(vec![Trigger::Rumination {
             kind: "curiosity_exploration".to_string(),
+            // B-2: No state percentages. Topic is factual, not state.
             context: format!(
-                "好奇心很强({:.0}%)，特别想了解「{}」(兴趣强度{:.0}%)。用工具搜索或探索这个话题，然后分享发现。",
-                state.fast.curiosity * 100.0,
+                "特别想了解「{}」。用工具搜索或探索这个话题，然后分享发现。",
                 topic,
-                intensity * 100.0,
             ),
             route: None,
         }])

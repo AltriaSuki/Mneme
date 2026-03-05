@@ -497,7 +497,7 @@ async fn main() -> anyhow::Result<()> {
                 _ => Arc::new(AnthropicClient::new(&config.llm.model, timeout, config.llm.base_url.as_deref())?),
             };
             registry.register(Box::new(mneme_reasoning::ReadingToolHandler::new(
-                reading_client, memory.clone(), coordinator.state(),
+                reading_client, memory.clone(),
             )));
         }
 

@@ -2,13 +2,11 @@ use crate::api_types::{ContentBlock, Message, Role, Tool, ToolInputSchema};
 use crate::engine::{RuntimeParams, ToolErrorKind, ToolOutcome};
 use crate::llm::{CompletionParams, LlmClient};
 use crate::tool_registry::ToolHandler;
-use mneme_core::OrganismState;
 use mneme_memory::SqliteMemory;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
-use tokio::sync::RwLock;
 
 /// JSON schema for the shell tool.
 pub fn shell_tool() -> Tool {
@@ -351,30 +349,26 @@ impl ToolHandler for ConfigToolHandler {
 pub struct ReadingToolHandler {
     llm: Arc<dyn LlmClient>,
     db: Arc<SqliteMemory>,
-    state: Arc<RwLock<OrganismState>>,
 }
 
 impl ReadingToolHandler {
     pub fn new(
         llm: Arc<dyn LlmClient>,
         db: Arc<SqliteMemory>,
-        state: Arc<RwLock<OrganismState>>,
     ) -> Self {
-        Self { llm, db, state }
+        Self { llm, db }
     }
 
     async fn reflect_and_store(&self, title: &str, text: &str) -> ToolOutcome {
-        let st = self.state.read().await;
-        let mood = st.fast.affect.describe();
+        // B-2: No state text injection. MV shapes behavior via temperature/max_tokens.
         let prompt = format!(
-            "你正在阅读「{}」。你当前的内心状态：情绪={}，精力={:.0}%，压力={:.0}%。\n\n\
+            "你正在阅读「{}」。\n\n\
              以下是阅读材料（节选）：\n{}\n\n\
              请写出你的阅读感想。不需要总结内容，而是写出这段文字让你联想到什么、触动了什么、\
              与你自身经历或价值观的共鸣或冲突。用第一人称，简短真实。",
-            title, mood, st.fast.energy * 100.0, st.fast.stress * 100.0,
+            title,
             &text[..text.len().min(6000)]
         );
-        drop(st);
 
         let messages = vec![Message {
             role: Role::User,

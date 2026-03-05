@@ -179,13 +179,20 @@ proptest! {
     }
 
     /// **format_for_prompt** always produces a well-formed string.
+    /// B-2: With no decoder; output is empty or curiosity-topics-only.
     #[test]
     fn format_for_prompt_well_formed(state in arb_organism_state()) {
         let marker = SomaticMarker::from_state(&state);
         let prompt = marker.format_for_prompt();
-        prop_assert!(prompt.starts_with("[内部状态:"));
-        prop_assert!(prompt.ends_with("]"));
-        prop_assert!(prompt.contains("E="));
+        // B-2: No raw state values (E=, S=, M=, A=) in output
+        prop_assert!(!prompt.contains("E="), "state leakage: {}", prompt);
+        prop_assert!(!prompt.contains("S="), "state leakage: {}", prompt);
+        prop_assert!(!prompt.contains("M="), "state leakage: {}", prompt);
+        // Output is either empty or well-formed bracket blocks
+        if !prompt.is_empty() {
+            prop_assert!(prompt.starts_with("["), "bad format: {}", prompt);
+            prop_assert!(prompt.ends_with("]"), "bad format: {}", prompt);
+        }
     }
 
     /// **proactivity_urgency** is always in [0, 1].

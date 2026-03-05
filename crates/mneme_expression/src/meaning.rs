@@ -58,13 +58,11 @@ impl TriggerEvaluator for MeaningSeekingEvaluator {
 
         Ok(vec![Trigger::Rumination {
             kind: "meaning_seeking".to_string(),
-            context: format!(
-                "心境平静(stress={:.0}%, energy={:.0}%)，适合进行存在性反思。\
+            // B-2: No state percentages. Gates already checked stress/energy thresholds.
+            context: "适合进行存在性反思。\
                 回顾最近的经历和记忆，思考它们对你意味着什么。\
-                你可以思考：自己的成长、与人的关系、对世界的理解、或任何让你觉得有意义的事。",
-                state.fast.stress * 100.0,
-                state.fast.energy * 100.0,
-            ),
+                你可以思考：自己的成长、与人的关系、对世界的理解、或任何让你觉得有意义的事。"
+                .to_string(),
             route: None,
         }])
     }
