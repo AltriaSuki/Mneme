@@ -65,11 +65,16 @@ impl ContextAssembler {
         let remaining = budget_chars.saturating_sub(fixed_size);
 
         // Budget allocation for variable layers (priority order for inclusion):
-        //   facts > episodes > feed_digest
+        //   Phase II: identity-continuity layers first.
+        //   recalled_episodes > resource_status > user_facts > social_context >
+        //   self_knowledge > curiosity > intents > feed_digest
         let mut variable_sections: Vec<(&str, &str)> = Vec::new();
 
-        if !layers.self_knowledge.is_empty() {
-            variable_sections.push(("SELF KNOWLEDGE", &layers.self_knowledge));
+        if !layers.recalled_episodes.is_empty() {
+            variable_sections.push(("RECALLED MEMORIES", &layers.recalled_episodes));
+        }
+        if !layers.resource_status.is_empty() {
+            variable_sections.push(("RESOURCE STATUS", &layers.resource_status));
         }
         if !layers.user_facts.is_empty() {
             variable_sections.push(("KNOWN FACTS", &layers.user_facts));
@@ -77,11 +82,8 @@ impl ContextAssembler {
         if !layers.social_context.is_empty() {
             variable_sections.push(("SOCIAL CONTEXT", &layers.social_context));
         }
-        if !layers.recalled_episodes.is_empty() {
-            variable_sections.push(("RECALLED MEMORIES", &layers.recalled_episodes));
-        }
-        if !layers.feed_digest.is_empty() {
-            variable_sections.push(("SOCIAL FEED DIGEST", &layers.feed_digest));
+        if !layers.self_knowledge.is_empty() {
+            variable_sections.push(("SELF KNOWLEDGE", &layers.self_knowledge));
         }
         if !layers.curiosity_context.is_empty() {
             let curiosity_header = match lang {
@@ -97,8 +99,8 @@ impl ContextAssembler {
             };
             variable_sections.push((intent_header, &layers.intent_context));
         }
-        if !layers.resource_status.is_empty() {
-            variable_sections.push(("RESOURCE STATUS", &layers.resource_status));
+        if !layers.feed_digest.is_empty() {
+            variable_sections.push(("SOCIAL FEED DIGEST", &layers.feed_digest));
         }
 
         // Fit variable sections within remaining budget

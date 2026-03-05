@@ -97,11 +97,20 @@ impl<'a> ContextBuilder<'a> {
                 .join(" ");
             format!("{} {}", input_text, curiosity_suffix)
         };
+
+        // Phase II: Episode recall budget derived from MV's context_budget_factor.
+        // No hardcoded episode count — recall fills chars proportionally to available context.
+        // Episodes get ~40% of the variable context budget (persona/style are fixed overhead).
+        let factor = modulation.context_budget_factor.max(0.1);
+        let total_context_budget = (self.context_budget_chars as f32 * factor) as usize;
+        // TODO(Phase3): Make episode_budget_fraction learnable via MV output dimension
+        let episode_budget_chars = total_context_budget * 2 / 5;
+
         let mut recalled_episodes = self
             .memory
-            .recall_reconstructed(&recall_query, modulation.recall_mood_bias, stress)
+            .recall_reconstructed(&recall_query, modulation.recall_mood_bias, stress, episode_budget_chars)
             .await?;
-        tracing::info!("Context: recalled_episodes length = {} chars", recalled_episodes.len());
+        tracing::info!("Context: recalled_episodes length = {} chars (budget={})", recalled_episodes.len(), episode_budget_chars);
 
         // §14.1: When déjà vu fires, augment recall with artifact path so the vector
         // search naturally surfaces the creation episode. No hardcoded conclusions.
@@ -112,6 +121,7 @@ impl<'a> ContextBuilder<'a> {
                     &format!("创建文件 {}", path),
                     modulation.recall_mood_bias,
                     stress,
+                    episode_budget_chars / 2,
                 )
                 .await
                 .unwrap_or_default();
@@ -157,10 +167,8 @@ impl<'a> ContextBuilder<'a> {
         };
 
         // 3. Assemble 6-layer context with modulated budget
-        // Guard against negative or tiny factors: floor at 10% of base budget
-        let factor = modulation.context_budget_factor.max(0.1);
-        let context_budget =
-            (self.context_budget_chars as f32 * factor) as usize;
+        // factor and total_context_budget already computed above for episode recall
+        let context_budget = total_context_budget;
 
         let context_layers = ContextLayers {
             user_facts: facts,

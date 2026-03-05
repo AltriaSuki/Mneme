@@ -465,6 +465,7 @@ impl Memory for SqliteMemory {
         query: &str,
         mood_bias: f32,
         stress: f32,
+        max_chars: usize,
     ) -> Result<String> {
         let query_embedding = self
             .embedding_model
@@ -554,27 +555,30 @@ impl Memory for SqliteMemory {
         }
 
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let top = scored.into_iter().take(5).collect::<Vec<_>>();
 
-        if top.is_empty() {
+        if scored.is_empty() {
             return Ok("No relevant memories found.".to_string());
         }
 
-        for (_, id, _, _, _, _) in &top {
-            let _ = self.boost_episode_on_recall(id, 0.02, None).await;
-        }
-
-        let episode_count = top.len();
+        // Phase II: Budget-aware accumulation — fill episodes until max_chars,
+        // rather than hardcoded take(5). MV controls recall volume via context_budget.
         let mut context = String::from("RECALLED MEMORIES (Semantic):\n");
-        for (_score, _id, author, body, ts, strength) in top {
+        let mut episode_count = 0;
+        for (_, id, author, body, ts, strength) in scored {
             // B-10: Stress reduces effective strength → more degradation under stress.
             // stress=0.0: no extra degradation; stress=1.0: halves effective strength.
             // This models cortisol-impaired episodic recall in real biology.
             let effective_strength = strength * (1.0 - stress as f64 * 0.5);
             let body = degrade_by_strength(&body, effective_strength);
-            context.push_str(&format!("- [{}] {}: {}\n", format_relative_time(ts), author, body));
+            let line = format!("- [{}] {}: {}\n", format_relative_time(ts), author, body);
+            if context.len() + line.len() > max_chars && episode_count > 0 {
+                break; // Budget exceeded, but always include at least 1 episode
+            }
+            context.push_str(&line);
+            episode_count += 1;
+            let _ = self.boost_episode_on_recall(&id, 0.02, None).await;
         }
-        tracing::info!("Reconstructed recall: returning {} chars, {} episodes (stress={:.2})", context.len(), episode_count, stress);
+        tracing::info!("Reconstructed recall: returning {} chars, {} episodes (stress={:.2}, budget={})", context.len(), episode_count, stress, max_chars);
         Ok(context)
     }
 

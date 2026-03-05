@@ -155,6 +155,10 @@ struct Args {
     /// Send a single message and exit (non-interactive mode)
     #[arg(short = 'M', long)]
     message: Option<String>,
+
+    /// Read from piped stdin line-by-line in persistent mode (preserves consciousness stream)
+    #[arg(long)]
+    pipe: bool,
 }
 
 #[tokio::main]
@@ -543,9 +547,11 @@ async fn main() -> anyhow::Result<()> {
     // 4e. Set streaming text callback for real-time output
     //     Buffers text to filter out [INTENT:...] tags before they reach the terminal.
     //     Detect piped stdin: if stdin is not a TTY and no -M flag, read all piped input as single-shot.
+    //     Exception: --pipe flag forces line-by-line persistent mode (for FIFO input with consciousness stream).
+    let pipe_interactive = args.pipe;
     let single_shot = if args.message.is_some() {
         true
-    } else if !std::io::stdin().is_terminal() {
+    } else if !std::io::stdin().is_terminal() && !pipe_interactive {
         // Stdin is piped — read all input and treat as single-shot
         use std::io::Read;
         let mut piped_input = String::new();
@@ -771,6 +777,64 @@ async fn main() -> anyhow::Result<()> {
         // Don't drop shutdown_tx — keep it alive so shutdown_rx never resolves.
         // The main loop will break after processing the single response.
         std::mem::forget(shutdown_tx);
+    } else if pipe_interactive {
+        // Pipe-interactive mode: read stdin line-by-line without rustyline (for FIFO input).
+        // Full event loop stays alive — idle dynamics, proactive triggers, consciousness stream.
+        tokio::task::spawn_blocking(move || {
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            let reader = stdin.lock();
+            let mut shutdown_tx = Some(shutdown_tx);
+
+            for line_result in reader.lines() {
+                match line_result {
+                    Ok(line) => {
+                        let trimmed = line.trim().to_string();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if trimmed == "quit" || trimmed == "exit" {
+                            println!("Shutting down gracefully...");
+                            if let Some(tx) = shutdown_tx.take() {
+                                let _ = tx.send(());
+                            }
+                            return;
+                        }
+
+                        let needs_wait = !["sleep", "status", "like", "dislike", "correct", "reload", "export", "train"].contains(&trimmed.as_str())
+                            && !trimmed.starts_with("correct ")
+                            && !trimmed.starts_with("export ");
+
+                        let content = Content {
+                            id: Uuid::new_v4(),
+                            source: "cli".to_string(),
+                            author: "User".to_string(),
+                            body: trimmed,
+                            timestamp: chrono::Utc::now().timestamp(),
+                            modality: Modality::Text,
+                            ..Default::default()
+                        };
+                        if tx_stdin.blocking_send(Event::UserMessage(content)).is_err() {
+                            break;
+                        }
+                        if needs_wait {
+                            let _ = prompt_ready_rx.recv();
+                        }
+                    }
+                    Err(_) => {
+                        // EOF or read error — shutdown
+                        if let Some(tx) = shutdown_tx.take() {
+                            let _ = tx.send(());
+                        }
+                        return;
+                    }
+                }
+            }
+            // lines() iterator exhausted (EOF)
+            if let Some(tx) = shutdown_tx.take() {
+                let _ = tx.send(());
+            }
+        });
     } else {
         tokio::task::spawn_blocking(move || {
         // Set up rustyline with history

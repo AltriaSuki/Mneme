@@ -275,14 +275,18 @@ pub trait Memory: Send + Sync {
     /// B-10: Reconstructed recall — memories are colored by current emotional state.
     ///
     /// After KNN retrieval, annotates episodes with an emotional lens based on
-    /// current mood and stress. Default delegates to plain `recall_with_bias`.
+    /// current mood and stress. `max_chars` controls how much content to return —
+    /// the caller derives this from MV's context_budget_factor, so recall volume
+    /// is neurally modulated rather than hardcoded.
+    /// Default delegates to plain `recall_with_bias`.
     async fn recall_reconstructed(
         &self,
         query: &str,
         mood_bias: f32,
         stress: f32,
+        max_chars: usize,
     ) -> anyhow::Result<String> {
-        let _ = stress;
+        let _ = (stress, max_chars);
         self.recall_with_bias(query, mood_bias).await
     }
     /// Detect repeated patterns in self-knowledge entries.
