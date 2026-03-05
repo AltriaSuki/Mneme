@@ -1,0 +1,25 @@
+# Mneme v5 配置 — Phase II complete, DB path injection
+
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5-20251001"
+base_url = "https://hone.vvvv.ee"
+max_tokens = 4096
+temperature = 0.7
+
+[safety]
+tier = "restricted"
+allowed_paths = ["."]
+blocked_commands = []
+network_whitelist = []
+require_confirmation = true
+
+[token_budget]
+warning_threshold = 0.8
+degradation_strategy = "hard_stop"
+
+[organism]
+db_path = "log/live/run_2026-03-05_v5/mneme_v5.db"
+persona_dir = "persona"
+tick_interval_secs = 10
+trigger_interval_secs = 60
