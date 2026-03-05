@@ -161,21 +161,24 @@ impl LlmClient for AnthropicClient {
             body["tool_choice"] = serde_json::to_value(tc)?;
         }
 
-        let response = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to send streaming request to Anthropic")?;
+        // Retry transient HTTP errors (429, 5xx) with exponential backoff,
+        // matching the non-streaming complete() path.
+        let retry_config = crate::retry::RetryConfig::default();
+        let client = &self.client;
+        let api_key = &self.api_key;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let err_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic streaming error {}: {}", status, err_text);
-        }
+        let response = crate::retry::with_retry(&retry_config, "Anthropic", || async {
+            let resp = client
+                .post(&url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&body)
+                .send()
+                .await
+                .context("Failed to send streaming request to Anthropic")?;
+            Ok(resp)
+        })
+        .await?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let byte_stream = response.bytes_stream();
