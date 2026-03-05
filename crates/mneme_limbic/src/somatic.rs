@@ -316,6 +316,7 @@ impl SomaticMarker {
     /// "off" but not clearly attributable to any single cause. Multiple moderate
     /// deviations from homeostasis suggest the agent shouldn't over-rationalize.
     pub fn narrative_blind_spot(&self) -> bool {
+        // TODO(Phase3): Make learnable (deviation ranges and count threshold)
         let devs = [
             (self.energy - 0.7).abs() > 0.15 && (self.energy - 0.7).abs() < 0.4,
             self.stress > 0.2 && self.stress < 0.6,
@@ -417,10 +418,13 @@ impl SomaticMarker {
             curves.energy_to_max_tokens.1,
             self.energy,
         );
-        // Boredom penalty: above 0.4, progressively reduce willingness to produce output
+        // Boredom penalty: above threshold, progressively reduce willingness to produce output
+        // TODO(Phase3): Make learnable (threshold 0.4, factor 0.5)
         let boredom_token_penalty = (self.boredom - 0.4).max(0.0) * 0.5; // 0.0 at 0.4, 0.3 at 1.0
-        // Stress penalty: above 0.3, stress constricts output capacity
+        // Stress penalty: above threshold, stress constricts output capacity
+        // TODO(Phase3): Make learnable (threshold 0.3, factor 0.6)
         let stress_token_penalty = (self.stress - 0.3).max(0.0) * 0.6; // 0.0 at 0.3, 0.42 at 1.0
+        // TODO(Phase3): Make learnable (floor 0.3)
         let max_tokens_factor =
             (max_tokens_factor - boredom_token_penalty - stress_token_penalty).max(0.3);
 
@@ -429,13 +433,15 @@ impl SomaticMarker {
             curves.stress_to_temperature.1,
             self.stress,
         );
+        // TODO(Phase3): Make learnable (arousal temp factor 0.15)
         let arousal_temp = self.affect.arousal * 0.15;
         let calm_bonus =
             if self.stress < t.calm_stress_max && self.affect.arousal < t.calm_arousal_max {
-                -0.1
+                -0.1 // TODO(Phase3): Make learnable
             } else {
                 0.0
             };
+        // TODO(Phase3): Make learnable (clamp range -0.1..0.4)
         let temperature_delta = (stress_temp + arousal_temp + calm_bonus).clamp(-0.1, 0.4);
 
         let energy_context = lerp(
@@ -443,11 +449,13 @@ impl SomaticMarker {
             curves.energy_to_context.1,
             self.energy,
         );
+        // TODO(Phase3): Make learnable (stress context factor 0.3)
         let stress_penalty = self.stress * 0.3;
         // Narrative Blind Spot: when internal state is "off" but not clearly attributable,
         // reduce context budget to create physical "can't think clearly" effect.
         // TODO(Phase3): Make learnable
         let blind_spot_penalty = if self.narrative_blind_spot() { 0.8 } else { 1.0 };
+        // TODO(Phase3): Make learnable (clamp range 0.4..1.2)
         let context_budget_factor =
             ((energy_context - stress_penalty) * blind_spot_penalty).clamp(0.4, 1.2);
 
@@ -464,8 +472,11 @@ impl SomaticMarker {
             curves.social_to_silence.1,
             self.social_need,
         );
+        // TODO(Phase3): Make learnable (energy silence factor 0.3)
         let energy_silence = (1.0 - self.energy) * 0.3;
+        // TODO(Phase3): Make learnable (boredom silence threshold 0.3, factor 0.4)
         let boredom_silence = (self.boredom - 0.3).max(0.0) * 0.4; // 0.0 at 0.3, 0.28 at 1.0
+        // TODO(Phase3): Make learnable (stress silence factor 0.5)
         let stress_silence = (self.stress - t.stress_silence_min).max(0.0) * 0.5;
         let silence_inclination =
             (energy_silence + boredom_silence + social_silence + stress_silence).clamp(0.0, 1.0);
@@ -509,6 +520,7 @@ impl SomaticMarker {
     /// Get urgency with learnable thresholds
     #[must_use]
     pub fn proactivity_urgency_with(&self, t: &BehaviorThresholds) -> f32 {
+        // TODO(Phase3): Make learnable (weights 0.6, 0.2, 0.3)
         let social_factor = self.social_need * 0.6;
         let curiosity_factor = self.curiosity * 0.2;
         let energy_gate = self.energy.max(t.energy_gate_min);

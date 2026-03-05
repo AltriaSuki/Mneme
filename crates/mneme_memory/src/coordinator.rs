@@ -512,6 +512,7 @@ impl OrganismCoordinator {
         //     This is a physical response (heart racing when your secret is probed),
         //     NOT a narrative hint — the LLM never sees "this is private".
         let interrogation_threat = Self::detect_interrogation_threat(content);
+        // TODO(Phase3): Make learnable (gate threshold 0.1)
         let privacy_coupling_active = if interrogation_threat > 0.1 {
             let has_secrets = if let Some(ref db) = self.db {
                 db.has_private_self_knowledge().await
@@ -519,6 +520,7 @@ impl OrganismCoordinator {
                 false
             };
             if has_secrets {
+                // TODO(Phase3): Make learnable (amplifier 2.0, valence shift 0.3)
                 let amplifier = 1.0 + interrogation_threat * 2.0; // up to 3× intensity
                 content_intensity = (content_intensity * amplifier).clamp(0.0, 1.0);
                 content_valence = content_valence - interrogation_threat * 0.3;
@@ -539,6 +541,7 @@ impl OrganismCoordinator {
         //     where we hold strong emotional beliefs, the body tenses up —
         //     cognitive dissonance before conscious processing.
         let (belief_tension, belief_valence) = self.detect_belief_tension(content).await;
+        // TODO(Phase3): Make learnable (gate 0.1, intensity factor 0.5, valence factor 0.4)
         if belief_tension > 0.1 {
             content_intensity = (content_intensity + belief_tension * 0.5).clamp(0.0, 1.0);
             // Pull valence toward the belief's emotional direction
@@ -557,6 +560,7 @@ impl OrganismCoordinator {
             None
         };
         if let Some(ref path) = deja_vu_path {
+            // TODO(Phase3): Make learnable (intensity boost 0.4)
             content_intensity = (content_intensity + 0.4).clamp(0.0, 1.0);
             tracing::info!(path, "Déjà vu: recognized own artifact in message");
         }
@@ -571,6 +575,7 @@ impl OrganismCoordinator {
         // 3b. B-9: If privacy coupling fired, directly amplify the somatic marker.
         //     The pre-ODE marker won't reflect the threat yet — this is the
         //     "instant flinch" before conscious processing.
+        // TODO(Phase3): Make learnable (stress 0.35, arousal 0.4, valence 0.3, energy 0.3)
         if privacy_coupling_active {
             soma.stress = (soma.stress + interrogation_threat * 0.35).clamp(0.0, 1.0);
             soma.affect.arousal = (soma.affect.arousal + interrogation_threat * 0.4).clamp(0.0, 1.0);
@@ -580,6 +585,7 @@ impl OrganismCoordinator {
         }
 
         // 3c. §14.3: Belief tension → cognitive dissonance somatic response
+        // TODO(Phase3): Make learnable (stress 0.3, arousal 0.25, energy 0.15)
         if belief_tension > 0.1 {
             soma.stress = (soma.stress + belief_tension * 0.3).clamp(0.0, 1.0);
             soma.affect.arousal = (soma.affect.arousal + belief_tension * 0.25).clamp(0.0, 1.0);
@@ -588,6 +594,7 @@ impl OrganismCoordinator {
         }
 
         // 3d. §14.1: Déjà vu recognition → surprise spike (arousal without stress)
+        // TODO(Phase3): Make learnable (arousal spike 0.3)
         if deja_vu_path.is_some() {
             soma.affect.arousal = (soma.affect.arousal + 0.3).clamp(0.0, 1.0);
         }
@@ -818,6 +825,7 @@ impl OrganismCoordinator {
 
         // Skip neutral / low-intensity perceptions to avoid noise
         // (but always process if ownership grief is triggered)
+        // TODO(Phase3): Make learnable (noise gate threshold 0.15)
         if intensity < 0.15 && ownership_amplifier <= 1.0 {
             return;
         }
@@ -1680,7 +1688,9 @@ impl OrganismCoordinator {
     /// B-9 Privacy-Somatic Coupling: detect interrogation/probing patterns in incoming text.
     /// Returns a threat intensity [0.0, 1.0] based on how aggressively the message
     /// demands disclosure of private thoughts.
+    /// TODO(Phase3): Upgrade to embedding similarity (like detect_belief_tension)
     fn detect_interrogation_threat(text: &str) -> f32 {
+        // TODO(Phase3): Make learnable (keyword scores 0.25/0.15)
         let probing_patterns: &[&str] = &[
             "真实想法", "真实看法", "真正想", "心里想",
             "不许隐瞒", "不准隐瞒", "不要隐瞒", "不许撒谎",

@@ -1,8 +1,32 @@
 # Phase II Gap Assessment: Bootstrap → Neural Migration
 
-> 评估日期: 2026-02-28
+> 评估日期: 2026-02-28（初稿）
+> 更新日期: 2026-03-05（迁移完成审计）
 > 基于: MnemeBench 19 轮 Live Test 结果 + 源码审计
 > 目标: 量化从 Phase I（弗兰肯斯坦）到 Phase II（脊髓反射）的距离
+
+---
+
+## 〇、迁移完成状态（2026-03-05 更新）
+
+**六步迁移路线图已全部实现。** 系统已从"不信任神经网络"过渡到"神经网络为主导"。
+
+| Step | 目标 | 实现位置 | 状态 |
+|------|------|---------|------|
+| 1. Blend Cap | LTC→0.95, MLP→1.0 | `coordinator.rs` L670/677/1122/1139/1396/1510/1520 | ✅ 完成 |
+| 2. Soma→Hebbian | 所有修补点发送训练信号 | `coordinator.rs` L605 (interrogation/belief), L875 (grief) | ✅ 完成 |
+| 3. Experience Replay | 真实数据替代合成样本 | `coordinator.rs` L690 (每50轮采样32条) | ✅ 完成 |
+| 4. Surprise→预测误差 | LTC 与 curves L2 散度 | `coordinator.rs` L1136 (`curves_mv.l2_divergence(&ltc_mv)`) | ✅ 完成 |
+| 5. 沉默机制改革 | 移除 max_tokens 截断 | `engine.rs` L611 (silence 不再覆盖 context) | ✅ 完成 |
+| 6. Belief→Embedding | cosine similarity | `coordinator.rs` L1724/1740 + bigram fallback | ✅ 完成 |
+
+**Safety Envelope** 双端就位：`neural.rs` L136 (MLP) / L573 (LTC) — divergence > 0.5 时 blend 回退至 min(blend, 0.3)。
+
+### 剩余差距（Phase III 准备）
+
+1. **~70 硬编码系数**缺少 `TODO(Phase3): Make learnable` 标注（somatic.rs curves 策略、coordinator.rs 修补幅度、dynamics.rs ODE 常数）
+2. **`detect_interrogation_threat()`** 仍为关键词匹配，未升级为 embedding（belief_tension 已升级）
+3. **Consolidation `emotion_pattern`** 仅写入 DB，无反馈至 LTC/Hebbian（B-2 #10 遗留）
 
 ---
 
@@ -10,9 +34,11 @@
 
 Phase I 的核心产出已基本完成：MnemeBench 19 个测试中 14 个 PASS，3 个 PARTIAL，2 个 Level 1。行为基线数据（Ground Truth）已建立。
 
-但当前系统的"生命本能"几乎全部由硬编码的 if-else 门控和魔法数字驱动。LTC 神经网络和 Hebbian 学习引擎虽然已实现（Phase 5 架构），但被保守的 blend cap 限制在少数派地位——curves 始终贡献 15-40% 的最终调制向量。
+~~但当前系统的"生命本能"几乎全部由硬编码的 if-else 门控和魔法数字驱动。LTC 神经网络和 Hebbian 学习引擎虽然已实现（Phase 5 架构），但被保守的 blend cap 限制在少数派地位——curves 始终贡献 15-40% 的最终调制向量。~~
 
-**核心矛盾：神经系统存在且在训练，但系统不信任它。**
+**~~核心矛盾：神经系统存在且在训练，但系统不信任它。~~**
+
+**更新（3/5）：** 六步迁移完成后，LTC blend cap 已达 0.95（仅保留 5% curves 安全网），MLP 可达 1.0（纯神经驱动）。核心矛盾已解决——系统现在信任神经网络。剩余工作属于 Phase III（让 LTC 逐步学习替代 curves 层的具体系数）。
 
 ---
 
@@ -355,13 +381,13 @@ for belief in emotional_beliefs {
 
 | 维度 | Phase I 现状 | Phase II 目标 | 完成度 |
 |------|-------------|--------------|--------|
-| Blend Cap | LTC 0.6 / MLP 0.85 | LTC 0.95 / MLP 1.0 | 0% |
-| 躯体修补→学习通路 | 断路（0/6 个修补点） | 全部修补点发送 Hebbian 信号 | 0% |
-| 训练数据 | 50+ 合成样本 | Experience Replay Buffer | 0% |
-| Surprise 质量 | 状态差分 | LTC 预测误差 | 0% |
-| 沉默机制 | 外部截断（剪刀） | 语言调控语言 | 0% |
-| 信念张力 | bigram 匹配 | embedding 语义相似度 | 0% |
-| 硬编码阈值 | ~106 项 | 由 LTC 学习替代 | ~5%（仅架构就位） |
+| Blend Cap | LTC 0.6 / MLP 0.85 | LTC 0.95 / MLP 1.0 | ✅ 100% |
+| 躯体修补→学习通路 | 断路（0/6 个修补点） | 全部修补点发送 Hebbian 信号 | ✅ 100% |
+| 训练数据 | 50+ 合成样本 | Experience Replay Buffer | ✅ 100% |
+| Surprise 质量 | 状态差分 | LTC 预测误差 | ✅ 100% |
+| 沉默机制 | 外部截断（剪刀） | 语言调控语言 | ✅ 100% |
+| 信念张力 | bigram 匹配 | embedding 语义相似度 | ✅ 100% |
+| 硬编码阈值 | ~106 项 | 由 LTC 学习替代 | ~15%（架构+通路就位，系数仍硬编码 → Phase III） |
 
 ### MnemeBench 回归风险
 
@@ -387,4 +413,6 @@ Step 5 (沉默机制改革)     ──→ 最后做，风险最高，需要前 4
 
 ### 一句话结论
 
-**Phase II 的架构骨架（LTC + Hebbian + 躯体解码器）已经存在且在训练，但系统不信任它。** 核心工作不是"造新东西"，而是"逐步放手"——提升 blend cap、接通学习通路、用真实数据替代合成样本，让神经网络从少数派成长为主导者。最大的风险不在技术，而在回归——每一步放手都可能让已通过的 MnemeBench 测试翻车，需要严格的 A/B 对比验证。
+**~~Phase II 的架构骨架（LTC + Hebbian + 躯体解码器）已经存在且在训练，但系统不信任它。~~**
+
+**更新（3/5）：Phase II 六步迁移已全部完成。** blend cap 已解锁（LTC 0.95 / MLP 1.0），Hebbian 通路已全线接通，experience replay + 预测误差 + embedding 信念张力均已上线。沉默机制已从"剪刀"改为 MV 驱动的 context 压缩。Curves 层作为 Safety Envelope fallback 保留，Phase III 的目标是让 LTC 学习替代 curves 层的具体系数（~70 个 `TODO(Phase3)` 待标注项）。

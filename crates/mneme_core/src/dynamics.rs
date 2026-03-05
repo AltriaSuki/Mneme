@@ -19,14 +19,17 @@ const STRESS_DECAY_MIN: f32 = 0.001;
 const STRESS_DECAY_MAX: f32 = 0.02;
 
 // === Fast dynamics: activity costs ===
+// TODO(Phase3): Make learnable via LTC output dimensions
 const SOCIAL_ACTIVITY_COST: f32 = 0.01;
 const STIMULUS_ACTIVITY_COST: f32 = 0.002;
 
 // === Fast dynamics: stress ===
+// TODO(Phase3): Make learnable via LTC output dimensions
 const SURPRISE_STRESS_FACTOR: f32 = 0.3;
 const MORAL_COST_BASE: f32 = 0.5;
 
 // === Fast dynamics: affect ===
+// TODO(Phase3): Make learnable via LTC output dimensions
 const MOOD_INFLUENCE_FACTOR: f32 = 0.3;
 const AROUSAL_INTENSITY_WEIGHT: f32 = 0.5;
 const AROUSAL_SURPRISE_WEIGHT: f32 = 0.3;
@@ -35,28 +38,34 @@ const AFFECT_RATE: f32 = 0.1;
 const STRESS_VALENCE_COUPLING: f32 = 0.1;
 
 // === Fast dynamics: curiosity ===
+// TODO(Phase3): Make learnable
 const CURIOSITY_DECAY_RATE: f32 = 0.001;
 
 // === Fast dynamics: social ===
+// TODO(Phase3): Make learnable
 const SOCIAL_SATISFACTION_FACTOR: f32 = 0.1;
 
 // === Fast dynamics: boredom ===
+// TODO(Phase3): Make learnable
 const BOREDOM_MONOTONY_RATE: f32 = 0.01;
 const BOREDOM_NOVELTY_SUPPRESSION: f32 = 0.15;
 const BOREDOM_STRESS_SUPPRESSION: f32 = 0.01;
 const NOVELTY_INTENSITY_WEIGHT: f32 = 0.3;
 
 // === Medium dynamics ===
+// TODO(Phase3): Make learnable
 const IDLE_TAU_MULTIPLIER: f32 = 0.3;
 const ACTIVE_MOOD_TAU_FACTOR: f32 = 0.15; // Active conversation: tau*0.15 ≈ 18min for 2h base
 
 // === Slow dynamics ===
+// TODO(Phase3): Make learnable
 const COLLAPSE_BASE_THRESHOLD: f32 = 0.5;
 const COLLAPSE_RIGIDITY_WEIGHT: f32 = 0.4;
 const RIGIDITY_COLLAPSE_FACTOR: f32 = 0.7;
 const RIGIDITY_GROWTH_RATE: f32 = 0.001;
 
 // === Moral cost distribution ===
+// TODO(Phase3): Make learnable
 const MORAL_STRESS_FACTOR: f32 = 0.5;
 const MORAL_ENERGY_FACTOR: f32 = 0.3;
 const MORAL_VALENCE_FACTOR: f32 = 0.2;

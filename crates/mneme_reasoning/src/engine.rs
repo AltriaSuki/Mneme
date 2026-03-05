@@ -367,6 +367,7 @@ impl ReasoningEngine {
     /// Check if proactive messaging should be triggered based on limbic state
     pub async fn should_initiate_contact(&self) -> bool {
         let marker = self.limbic.get_somatic_marker().await;
+        // TODO(Phase3): Make learnable (urgency threshold 0.6)
         marker.proactivity_urgency() > 0.6
     }
 
@@ -1381,6 +1382,7 @@ impl Reasoning for ReasoningEngine {
                 }
 
                 // v0.8.0: Implicit feedback — response latency & topic continuation
+                // TODO(Phase3): Make learnable (latency thresholds and feedback magnitudes)
                 {
                     let elapsed_opt = self.last_response_ts.lock().await.map(|ts| ts.elapsed());
                     if let Some(elapsed) = elapsed_opt {
@@ -1410,6 +1412,7 @@ impl Reasoning for ReasoningEngine {
                     if let Some(ref prev) = prev_topic {
                         let overlap = topic_overlap(prev, &content.body);
                         if overlap > 0.15 {
+                            // TODO(Phase3): Make learnable (overlap threshold 0.15)
                             self.coordinator
                                 .record_feedback(
                                     SignalType::SituationInterpretation,
@@ -1507,6 +1510,7 @@ impl Reasoning for ReasoningEngine {
                 }
 
                 // v0.8.0: Detect explicit user feedback (like/dislike/correction)
+                // TODO(Phase3): Make learnable (feedback confidence/valence magnitudes)
                 let user_fb = detect_user_feedback(&content.body);
                 for fb in &user_fb {
                     match &fb.feedback_type {
@@ -1665,6 +1669,7 @@ impl Reasoning for ReasoningEngine {
                                             // #55: Surprise detection → upgrade to High
                                             let (_, surprise_intensity) = mneme_core::sentiment::analyze_sentiment(&text);
                                             if surprise_intensity > 0.7 {
+                                                // TODO(Phase3): Make learnable (surprise upgrade threshold 0.7)
                                                 tracing::info!("Low-res monologue surprise={:.2}, upgrading to High", surprise_intensity);
                                                 let upgrade_prompt = format!(
                                                     "[内心独白·升级] 刚才脑海中闪过：「{}」\n这个念头让你意外。认真想一想它意味着什么。",
@@ -2149,6 +2154,7 @@ impl mneme_memory::DreamNarrator for LlmDreamNarrator {
         // Positive tone → higher temperature (warmer, more creative),
         // negative tone → lower temperature (tighter, more uneasy).
         let tone = mneme_memory::DreamGenerator::compute_emotional_tone(seeds, state.medium.mood_bias);
+        // TODO(Phase3): Make learnable (dream temp formula 0.8+tone*0.4, clamp 0.5..1.2)
         let dream_temperature = (0.8 + tone * 0.4).clamp(0.5, 1.2);
 
         let seed_fragments: Vec<&str> = seeds.iter().map(|s| s.body.as_str()).collect();
