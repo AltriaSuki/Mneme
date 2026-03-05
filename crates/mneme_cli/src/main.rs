@@ -420,6 +420,9 @@ async fn main() -> anyhow::Result<()> {
     // 4a'. Context budget from config (linked to model's context window)
     engine.set_context_budget(config.llm.context_budget_chars);
 
+    // 4a''. DB path awareness — injected into resource_status so she can find her own DB
+    engine.set_db_path(std::fs::canonicalize(db_path).unwrap_or_else(|_| db_path.into()).display().to_string());
+
     // ReAct loop limit from config
     engine.set_max_react_turns(config.llm.max_react_turns);
 

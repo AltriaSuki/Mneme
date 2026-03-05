@@ -29,6 +29,7 @@ pub struct ContextBuilder<'a> {
     registry: &'a Option<Arc<tokio::sync::RwLock<crate::tool_registry::ToolRegistry>>>,
     context_budget_chars: usize,
     start_time: std::time::Instant,
+    db_path: Option<&'a str>,
 }
 
 impl<'a> ContextBuilder<'a> {
@@ -42,6 +43,7 @@ impl<'a> ContextBuilder<'a> {
         registry: &'a Option<Arc<tokio::sync::RwLock<crate::tool_registry::ToolRegistry>>>,
         context_budget_chars: usize,
         start_time: std::time::Instant,
+        db_path: Option<&'a str>,
     ) -> Self {
         Self {
             psyche,
@@ -52,6 +54,7 @@ impl<'a> ContextBuilder<'a> {
             registry,
             context_budget_chars,
             start_time,
+            db_path,
         }
     }
 
@@ -265,6 +268,11 @@ impl<'a> ContextBuilder<'a> {
     /// Build resource status string for prompt injection (#80).
     async fn build_resource_status(&self) -> String {
         let mut parts = Vec::new();
+
+        // Database path — so she can find her own DB via tools
+        if let Some(path) = self.db_path {
+            parts.push(format!("数据库路径: {}", path));
+        }
 
         // Uptime (process)
         let uptime = self.start_time.elapsed();

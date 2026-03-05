@@ -150,6 +150,9 @@ pub struct ReasoningEngine {
 
     // Maximum ReAct loop iterations per reasoning cycle (configurable via llm.max_react_turns)
     max_react_turns: u32,
+
+    // Resolved database path — injected into resource_status so she can find her own DB
+    db_path: Option<String>,
 }
 
 impl ReasoningEngine {
@@ -191,6 +194,7 @@ impl ReasoningEngine {
             stream_suppressed: Arc::new(AtomicBool::new(false)),
             exploration_nudge: true,
             max_react_turns: 12,
+            db_path: None,
         }
     }
 
@@ -232,6 +236,7 @@ impl ReasoningEngine {
             stream_suppressed: Arc::new(AtomicBool::new(false)),
             exploration_nudge: true,
             max_react_turns: 12,
+            db_path: None,
         }
     }
 
@@ -253,6 +258,11 @@ impl ReasoningEngine {
     /// Set the context budget from config (chars, ~4 chars per token)
     pub fn set_context_budget(&mut self, budget_chars: usize) {
         self.context_budget_chars = budget_chars;
+    }
+
+    /// Set the resolved database path so she can find her own DB via tools.
+    pub fn set_db_path(&mut self, path: String) {
+        self.db_path = Some(path);
     }
 
     /// #86: Set base temperature (before limbic modulation). Thread-safe.
@@ -637,6 +647,7 @@ impl ReasoningEngine {
             &self.registry,
             self.context_budget_chars,
             self.start_time,
+            self.db_path.as_deref(),
         );
         // #59: Format active conversation intents for prompt injection
         let intent_context = {
