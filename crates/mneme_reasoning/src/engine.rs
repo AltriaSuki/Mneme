@@ -871,12 +871,19 @@ impl ReasoningEngine {
                 };
                 if should_nudge {
                     nudge_count += 1;
-                    let nudge_text = build_exploration_nudge(nudge_count, &scratchpad_messages);
-                    tracing::info!("Exploration nudge #{} ({} tool calls, iteration {})", nudge_count, tool_call_count, _iteration);
-                    scratchpad_messages.push(Message {
-                        role: Role::User,
-                        content: vec![ContentBlock::Text { text: nudge_text }],
-                    });
+                    // Phase II B-2 compliance: exploration nudges use physical
+                    // parameter adjustment, not text injection.
+                    // Pop the premature answer and re-run with higher temperature —
+                    // the model gets a fresh chance to explore from the same context.
+                    // Nudge magnitude is derived from the neural modulator's own
+                    // temperature_delta — no new magic numbers.
+                    scratchpad_messages.pop(); // Remove premature assistant response
+                    let nudge_delta = modulation.temperature_delta.abs();
+                    completion_params.temperature = (completion_params.temperature + nudge_delta).min(2.0);
+                    tracing::info!(
+                        "Exploration nudge #{}: temp +{:.2} → {:.2} ({} tool calls, iter {})",
+                        nudge_count, nudge_delta, completion_params.temperature, tool_call_count, _iteration
+                    );
                     self.stream_suppressed.store(true, Ordering::Release);
                     continue;
                 }
@@ -1858,15 +1865,10 @@ fn format_feed_digest(items: &[mneme_core::Content]) -> String {
 // Silence & Tool Result Sanitization
 // ============================================================================
 
-/// Build an exploration nudge. The message varies by depth to avoid repetition.
-/// - Nudge 0 (shallow): encourage continuing investigation
-/// - Nudge 1 (mid-plateau): encourage trying a different approach entirely
-fn build_exploration_nudge(nudge_index: u32, _messages: &[crate::api_types::Message]) -> String {
-    match nudge_index {
-        0 => "[系统：你还有调查手段没有用尽。如果当前结论不够确定，可以继续用工具从其他角度验证。]".to_string(),
-        _ => "[系统：你已经尝试了一些方法，但结论可能还不够精确。试试完全不同的思路或信息源。]".to_string(),
-    }
-}
+// build_exploration_nudge() removed in Phase II (B-2 compliance).
+// Text-based nudges violated 物理隔离法则 — the only channel is ModulationVector.
+// Exploration nudges now pop the premature response and re-run with a temperature
+// bump derived from the neural modulator's own temperature_delta.
 
 /// Detect if the LLM response is a silence indicator.
 ///
