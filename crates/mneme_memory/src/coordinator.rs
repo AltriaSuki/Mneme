@@ -1234,6 +1234,36 @@ impl OrganismCoordinator {
                     result.self_reflections.len()
                 );
 
+                // Phase II: Feed emotion_pattern discoveries back to LTC as Hebbian signals.
+                // Without this, the neural network never learns from sleep consolidation's
+                // emotional insights — patterns are stored as text but don't shape future behavior.
+                // B-2 #10: The training signal is physical (surprise + reward), not text injection.
+                {
+                    let emotion_patterns: Vec<_> = result.self_reflections.iter()
+                        .filter(|c| c.domain == "emotion_pattern")
+                        .collect();
+                    if !emotion_patterns.is_empty() {
+                        if let Some(mut ltc) = self.limbic.get_ltc().await {
+                            for pattern in &emotion_patterns {
+                                // Sentiment of the pattern content determines reward direction
+                                let (valence, _intensity) = Self::analyze_sentiment(&pattern.content);
+                                // Confidence as surprise: high-confidence patterns are more surprising
+                                // discoveries about self, deserving stronger weight updates
+                                // TODO(Phase3): Make learnable (lr 0.003)
+                                ltc.hebbian_update(pattern.confidence, valence, 0.003);
+                            }
+                            self.limbic.set_ltc(Some(ltc.clone())).await;
+                            if let Some(ref db2) = self.db {
+                                let _ = db2.save_learned_ltc(&ltc).await;
+                            }
+                            tracing::info!(
+                                "Fed {} emotion_pattern reflections to LTC Hebbian",
+                                emotion_patterns.len()
+                            );
+                        }
+                    }
+                }
+
                 // Store the reflection summary as a meta-episode
                 let summary =
                     crate::SelfReflector::format_reflection_summary(&result.self_reflections);
