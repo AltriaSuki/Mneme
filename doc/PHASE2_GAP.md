@@ -24,9 +24,9 @@
 
 ### 剩余差距（Phase III 准备）
 
-1. **~70 硬编码系数**缺少 `TODO(Phase3): Make learnable` 标注（somatic.rs curves 策略、coordinator.rs 修补幅度、dynamics.rs ODE 常数）
-2. **`detect_interrogation_threat()`** 仍为关键词匹配，未升级为 embedding（belief_tension 已升级）
-3. **Consolidation `emotion_pattern`** 仅写入 DB，无反馈至 LTC/Hebbian（B-2 #10 遗留）
+1. **~70 硬编码系数**已标注 `TODO(Phase3): Make learnable`（somatic.rs curves 策略、coordinator.rs 修补幅度、dynamics.rs ODE 常数）
+2. ~~`detect_interrogation_threat()` 仍为关键词匹配~~ → ✅ 已升级为 embedding cosine similarity + 关键词 fallback（commit `9a36084`）
+3. ~~Consolidation `emotion_pattern` 仅写入 DB，无反馈至 LTC/Hebbian（B-2 #10 遗留）~~ → ✅ 已接通 emotion_pattern→Hebbian 通路（commit `610f644`）
 
 ---
 
