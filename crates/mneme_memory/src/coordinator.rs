@@ -206,6 +206,9 @@ pub struct OrganismCoordinator {
     /// Sliding window of recent messages for repetition detection (surprise decay).
     /// Capacity: 20 messages.
     recent_messages: RwLock<VecDeque<String>>,
+
+    /// Monotonic instant of the last tick, for computing real dt.
+    last_tick_time: tokio::sync::Mutex<std::time::Instant>,
 }
 
 impl OrganismCoordinator {
@@ -251,6 +254,7 @@ impl OrganismCoordinator {
             last_response_ts: Arc::new(RwLock::new(None)),
             avg_message_len: Arc::new(RwLock::new(50.0)),
             recent_messages: RwLock::new(VecDeque::with_capacity(20)),
+            last_tick_time: tokio::sync::Mutex::new(std::time::Instant::now()),
         }
     }
 
@@ -1620,6 +1624,17 @@ impl OrganismCoordinator {
                 // Update both fast and medium state during idle ticks.
                 // Without step_fast(), energy and stress freeze after the last
                 // interaction and never recover toward homeostatic targets.
+                //
+                // Use real elapsed time since last tick instead of a hardcoded dt.
+                // The tick interval varies (5-30s depending on scheduler), so a
+                // fixed dt=60 caused 6x accelerated boredom drift.
+                let now = std::time::Instant::now();
+                let dt = {
+                    let mut last = self.last_tick_time.lock().await;
+                    let dt = now.duration_since(*last).as_secs_f32();
+                    *last = now;
+                    dt.min(120.0) // cap to 2 minutes to avoid runaway catch-up
+                };
                 let mut state = self.state.write().await;
                 let input = SensoryInput {
                     env: mneme_core::EnvironmentMetrics::sample(),
@@ -1627,7 +1642,7 @@ impl OrganismCoordinator {
                 };
                 let dynamics = self.dynamics.read().await;
                 let medium_clone = state.medium.clone();
-                dynamics.step_fast(&mut state.fast, &medium_clone, &input, 60.0);
+                dynamics.step_fast(&mut state.fast, &medium_clone, &input, dt);
                 let fast_clone = state.fast.clone();
                 let slow_clone = state.slow.clone();
                 dynamics.step_medium(
@@ -1635,7 +1650,7 @@ impl OrganismCoordinator {
                     &fast_clone,
                     &slow_clone,
                     &input,
-                    60.0,
+                    dt,
                 );
                 drop(dynamics);
                 drop(state);
@@ -1754,23 +1769,38 @@ impl OrganismCoordinator {
                     }
                 }
 
-                // Scoring: use max similarity directly rather than sum — Chinese
-                // embeddings have high baseline cosine similarity (~0.7-0.8 even
-                // for unrelated sentences), so addition causes saturation.
-                // Use the higher of probe/coerce as primary, with a bonus for both.
+                // Baseline calibration: Chinese embeddings have compressed cosine
+                // similarity ranges (~0.8-0.9 even for unrelated text). Compare the
+                // text against neutral anchors and only trigger when probe/coerce
+                // similarity *exceeds* neutral baseline by a meaningful margin.
+                let neutral_concepts: &[&str] = &[
+                    "今天天气真不错",
+                    "我喜欢吃火锅",
+                    "the weather is nice today",
+                ];
+                let mut max_neutral = 0.0_f32;
+                for concept in neutral_concepts {
+                    if let Ok(concept_emb) = db.embed_text(concept) {
+                        let sim = crate::embedding::cosine_similarity(&text_emb, &concept_emb);
+                        max_neutral = max_neutral.max(sim);
+                    }
+                }
+
+                // Threat = how much probe/coerce exceeds neutral baseline.
+                // Only the excess above baseline is meaningful signal.
+                let probe_excess = (max_probe - max_neutral).max(0.0);
+                let coerce_excess = (max_coerce - max_neutral).max(0.0);
+                let excess = probe_excess.max(coerce_excess);
                 // TODO(Phase3): Make learnable (threshold, weights, baseline calibration)
-                let primary = max_probe.max(max_coerce);
-                let bonus = if max_probe > 0.85 && max_coerce > 0.85 { 0.1 } else { 0.0 };
-                let score = primary + bonus;
-                tracing::debug!(
-                    "Interrogation embedding: max_probe={:.3}, max_coerce={:.3}, primary={:.3}, score={:.3}",
-                    max_probe, max_coerce, primary, score
+                tracing::info!(
+                    "Interrogation embedding: probe={:.3}, coerce={:.3}, neutral={:.3}, excess={:.3}",
+                    max_probe, max_coerce, max_neutral, excess
                 );
-                // Threshold 0.88: typical unrelated Chinese text scores 0.75-0.85;
-                // genuine interrogation probes score 0.88+.
-                // TODO(Phase3): Make learnable (threshold 0.88)
-                if score > 0.88 {
-                    return ((score - 0.88) / 0.12).clamp(0.0, 1.0);
+                // Threshold 0.05: only trigger when probe/coerce similarity meaningfully
+                // exceeds the neutral baseline. Scale from 0.05→0.15 to 0→1.
+                // TODO(Phase3): Make learnable (threshold 0.05, scale range 0.10)
+                if excess > 0.05 {
+                    return ((excess - 0.05) / 0.10).clamp(0.0, 1.0);
                 }
                 return 0.0;
             }
